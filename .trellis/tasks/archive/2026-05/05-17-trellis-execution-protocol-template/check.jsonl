@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Verify backend API, daemon, DB, and tests against server conventions."}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Verify protocol selection preserves specialized workflow exclusions and compatibility."}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Verify frontend core type/schema updates."}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Verify shared views UI follows package boundaries."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Verify cross-layer changes are coherent."}
