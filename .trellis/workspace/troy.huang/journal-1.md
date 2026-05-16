@@ -75,3 +75,36 @@ Implemented opt-in task-agent execution protocol control across backend, daemon 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Trellis execution protocol template
+
+**Date**: 2026-05-17
+**Task**: Trellis execution protocol template
+**Branch**: `trellis/agent-execution-protocol`
+
+### Summary
+
+Added slug-backed execution protocol templates with standard assignment compatibility and Trellis task selection across DB, API, daemon prompt rendering, core types, and agent create/detail UI.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `74ced6a2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
