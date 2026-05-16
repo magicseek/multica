@@ -1850,6 +1850,95 @@ func TestCreateAgentMcpConfigNullStoresSQLNull(t *testing.T) {
 	}
 }
 
+func TestCreateAgentExecutionProtocolEnabled(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/agents", map[string]any{
+		"name":                       "Handler Protocol Create",
+		"runtime_id":                 handlerTestRuntimeID(t),
+		"custom_env":                 map[string]string{},
+		"custom_args":                []string{},
+		"execution_protocol_enabled": true,
+	})
+	testHandler.CreateAgent(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAgent: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("CreateAgent: decode response: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, created.ID)
+	})
+
+	if !created.ExecutionProtocolEnabled {
+		t.Fatalf("CreateAgent: response execution_protocol_enabled = false, want true")
+	}
+	assertAgentExecutionProtocolEnabled(t, created.ID, true)
+}
+
+func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Protocol Update", nil)
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"execution_protocol_enabled": true,
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent enable: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var updated AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("UpdateAgent enable: decode response: %v", err)
+	}
+	if !updated.ExecutionProtocolEnabled {
+		t.Fatalf("UpdateAgent enable: response execution_protocol_enabled = false, want true")
+	}
+	assertAgentExecutionProtocolEnabled(t, agentID, true)
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"name": "Handler Protocol Update Renamed",
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent preserve: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	assertAgentExecutionProtocolEnabled(t, agentID, true)
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"execution_protocol_enabled": false,
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent disable: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	assertAgentExecutionProtocolEnabled(t, agentID, false)
+}
+
+func assertAgentExecutionProtocolEnabled(t *testing.T, agentID string, want bool) {
+	t.Helper()
+
+	var got bool
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT execution_protocol_enabled FROM agent WHERE id = $1`,
+		agentID,
+	).Scan(&got); err != nil {
+		t.Fatalf("query execution_protocol_enabled: %v", err)
+	}
+	if got != want {
+		t.Fatalf("execution_protocol_enabled = %v, want %v", got, want)
+	}
+}
+
 func TestWorkspaceCRUD(t *testing.T) {
 	// List workspaces
 	w := httptest.NewRecorder()

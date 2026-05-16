@@ -208,6 +208,29 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     expect(publicRow.disabled).toBe(false);
   });
 
+  it("submits the execution protocol flag from the create form", async () => {
+    const mine = makeRuntime({
+      id: "rt-mine",
+      name: "My Runtime",
+      owner_id: ME,
+      visibility: "private",
+    });
+    const { onCreate } = renderDialog([mine]);
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
+      target: { value: "Protocol Agent" },
+    });
+    fireEvent.click(screen.getByLabelText("Enable execution protocol"));
+    fireEvent.click(screen.getByText("Create"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+      execution_protocol_enabled: true,
+      name: "Protocol Agent",
+    });
+  });
+
   it("defaults the selected runtime to a usable one, not a locked private", () => {
     const othersPrivate = makeRuntime({
       id: "rt-others-private",

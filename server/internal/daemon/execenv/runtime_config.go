@@ -283,6 +283,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("6. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
 		b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID))
 		b.WriteString("7. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
+	} else if shouldUseTaskExecutionProtocol(ctx) {
+		b.WriteString(renderTaskExecutionProtocol(ctx))
 	} else {
 		// Assignment-triggered: defer to agent Skills for workflow specifics.
 		b.WriteString("You are responsible for managing the issue status throughout your work.\n\n")

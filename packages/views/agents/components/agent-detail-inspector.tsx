@@ -23,6 +23,7 @@ import { isImeComposing, timeAgo } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
+import { Switch } from "@multica/ui/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -142,6 +143,20 @@ export function AgentDetailInspector({
             value={agent.max_concurrent_tasks}
             canEdit={canEdit}
             onChange={(n) => update({ max_concurrent_tasks: n })}
+          />
+        </PropRow>
+        <PropRow
+          label={t(($) => $.inspector.prop_execution_protocol)}
+          interactive={false}
+        >
+          <Switch
+            size="sm"
+            checked={agent.execution_protocol_enabled === true}
+            onCheckedChange={(checked) =>
+              update({ execution_protocol_enabled: checked })
+            }
+            disabled={!canEdit}
+            aria-label={t(($) => $.inspector.execution_protocol_aria)}
           />
         </PropRow>
       </Section>

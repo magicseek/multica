@@ -1062,6 +1062,137 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 	}
 }
 
+func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
+	t.Parallel()
+
+	readClaudeMD := func(t *testing.T, ctx TaskContextForEnv) string {
+		t.Helper()
+		dir := t.TempDir()
+		if _, err := InjectRuntimeConfig(dir, "claude", ctx); err != nil {
+			t.Fatalf("InjectRuntimeConfig failed: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+		if err != nil {
+			t.Fatalf("read CLAUDE.md: %v", err)
+		}
+		return string(data)
+	}
+
+	t.Run("disabled keeps legacy assignment workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{IssueID: "issue-1"})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for disabled agent:\n%s", s)
+		}
+		for _, want := range []string{
+			"You are responsible for managing the issue status throughout your work.",
+			"Follow your Skills and Agent Identity to complete the task",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("legacy workflow missing %q", want)
+			}
+		}
+	})
+
+	t.Run("enabled assignment renders protocol", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ExecutionProtocolEnabled: true,
+		})
+		for _, want := range []string{
+			"## Task Execution Protocol",
+			"Context First",
+			"Work Contract",
+			"Plan Gate",
+			"`multica issue get issue-1 --output json`",
+			"`multica issue comment list issue-1 --output json`",
+			"`multica issue status issue-1 in_progress`",
+			"`multica issue comment add issue-1",
+			"`multica issue status issue-1 in_review`",
+			"`multica issue status issue-1 blocked`",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("execution protocol missing %q\n---\n%s", want, s)
+			}
+		}
+	})
+
+	t.Run("enabled comment trigger keeps comment workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			TriggerCommentID:         "comment-1",
+			ExecutionProtocolEnabled: true,
+		})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for comment-triggered task:\n%s", s)
+		}
+		if !strings.Contains(s, "This task was triggered by a NEW comment") {
+			t.Fatalf("comment workflow missing")
+		}
+	})
+
+	t.Run("enabled chat task keeps chat workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ChatSessionID:            "chat-1",
+			ExecutionProtocolEnabled: true,
+		})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for chat task:\n%s", s)
+		}
+		if !strings.Contains(s, "You are in chat mode") {
+			t.Fatalf("chat workflow missing")
+		}
+	})
+
+	t.Run("enabled quick-create task keeps quick-create workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			QuickCreatePrompt:        "create follow-up",
+			ExecutionProtocolEnabled: true,
+		})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for quick-create task:\n%s", s)
+		}
+		if !strings.Contains(s, "quick-create") {
+			t.Fatalf("quick-create workflow missing")
+		}
+	})
+
+	t.Run("enabled autopilot task keeps autopilot workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			AutopilotRunID:           "run-1",
+			AutopilotID:              "autopilot-1",
+			ExecutionProtocolEnabled: true,
+		})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for autopilot task:\n%s", s)
+		}
+		if !strings.Contains(s, "Autopilot in run-only mode") {
+			t.Fatalf("autopilot workflow missing")
+		}
+	})
+
+	t.Run("enabled squad leader keeps squad no_action workflow", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			IsSquadLeader:            true,
+			ExecutionProtocolEnabled: true,
+		})
+		if strings.Contains(s, "## Task Execution Protocol") {
+			t.Fatalf("execution protocol rendered for squad leader:\n%s", s)
+		}
+		if !strings.Contains(s, "multica squad activity issue-1 no_action") {
+			t.Fatalf("squad leader no_action workflow missing")
+		}
+	})
+}
+
 // TestInjectRuntimeConfigAvailableCommandsIsNeutral pins that the global
 // Available Commands section lists the three input modes neutrally for
 // every non-Codex provider on every host OS, with no "MUST pipe via stdin"

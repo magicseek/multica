@@ -29,6 +29,7 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
@@ -89,6 +90,9 @@ export function CreateAgentDialog({
   const [model, setModel] = useState(template?.model ?? "");
   const [instructions, setInstructions] = useState(template?.instructions ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(template?.avatar_url ?? null);
+  const [executionProtocolEnabled, setExecutionProtocolEnabled] = useState(
+    template?.execution_protocol_enabled === true,
+  );
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(template?.skills.map((s) => s.id) ?? []),
   );
@@ -162,6 +166,7 @@ export function CreateAgentDialog({
         model: model.trim() || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
+        execution_protocol_enabled: executionProtocolEnabled,
       };
       if (template) {
         // Duplicate path: forward the hidden config fields the source
@@ -343,6 +348,22 @@ export function CreateAgentDialog({
               onChange={setModel}
               disabled={!selectedRuntime}
             />
+
+            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <Label
+                htmlFor="create-agent-execution-protocol"
+                className="text-sm font-medium"
+              >
+                {t(($) => $.create_dialog.execution_protocol_label)}
+              </Label>
+              <Switch
+                id="create-agent-execution-protocol"
+                size="sm"
+                checked={executionProtocolEnabled}
+                onCheckedChange={setExecutionProtocolEnabled}
+                aria-label={t(($) => $.create_dialog.execution_protocol_aria)}
+              />
+            </div>
 
             {/* --- Optional sections (instructions / skills) ---
                 Collapsed by default so quick-create stays fast.

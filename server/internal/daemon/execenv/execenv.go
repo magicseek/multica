@@ -43,25 +43,26 @@ type PrepareParams struct {
 
 // TaskContextForEnv is the subset of task context used for writing context files.
 type TaskContextForEnv struct {
-	IssueID                 string
-	TriggerCommentID        string // comment that triggered this task (empty for on_assign)
-	AgentID                 string // unique ID of the dispatched agent
-	AgentName               string
-	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
-	AgentSkills             []SkillContextForEnv
-	Repos                   []RepoContextForEnv     // workspace repos available for checkout
-	ProjectID               string                  // issue's project, when present
-	ProjectTitle            string                  // human-readable project title
-	ProjectResources        []ProjectResourceForEnv // resources attached to the project
-	ChatSessionID           string                  // non-empty for chat tasks
-	AutopilotRunID          string                  // non-empty for autopilot run_only tasks
-	AutopilotID             string
-	AutopilotTitle          string
-	AutopilotDescription    string
-	AutopilotSource         string
-	AutopilotTriggerPayload string
-	QuickCreatePrompt       string // non-empty for quick-create tasks
-	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
+	IssueID                  string
+	TriggerCommentID         string // comment that triggered this task (empty for on_assign)
+	AgentID                  string // unique ID of the dispatched agent
+	AgentName                string
+	AgentInstructions        string // agent identity/persona instructions, injected into CLAUDE.md
+	AgentSkills              []SkillContextForEnv
+	Repos                    []RepoContextForEnv     // workspace repos available for checkout
+	ProjectID                string                  // issue's project, when present
+	ProjectTitle             string                  // human-readable project title
+	ProjectResources         []ProjectResourceForEnv // resources attached to the project
+	ChatSessionID            string                  // non-empty for chat tasks
+	AutopilotRunID           string                  // non-empty for autopilot run_only tasks
+	AutopilotID              string
+	AutopilotTitle           string
+	AutopilotDescription     string
+	AutopilotSource          string
+	AutopilotTriggerPayload  string
+	QuickCreatePrompt        string // non-empty for quick-create tasks
+	IsSquadLeader            bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
+	ExecutionProtocolEnabled bool   // true when this agent opted into the stricter assignment-task workflow
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.
