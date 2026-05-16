@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/execprotocol"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -46,6 +48,7 @@ type AgentResponse struct {
 	MaxConcurrentTasks       int32               `json:"max_concurrent_tasks"`
 	Model                    string              `json:"model"`
 	ExecutionProtocolEnabled bool                `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    string              `json:"execution_protocol_slug"`
 	OwnerID                  *string             `json:"owner_id"`
 	Skills                   []AgentSkillSummary `json:"skills"`
 	CreatedAt                string              `json:"created_at"`
@@ -106,6 +109,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		MaxConcurrentTasks:       a.MaxConcurrentTasks,
 		Model:                    a.Model.String,
 		ExecutionProtocolEnabled: a.ExecutionProtocolEnabled,
+		ExecutionProtocolSlug:    a.ExecutionProtocolSlug,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
 		CreatedAt:                timestampToString(a.CreatedAt),
@@ -205,6 +209,7 @@ type TaskAgentData struct {
 	McpConfig                json.RawMessage          `json:"mcp_config,omitempty"`
 	Model                    string                   `json:"model,omitempty"`
 	ExecutionProtocolEnabled bool                     `json:"execution_protocol_enabled,omitempty"`
+	ExecutionProtocolSlug    string                   `json:"execution_protocol_slug,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
@@ -396,6 +401,7 @@ type CreateAgentRequest struct {
 	MaxConcurrentTasks       int32             `json:"max_concurrent_tasks"`
 	Model                    string            `json:"model"`
 	ExecutionProtocolEnabled bool              `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    string            `json:"execution_protocol_slug"`
 	// Template records which template slug was used to seed this agent
 	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
 	// the caller didn't come from a template picker — the `agent_created`
@@ -457,6 +463,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxConcurrentTasks == 0 {
 		req.MaxConcurrentTasks = 6
+	}
+	req.ExecutionProtocolSlug = strings.TrimSpace(req.ExecutionProtocolSlug)
+	if !execprotocol.IsKnownSlug(req.ExecutionProtocolSlug) {
+		writeError(w, http.StatusBadRequest, "unknown execution_protocol_slug")
+		return
 	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
@@ -533,6 +544,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		McpConfig:                mc,
 		Model:                    pgtype.Text{String: req.Model, Valid: req.Model != ""},
 		ExecutionProtocolEnabled: req.ExecutionProtocolEnabled,
+		ExecutionProtocolSlug:    req.ExecutionProtocolSlug,
 	})
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — return a clear conflict error
@@ -585,6 +597,7 @@ type UpdateAgentRequest struct {
 	MaxConcurrentTasks       *int32             `json:"max_concurrent_tasks"`
 	Model                    *string            `json:"model"`
 	ExecutionProtocolEnabled *bool              `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    *string            `json:"execution_protocol_slug"`
 }
 
 // canViewAgentEnv checks whether the requesting user is allowed to see the
@@ -731,6 +744,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ExecutionProtocolEnabled != nil {
 		params.ExecutionProtocolEnabled = pgtype.Bool{Bool: *req.ExecutionProtocolEnabled, Valid: true}
+	}
+	if req.ExecutionProtocolSlug != nil {
+		slug := strings.TrimSpace(*req.ExecutionProtocolSlug)
+		if !execprotocol.IsKnownSlug(slug) {
+			writeError(w, http.StatusBadRequest, "unknown execution_protocol_slug")
+			return
+		}
+		params.ExecutionProtocolSlug = pgtype.Text{String: slug, Valid: true}
 	}
 
 	agent, err = h.Queries.UpdateAgent(r.Context(), params)

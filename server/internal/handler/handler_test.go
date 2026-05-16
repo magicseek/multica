@@ -1858,6 +1858,7 @@ func TestCreateAgentExecutionProtocolEnabled(t *testing.T) {
 		"custom_env":                 map[string]string{},
 		"custom_args":                []string{},
 		"execution_protocol_enabled": true,
+		"execution_protocol_slug":    "trellis-task",
 	})
 	testHandler.CreateAgent(w, req)
 	if w.Code != http.StatusCreated {
@@ -1875,7 +1876,27 @@ func TestCreateAgentExecutionProtocolEnabled(t *testing.T) {
 	if !created.ExecutionProtocolEnabled {
 		t.Fatalf("CreateAgent: response execution_protocol_enabled = false, want true")
 	}
+	if created.ExecutionProtocolSlug != "trellis-task" {
+		t.Fatalf("CreateAgent: response execution_protocol_slug = %q, want trellis-task", created.ExecutionProtocolSlug)
+	}
 	assertAgentExecutionProtocolEnabled(t, created.ID, true)
+	assertAgentExecutionProtocolSlug(t, created.ID, "trellis-task")
+}
+
+func TestCreateAgentRejectsUnknownExecutionProtocolSlug(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/agents", map[string]any{
+		"name":                       "Handler Protocol Unknown",
+		"runtime_id":                 handlerTestRuntimeID(t),
+		"custom_env":                 map[string]string{},
+		"custom_args":                []string{},
+		"execution_protocol_enabled": true,
+		"execution_protocol_slug":    "unknown-protocol",
+	})
+	testHandler.CreateAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateAgent: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
 }
 
 func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
@@ -1884,6 +1905,7 @@ func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
 		"execution_protocol_enabled": true,
+		"execution_protocol_slug":    "trellis-task",
 	})
 	req = withURLParam(req, "id", agentID)
 	testHandler.UpdateAgent(w, req)
@@ -1898,7 +1920,11 @@ func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
 	if !updated.ExecutionProtocolEnabled {
 		t.Fatalf("UpdateAgent enable: response execution_protocol_enabled = false, want true")
 	}
+	if updated.ExecutionProtocolSlug != "trellis-task" {
+		t.Fatalf("UpdateAgent enable: response execution_protocol_slug = %q, want trellis-task", updated.ExecutionProtocolSlug)
+	}
 	assertAgentExecutionProtocolEnabled(t, agentID, true)
+	assertAgentExecutionProtocolSlug(t, agentID, "trellis-task")
 
 	w = httptest.NewRecorder()
 	req = newRequest("PUT", "/api/agents/"+agentID, map[string]any{
@@ -1910,10 +1936,12 @@ func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
 		t.Fatalf("UpdateAgent preserve: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	assertAgentExecutionProtocolEnabled(t, agentID, true)
+	assertAgentExecutionProtocolSlug(t, agentID, "trellis-task")
 
 	w = httptest.NewRecorder()
 	req = newRequest("PUT", "/api/agents/"+agentID, map[string]any{
 		"execution_protocol_enabled": false,
+		"execution_protocol_slug":    "",
 	})
 	req = withURLParam(req, "id", agentID)
 	testHandler.UpdateAgent(w, req)
@@ -1921,6 +1949,21 @@ func TestUpdateAgentExecutionProtocolEnabledRoundTrip(t *testing.T) {
 		t.Fatalf("UpdateAgent disable: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	assertAgentExecutionProtocolEnabled(t, agentID, false)
+	assertAgentExecutionProtocolSlug(t, agentID, "")
+}
+
+func TestUpdateAgentRejectsUnknownExecutionProtocolSlug(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Protocol Update Unknown", nil)
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+		"execution_protocol_slug": "unknown-protocol",
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateAgent: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
 }
 
 func assertAgentExecutionProtocolEnabled(t *testing.T, agentID string, want bool) {
@@ -1936,6 +1979,22 @@ func assertAgentExecutionProtocolEnabled(t *testing.T, agentID string, want bool
 	}
 	if got != want {
 		t.Fatalf("execution_protocol_enabled = %v, want %v", got, want)
+	}
+}
+
+func assertAgentExecutionProtocolSlug(t *testing.T, agentID string, want string) {
+	t.Helper()
+
+	var got string
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT execution_protocol_slug FROM agent WHERE id = $1`,
+		agentID,
+	).Scan(&got); err != nil {
+		t.Fatalf("query execution_protocol_slug: %v", err)
+	}
+	if got != want {
+		t.Fatalf("execution_protocol_slug = %q, want %q", got, want)
 	}
 }
 

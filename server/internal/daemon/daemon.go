@@ -2139,12 +2139,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var skills []SkillData
 	var instructions string
 	var executionProtocolEnabled bool
+	var executionProtocolSlug string
 	if task.Agent != nil {
 		agentID = task.Agent.ID
 		agentName = task.Agent.Name
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
 		executionProtocolEnabled = task.Agent.ExecutionProtocolEnabled
+		executionProtocolSlug = task.Agent.ExecutionProtocolSlug
 	}
 
 	// Prepare isolated execution environment.
@@ -2171,6 +2173,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		QuickCreatePrompt:        task.QuickCreatePrompt,
 		IsSquadLeader:            strings.Contains(instructions, "## Squad Operating Protocol"),
 		ExecutionProtocolEnabled: executionProtocolEnabled,
+		ExecutionProtocolSlug:    executionProtocolSlug,
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop

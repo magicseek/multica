@@ -4,6 +4,8 @@ export type AgentRuntimeMode = "local" | "cloud";
 
 export type AgentVisibility = "workspace" | "private";
 
+export type ExecutionProtocolSlug = "" | "standard-assignment" | "trellis-task";
+
 // Runtime visibility is a separate axis from agent visibility — different
 // vocabulary because it gates a different action. "private" (default) means
 // only the runtime owner and workspace admins can bind agents to it;
@@ -131,6 +133,7 @@ export interface Agent {
   max_concurrent_tasks: number;
   model: string;
   execution_protocol_enabled?: boolean;
+  execution_protocol_slug?: ExecutionProtocolSlug;
   owner_id: string | null;
   skills: AgentSkillSummary[];
   created_at: string;
@@ -165,6 +168,7 @@ export interface CreateAgentRequest {
   max_concurrent_tasks?: number;
   model?: string;
   execution_protocol_enabled?: boolean;
+  execution_protocol_slug?: ExecutionProtocolSlug;
   /** Optional template slug used by the onboarding agent picker. Surfaced
    *  as the `template` property on the `agent_created` PostHog event. */
   template?: string;
@@ -254,6 +258,7 @@ export interface UpdateAgentRequest {
   max_concurrent_tasks?: number;
   model?: string;
   execution_protocol_enabled?: boolean;
+  execution_protocol_slug?: ExecutionProtocolSlug;
 }
 
 // Skills

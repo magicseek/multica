@@ -1641,7 +1641,7 @@ func TestClaimTaskByRuntimeIncludesExecutionProtocolFlag(t *testing.T) {
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
 	if _, err := testPool.Exec(ctx, `
-		UPDATE agent SET execution_protocol_enabled = TRUE WHERE id = $1
+		UPDATE agent SET execution_protocol_enabled = TRUE, execution_protocol_slug = 'trellis-task' WHERE id = $1
 	`, agentID); err != nil {
 		t.Fatalf("setup: enable execution protocol: %v", err)
 	}
@@ -1696,6 +1696,9 @@ func TestClaimTaskByRuntimeIncludesExecutionProtocolFlag(t *testing.T) {
 	}
 	if !resp.Task.Agent.ExecutionProtocolEnabled {
 		t.Fatalf("claim response execution_protocol_enabled = false, want true")
+	}
+	if resp.Task.Agent.ExecutionProtocolSlug != "trellis-task" {
+		t.Fatalf("claim response execution_protocol_slug = %q, want trellis-task", resp.Task.Agent.ExecutionProtocolSlug)
 	}
 }
 

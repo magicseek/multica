@@ -133,7 +133,7 @@
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
     "prop_execution_protocol": "Protocol",
-    "execution_protocol_aria": "Enable execution protocol",
+    "execution_protocol_aria": "Choose execution protocol",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",
@@ -148,6 +148,11 @@
     "description_placeholder": "What does this agent do?",
     "save": "Save",
     "cancel": "Cancel"
+  },
+  "execution_protocol": {
+    "option_off": "Off",
+    "option_standard": "Standard",
+    "option_trellis": "Trellis"
   },
   "skill_attach": {
     "trigger_aria": "Attach a workspace skill",
@@ -209,7 +214,7 @@
     "description_placeholder": "What does this agent do?",
     "visibility_label": "Visibility",
     "execution_protocol_label": "Protocol",
-    "execution_protocol_aria": "Enable execution protocol",
+    "execution_protocol_aria": "Choose execution protocol",
     "runtime_label": "Runtime",
     "runtime_filter_mine": "Mine",
     "runtime_filter_all": "All",

@@ -129,7 +129,7 @@
     "prop_visibility": "可见性",
     "prop_concurrency": "并发",
     "prop_execution_protocol": "流程",
-    "execution_protocol_aria": "开启执行流程",
+    "execution_protocol_aria": "选择执行流程",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",
@@ -144,6 +144,11 @@
     "description_placeholder": "这个智能体做什么？",
     "save": "保存",
     "cancel": "取消"
+  },
+  "execution_protocol": {
+    "option_off": "关闭",
+    "option_standard": "标准",
+    "option_trellis": "Trellis"
   },
   "skill_attach": {
     "trigger_aria": "附加工作区 skill",
@@ -205,7 +210,7 @@
     "description_placeholder": "这个智能体做什么？",
     "visibility_label": "可见性",
     "execution_protocol_label": "流程",
-    "execution_protocol_aria": "开启执行流程",
+    "execution_protocol_aria": "选择执行流程",
     "runtime_label": "运行时",
     "runtime_filter_mine": "我的",
     "runtime_filter_all": "全部",

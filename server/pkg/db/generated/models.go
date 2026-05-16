@@ -42,6 +42,7 @@ type Agent struct {
 	McpConfig                []byte             `json:"mcp_config"`
 	Model                    pgtype.Text        `json:"model"`
 	ExecutionProtocolEnabled bool               `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    string             `json:"execution_protocol_slug"`
 }
 
 type AgentRuntime struct {

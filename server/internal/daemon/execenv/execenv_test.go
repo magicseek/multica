@@ -1118,14 +1118,48 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 	})
 
+	t.Run("enabled trellis assignment renders trellis template", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ExecutionProtocolEnabled: true,
+			ExecutionProtocolSlug:    "trellis-task",
+		})
+		for _, want := range []string{
+			"## Trellis Task Protocol",
+			"`multica issue get issue-1 --output json`",
+			"`multica issue comment list issue-1 --output json`",
+			"`$trellis-continue`",
+			"`$trellis-start`",
+			"`$trellis-finish-work`",
+			"`multica issue status issue-1 in_progress`",
+			"`multica issue comment add issue-1",
+			"`multica issue status issue-1 in_review`",
+			"`multica issue status issue-1 blocked`",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("trellis execution protocol missing %q\n---\n%s", want, s)
+			}
+		}
+		for _, notWant := range []string{
+			"## Task Execution Protocol",
+			"AETHER",
+		} {
+			if strings.Contains(s, notWant) {
+				t.Errorf("trellis execution protocol unexpectedly contains %q\n---\n%s", notWant, s)
+			}
+		}
+	})
+
 	t.Run("enabled comment trigger keeps comment workflow", func(t *testing.T) {
 		t.Parallel()
 		s := readClaudeMD(t, TaskContextForEnv{
 			IssueID:                  "issue-1",
 			TriggerCommentID:         "comment-1",
 			ExecutionProtocolEnabled: true,
+			ExecutionProtocolSlug:    "trellis-task",
 		})
-		if strings.Contains(s, "## Task Execution Protocol") {
+		if strings.Contains(s, "## Task Execution Protocol") || strings.Contains(s, "## Trellis Task Protocol") {
 			t.Fatalf("execution protocol rendered for comment-triggered task:\n%s", s)
 		}
 		if !strings.Contains(s, "This task was triggered by a NEW comment") {

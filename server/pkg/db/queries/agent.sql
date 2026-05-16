@@ -20,8 +20,9 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
     runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id,
-    instructions, custom_env, custom_args, mcp_config, model, execution_protocol_enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+    instructions, custom_env, custom_args, mcp_config, model, execution_protocol_enabled,
+    execution_protocol_slug
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING *;
 
 -- name: UpdateAgent :one
@@ -41,6 +42,7 @@ UPDATE agent SET
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
     model = COALESCE(sqlc.narg('model'), model),
     execution_protocol_enabled = COALESCE(sqlc.narg('execution_protocol_enabled'), execution_protocol_enabled),
+    execution_protocol_slug = COALESCE(sqlc.narg('execution_protocol_slug'), execution_protocol_slug),
     updated_at = now()
 WHERE id = $1
 RETURNING *;

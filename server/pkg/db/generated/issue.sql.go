@@ -743,8 +743,8 @@ const lockIssueDuplicateKey = `-- name: LockIssueDuplicateKey :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
 
-func (q *Queries) LockIssueDuplicateKey(ctx context.Context, key string) error {
-	_, err := q.db.Exec(ctx, lockIssueDuplicateKey, key)
+func (q *Queries) LockIssueDuplicateKey(ctx context.Context, dollar_1 string) error {
+	_, err := q.db.Exec(ctx, lockIssueDuplicateKey, dollar_1)
 	return err
 }
 

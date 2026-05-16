@@ -1095,6 +1095,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			McpConfig:                mcpConfig,
 			Model:                    agent.Model.String,
 			ExecutionProtocolEnabled: agent.ExecutionProtocolEnabled,
+			ExecutionProtocolSlug:    agent.ExecutionProtocolSlug,
 		}
 	}
 
