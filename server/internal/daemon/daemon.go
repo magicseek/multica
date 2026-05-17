@@ -131,6 +131,11 @@ type Daemon struct {
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
 
+	// repositoryOperationLocks serializes local repository mutations inside this
+	// daemon process. The key is a binding ID when available, otherwise the
+	// repository ID for create_binding operations that create the binding path.
+	repositoryOperationLocks sync.Map // string -> *sync.Mutex
+
 	// bgSyncs tracks background goroutines started by registerTaskRepos so
 	// callers (notably tests using t.TempDir-backed cache roots) can wait for
 	// them to drain before tearing the daemon down. Without this the bg
@@ -618,6 +623,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.heartbeatLoop(ctx)
 	go d.gcLoop(ctx)
 	go d.autoUpdateLoop(ctx)
+	go d.repositoryOperationLoop(ctx)
 	go d.serveHealth(ctx, healthLn, time.Now())
 	return d.pollLoop(ctx, taskWakeups)
 }
