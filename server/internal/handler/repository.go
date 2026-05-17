@@ -593,22 +593,58 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var leadAgentID pgtype.UUID
+	var leadAgent db.Agent
 	if req.LeadAgentID != nil && strings.TrimSpace(*req.LeadAgentID) != "" {
 		leadUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.LeadAgentID), "lead_agent_id")
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 			ID:          leadUUID,
 			WorkspaceID: member.WorkspaceID,
-		}); err != nil {
+		})
+		if err != nil {
 			writeError(w, http.StatusNotFound, "lead agent not found")
 			return
 		}
+		leadAgent = agent
 		leadAgentID = leadUUID
 	}
 
-	repo, err := h.Queries.CreateRepository(r.Context(), db.CreateRepositoryParams{
+	var createBindingOperation bool
+	var targetDaemonID pgtype.Text
+	var targetRuntimeID pgtype.UUID
+	if req.SourceState == "agent_managed" && leadAgentID.Valid {
+		if !leadAgent.RuntimeID.Valid {
+			writeError(w, http.StatusBadRequest, "lead agent runtime is required for agent_managed repositories")
+			return
+		}
+		runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+			ID:          leadAgent.RuntimeID,
+			WorkspaceID: member.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "lead agent runtime not found")
+			return
+		}
+		if !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
+			writeError(w, http.StatusBadRequest, "lead agent runtime has no daemon_id")
+			return
+		}
+		createBindingOperation = true
+		targetDaemonID = pgtype.Text{String: strings.TrimSpace(runtime.DaemonID.String), Valid: true}
+		targetRuntimeID = runtime.ID
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start repository transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	repo, err := qtx.CreateRepository(r.Context(), db.CreateRepositoryParams{
 		WorkspaceID:   member.WorkspaceID,
 		Name:          req.Name,
 		SourceState:   req.SourceState,
@@ -626,6 +662,26 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to create repository")
+		return
+	}
+	if createBindingOperation {
+		if _, err := qtx.CreateRepositoryOperation(r.Context(), db.CreateRepositoryOperationParams{
+			RepositoryID:    repo.ID,
+			WorkspaceID:     member.WorkspaceID,
+			OperationType:   "create_binding",
+			Status:          "queued",
+			RequestedByType: "member",
+			RequestedByID:   parseUUID(userID),
+			TargetDaemonID:  targetDaemonID,
+			TargetRuntimeID: targetRuntimeID,
+			Request:         []byte(`{"reason":"agent_managed_start"}`),
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create repository binding operation")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit repository")
 		return
 	}
 	resp := repositoryToResponse(repo)

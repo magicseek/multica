@@ -101,6 +101,7 @@ Realtime events:
 - `repository.status = archived` means hidden from list reads and inaccessible by direct repository lookups.
 - `repository.remote_key` is workspace-unique for non-archived repositories when present.
 - Project settings store `repository_id` references only; do not copy remote URLs into project settings.
+- Agent-led project creation with no selected repository creates an `agent_managed` repository named after the project and attaches it as the primary project repository.
 - Chat sessions expose `default_repository_id` as a nullable field. Clearing it is done by sending JSON `null`.
 - Compatibility reads may synthesize read-only repository responses from old `workspace.repos` and `project_resource(github_repo)` storage. New writes must target first-class repository storage.
 - `repository_binding.local_path` is private. Return it only to the binding owner or the corresponding daemon/runtime context.
@@ -112,6 +113,7 @@ Realtime events:
 - Repository operations are a daemon-claim lifecycle with statuses `queued -> running -> succeeded|failed`.
 - Operation types currently exposed through the lifecycle are `create_binding`, `init_git`, `publish_remote`, and `refresh_binding`; do not expose operation types that have no daemon/server completion semantics.
 - `create_binding`, `init_git`, `publish_remote`, and `refresh_binding` require a target daemon. `init_git`, `publish_remote`, and `refresh_binding` require an existing binding.
+- Creating an `agent_managed` repository with a lead agent that has a daemon-backed runtime queues a `create_binding` operation targeted at that runtime/daemon. This is the from-scratch project start path; the project stores only the resulting repository id.
 - `init_git` is only valid from `local_dir` or `agent_managed`; successful completion transitions the repository to `local_git`.
 - `publish_remote` is only valid from `local_git`; successful completion requires a valid `remote_url`, transitions the repository to `remote_git`, and emits `repository:published`.
 - Daemon operation claim may be daemon-wide or runtime-scoped. If a daemon passes `runtime_id`, start/complete/fail must reject operations targeted at a sibling runtime, even when the daemon id matches.
@@ -139,6 +141,8 @@ Realtime events:
 - Duplicate non-archived `remote_key` in a workspace -> `409`.
 - `source_state=remote_git` without `remote_url` -> `400`.
 - Invalid Git remote URL -> `400`.
+- `source_state=agent_managed` with a lead agent that has no runtime -> `400`.
+- `source_state=agent_managed` with a lead agent runtime that has no daemon -> `400`.
 - Project repository reference to a missing or archived repository -> `404`.
 - More than one `primary` repository for a project -> `400`.
 - Binding create without `daemon_id` or `local_path` -> `400`.
@@ -165,6 +169,7 @@ Realtime events:
 - Good: issue task in a project with `project_repository` returns only project repositories in `task.repositories`; workspace repositories do not leak into that task.
 - Good: chat task with `default_repository_id` returns that repository as primary and does not fall back to workspace repositories.
 - Good: daemon task claim for a repository with a ready binding on another machine omits `binding` and keeps `binding_available=false`.
+- Good: creating an agent-led project without selecting repositories creates an `agent_managed` repository, queues its daemon `create_binding` operation, and attaches it as the project's primary repository.
 - Good: daemon claims the oldest queued operation for its daemon, marks it running, completes it once, and receives `409` on a second terminal completion attempt.
 - Good: `create_binding` completion stores a private binding path but returns only sanitized operation and binding summaries.
 - Good: runtime-scoped operation cannot be started by a sibling runtime on the same daemon.
@@ -183,6 +188,8 @@ Realtime events:
 - Compatibility read model: old workspace repos and project `github_repo` resources appear as compatibility repository responses.
 - Binding privacy: owner sees `local_path` and metadata; other workspace member does not.
 - Project repository references: setting primary/secondary rows validates workspace membership and primary uniqueness.
+- Project creation: agent-led project with no selected repository creates and attaches an `agent_managed` repository; member-led or planning-only project creation remains repository-optional.
+- Repository create: `agent_managed` with lead agent queues a daemon-targeted `create_binding` operation and validates the lead agent runtime/daemon.
 - Chat default repository: create, read/list, update, and clear nullable repository reference.
 - Repository operation lifecycle: create/list, daemon claim/start/complete/fail, terminal conflict behavior, cross-workspace rejection, and runtime-scoped sibling rejection.
 - Repository operation transitions: `create_binding` initializes a binding, `init_git` moves to `local_git`, and `publish_remote` moves to `remote_git` with canonical `remote_url`.

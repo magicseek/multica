@@ -185,6 +185,14 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         });
         repositoryIds.push(repo.id);
       }
+      if (repositoryIds.length === 0 && leadType === "agent" && leadId) {
+        const repo = await createRepository.mutateAsync({
+          name: title.trim(),
+          source_state: "agent_managed",
+          lead_agent_id: leadId,
+        });
+        repositoryIds.push(repo.id);
+      }
       if (repositoryIds.length > 0) {
         await api.setProjectRepositories(project.id, {
           repositories: repositoryIds.map((repository_id, index) => ({

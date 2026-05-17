@@ -165,6 +165,66 @@ func TestRepositoryLifecycle(t *testing.T) {
 	}
 }
 
+func TestCreateAgentManagedRepositoryQueuesBindingOperation(t *testing.T) {
+	var agentID, runtimeID, daemonID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT a.id::text, a.runtime_id::text, rt.daemon_id
+		FROM agent a
+		JOIN agent_runtime rt ON rt.id = a.runtime_id
+		WHERE a.workspace_id = $1 AND a.archived_at IS NULL
+		ORDER BY a.created_at ASC
+		LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID, &daemonID); err != nil {
+		t.Fatalf("load lead agent/runtime: %v", err)
+	}
+	if strings.TrimSpace(daemonID) == "" {
+		t.Fatal("test lead agent runtime has no daemon_id")
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/repositories?workspace_id="+testWorkspaceID, map[string]any{
+		"name":          "Agent managed bootstrap",
+		"source_state":  "agent_managed",
+		"lead_agent_id": agentID,
+	})
+	testHandler.CreateRepository(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateRepository(agent_managed): expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo RepositoryResponse
+	if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
+		t.Fatalf("decode CreateRepository: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM repository WHERE id = $1`, repo.ID)
+	})
+	if repo.SourceState != "agent_managed" || repo.Status != "initializing" {
+		t.Fatalf("repository = (%s, %s), want (agent_managed, initializing)", repo.SourceState, repo.Status)
+	}
+	if repo.LeadAgentID == nil || *repo.LeadAgentID != agentID {
+		t.Fatalf("lead_agent_id = %v, want %s", repo.LeadAgentID, agentID)
+	}
+
+	var operationType, status, targetDaemonID, targetRuntimeID string
+	var request []byte
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT operation_type, status, target_daemon_id, target_runtime_id::text, request
+		FROM repository_operation
+		WHERE repository_id = $1
+	`, repo.ID).Scan(&operationType, &status, &targetDaemonID, &targetRuntimeID, &request); err != nil {
+		t.Fatalf("read repository operation: %v", err)
+	}
+	if operationType != "create_binding" || status != "queued" {
+		t.Fatalf("operation = (%s, %s), want (create_binding, queued)", operationType, status)
+	}
+	if targetDaemonID != daemonID || targetRuntimeID != runtimeID {
+		t.Fatalf("operation target = (%s, %s), want (%s, %s)", targetDaemonID, targetRuntimeID, daemonID, runtimeID)
+	}
+	if !strings.Contains(string(request), "agent_managed_start") {
+		t.Fatalf("operation request = %s, want agent_managed_start reason", string(request))
+	}
+}
+
 func TestRepositoryCompatibilityReadsLegacyWorkspaceAndProjectRepos(t *testing.T) {
 	workspaceURL := "https://github.com/multica-ai/legacy-workspace-read-model.git"
 	projectURL := "git@github.com:multica-ai/legacy-project-read-model.git"

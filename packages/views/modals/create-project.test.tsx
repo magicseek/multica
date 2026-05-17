@@ -1,9 +1,18 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const longRepoUrl =
   "https://github.com/multica-ai/a-very-long-repository-name-that-needs-a-tooltip";
+
+const mocks = vi.hoisted(() => ({
+  createProject: vi.fn(),
+  createRepository: vi.fn(),
+  setProjectRepositories: vi.fn(),
+  clearDraft: vi.fn(),
+  setDraft: vi.fn(),
+  routerPush: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
@@ -29,12 +38,24 @@ vi.mock("@tanstack/react-query", () => ({
         ],
       };
     }
+    if (options.queryKey?.includes("agents")) {
+      return {
+        data: [
+          {
+            id: "agent-1",
+            name: "Builder",
+            archived_at: null,
+            runtime_id: "runtime-1",
+          },
+        ],
+      };
+    }
     return { data: [] };
   },
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
-  useCreateProject: () => ({ mutateAsync: vi.fn() }),
+  useCreateProject: () => ({ mutateAsync: mocks.createProject }),
 }));
 
 vi.mock("@multica/core/projects", () => ({
@@ -49,14 +70,20 @@ vi.mock("@multica/core/projects", () => ({
         leadId: undefined,
         icon: undefined,
       },
-      setDraft: vi.fn(),
-      clearDraft: vi.fn(),
+      setDraft: mocks.setDraft,
+      clearDraft: mocks.clearDraft,
     }),
 }));
 
 vi.mock("@multica/core/repositories", () => ({
   repositoryListOptions: () => ({ queryKey: ["repositories", "workspace-1", "list"] }),
-  useCreateRepository: () => ({ mutateAsync: vi.fn() }),
+  useCreateRepository: () => ({ mutateAsync: mocks.createRepository }),
+}));
+
+vi.mock("@multica/core/api", () => ({
+  api: {
+    setProjectRepositories: mocks.setProjectRepositories,
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -80,16 +107,19 @@ vi.mock("@multica/core/workspace/queries", () => ({
 }));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
-  useActorName: () => ({ getActorName: vi.fn() }),
+  useActorName: () => ({ getActorName: (_type: string, id: string) => id }),
 }));
 
 vi.mock("../navigation", () => ({
-  useNavigation: () => ({ push: vi.fn() }),
+  useNavigation: () => ({ push: mocks.routerPush }),
 }));
 
 vi.mock("../editor", () => {
-  const ContentEditor = React.forwardRef<HTMLTextAreaElement, { placeholder?: string }>(
-    ({ placeholder }, ref) => <textarea ref={ref} placeholder={placeholder} />,
+  const ContentEditor = React.forwardRef<{ getMarkdown: () => string }, { placeholder?: string }>(
+    ({ placeholder }, ref) => {
+      React.useImperativeHandle(ref, () => ({ getMarkdown: () => "" }), []);
+      return <textarea placeholder={placeholder} />;
+    },
   );
   ContentEditor.displayName = "ContentEditor";
 
@@ -153,16 +183,18 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
 vi.mock("@multica/ui/components/ui/button", () => ({
   Button: ({
     children,
+    className,
     disabled,
     onClick,
     type = "button",
   }: {
     children: React.ReactNode;
+    className?: string;
     disabled?: boolean;
     onClick?: () => void;
     type?: "button" | "submit" | "reset";
   }) => (
-    <button type={type} disabled={disabled} onClick={onClick}>
+    <button type={type} className={className} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   ),
@@ -187,11 +219,62 @@ vi.mock("sonner", () => ({
 import { CreateProjectModal } from "./create-project";
 
 describe("CreateProjectModal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createProject.mockResolvedValue({ id: "project-1" });
+    mocks.createRepository.mockResolvedValue({ id: "repo-agent-managed" });
+    mocks.setProjectRepositories.mockResolvedValue({ repositories: [], total: 0 });
+  });
+
   it("exposes full repository URLs in the repository picker", () => {
     render(<CreateProjectModal onClose={vi.fn()} />);
 
     const tooltipText = `${longRepoUrl} · ${longRepoUrl}`;
     expect(screen.getByTitle(tooltipText)).toHaveTextContent(longRepoUrl);
     expect(screen.getByRole("tooltip", { name: tooltipText })).toBeInTheDocument();
+  });
+
+  it("creates and attaches an agent-managed repository when an agent-led project has no selected repository", async () => {
+    const onClose = vi.fn();
+    const { container } = render(<CreateProjectModal onClose={onClose} />);
+
+    fireEvent.change(screen.getAllByRole("textbox")[0]!, {
+      target: { value: "Build from scratch" },
+    });
+    fireEvent.click(screen.getByText("Builder"));
+    const submit = container.querySelector("button.shrink-0");
+    if (!(submit instanceof HTMLButtonElement)) {
+      throw new Error("submit button not found");
+    }
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    fireEvent.click(submit);
+
+    await waitFor(() => {
+      expect(mocks.createProject).toHaveBeenCalledWith({
+        title: "Build from scratch",
+        description: undefined,
+        icon: undefined,
+        status: "planned",
+        priority: "medium",
+        lead_type: "agent",
+        lead_id: "agent-1",
+      });
+      expect(mocks.createRepository).toHaveBeenCalledWith({
+        name: "Build from scratch",
+        source_state: "agent_managed",
+        lead_agent_id: "agent-1",
+      });
+    });
+    expect(mocks.setProjectRepositories).toHaveBeenCalledWith("project-1", {
+      repositories: [
+        {
+          repository_id: "repo-agent-managed",
+          role: "primary",
+          position: 0,
+        },
+      ],
+    });
+    expect(onClose).toHaveBeenCalled();
+    expect(mocks.routerPush).toHaveBeenCalledWith("/test-workspace/projects/project-1");
   });
 });
