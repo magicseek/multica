@@ -726,6 +726,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		"device_name":       d.cfg.DeviceName,
 		"cli_version":       d.cfg.CLIVersion,
 		"launched_by":       d.cfg.LaunchedBy,
+		"health_port":       d.cfg.HealthPort,
 		"timezone":          detectLocalTimezone(),
 		"runtimes":          runtimes,
 	}

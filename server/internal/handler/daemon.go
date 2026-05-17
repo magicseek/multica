@@ -144,6 +144,7 @@ type DaemonRegisterRequest struct {
 	DeviceName      string   `json:"device_name"`
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
 	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
+	HealthPort      int      `json:"health_port"` // local health/bridge port on 127.0.0.1
 	// Timezone is the daemon host's IANA timezone (e.g. "Asia/Shanghai"),
 	// detected client-side from time.Local. The server stores it on each
 	// agent_runtime row created for this daemon so token-usage rollups
@@ -552,6 +553,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			"version":     runtime.Version,
 			"cli_version": req.CLIVersion,
 			"launched_by": req.LaunchedBy,
+			"health_port": req.HealthPort,
 		})
 
 		row, err := h.Queries.UpsertAgentRuntime(r.Context(), db.UpsertAgentRuntimeParams{

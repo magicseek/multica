@@ -108,7 +108,15 @@
     "repos_url_placeholder": "https://github.com/owner/repo 或 git@github.com:owner/repo.git",
     "repos_add": "添加",
     "repos_selected": "已选",
-    "repos_new_remote": "新的远程 Git 仓库"
+    "repos_new_remote": "新的远程 Git 仓库",
+    "repos_local_heading": "本地目录",
+    "repos_local_empty": "请先连接在线的本地运行时，才能关联本地目录。",
+    "repos_local_runtime_aria": "本地运行时",
+    "repos_choose_folder": "选择",
+    "repos_local_runtime_required": "请选择在线的本地运行时",
+    "repos_browser_path_unavailable": "无法确认 {{name}} 的绝对路径。请使用在线本地守护进程、桌面 App，或输入所选运行时能访问的路径。",
+    "repos_pick_directory_failed": "选择文件夹失败",
+    "workflow_default": "工作区 workflow"
   },
   "create_issue": {
     "sr_manual": "新建 issue",
@@ -164,8 +172,15 @@
       "sent_count": "已发送 {{count}}",
       "version_blocked_tooltip": "守护进程 CLI 必须 ≥ {{min}}",
       "toast_sent": "已交给智能体——完成后会在收件箱通知你",
+      "toast_created": "已创建并分配 issue",
+      "toast_project_created": "已创建项目",
+      "project_required_hint": "创建智能体 issue 前，请先选择一个项目。",
+      "project_create_from_prompt": "创建项目",
+      "project_creating": "创建项目中...",
       "error_agent_unavailable_fallback": "智能体不可用，请换一个。",
       "error_daemon_version": "该智能体的守护进程 CLI（{{current}}）低于要求的 {{min}}。请升级守护进程后再使用通过智能体创建。",
+      "error_project_required": "请选择项目，或基于这段描述创建一个项目。",
+      "error_project_create_failed": "创建项目失败",
       "error_unknown": "提交失败，请重试。"
     }
   }

@@ -179,6 +179,7 @@
     "name_empty": "Untitled repository",
     "url_placeholder": "https://git.example.com/org/repo.git or git@git.example.com:org/repo.git",
     "local_path_placeholder": "/Users/name/workspace/project",
+    "choose_folder_aria": "Choose folder",
     "runtime_select_aria": "Runtime",
     "runtime_select_empty": "No local runtime",
     "url_empty": "(empty URL)",
@@ -206,6 +207,8 @@
     "toast_url_required": "Repository URL is required",
     "toast_local_path_required": "Local path is required",
     "toast_runtime_required": "Select an online local runtime",
+    "toast_browser_path_unavailable": "Could not confirm an absolute path for {{name}}. Use an online local daemon, the desktop app, or enter the path visible to the selected runtime.",
+    "toast_pick_directory_failed": "Failed to choose folder",
     "toast_archived": "Repository archived",
     "toast_archive_failed": "Failed to archive repository"
   },

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   clearDraft: vi.fn(),
   setDraft: vi.fn(),
   routerPush: vi.fn(),
+  pickLocalDirectory: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -50,8 +51,57 @@ vi.mock("@tanstack/react-query", () => ({
         ],
       };
     }
+    if (options.queryKey?.includes("runtimes")) {
+      return {
+        data: [
+          {
+            id: "runtime-1",
+            workspace_id: "workspace-1",
+            daemon_id: "daemon-1",
+            name: "Troy Mac",
+            runtime_mode: "local",
+            provider: "codex",
+            launch_header: "",
+            status: "online",
+            device_info: "macOS",
+            metadata: {},
+            owner_id: "user-1",
+            visibility: "private",
+            timezone: "Asia/Shanghai",
+            last_seen_at: "2026-05-17T00:00:00Z",
+            created_at: "2026-05-17T00:00:00Z",
+            updated_at: "2026-05-17T00:00:00Z",
+          },
+        ],
+      };
+    }
+    if (options.queryKey?.includes("workflows")) {
+      return {
+        data: [
+          {
+            id: "workflow-1",
+            workspace_id: "workspace-1",
+            name: "Trellis task",
+            description: "",
+            origin: "system_seeded",
+            system_key: "trellis-task",
+            forked_from_definition_id: null,
+            current_published_revision_id: "revision-1",
+            created_by: null,
+            archived_at: null,
+            created_at: "2026-05-17T00:00:00Z",
+            updated_at: "2026-05-17T00:00:00Z",
+          },
+        ],
+      };
+    }
     return { data: [] };
   },
+}));
+
+vi.mock("@multica/core/auth", () => ({
+  useAuthStore: (selector?: (state: { user: { id: string } }) => unknown) =>
+    selector ? selector({ user: { id: "user-1" } }) : { user: { id: "user-1" } },
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
@@ -104,6 +154,14 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
   agentListOptions: () => ({ queryKey: ["agents"], queryFn: vi.fn() }),
+}));
+
+vi.mock("@multica/core/runtimes", () => ({
+  runtimeListOptions: () => ({ queryKey: ["runtimes", "workspace-1", "list"] }),
+}));
+
+vi.mock("@multica/core/workflows", () => ({
+  workflowListOptions: () => ({ queryKey: ["workflows", "workspace-1", "list"] }),
 }));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
@@ -209,6 +267,11 @@ vi.mock("@multica/ui/lib/utils", () => ({
     values.filter(Boolean).join(" "),
 }));
 
+vi.mock("../repositories/local-directory-picker", () => ({
+  pickLocalDirectory: mocks.pickLocalDirectory,
+  localDirectoryPickerHealthPort: () => null,
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -224,6 +287,11 @@ describe("CreateProjectModal", () => {
     mocks.createProject.mockResolvedValue({ id: "project-1" });
     mocks.createRepository.mockResolvedValue({ id: "repo-agent-managed" });
     mocks.setProjectRepositories.mockResolvedValue({ repositories: [], total: 0 });
+    mocks.pickLocalDirectory.mockResolvedValue({
+      source: "desktop",
+      path: "/Users/troy/workspace/local-app",
+      name: "local-app",
+    });
   });
 
   it("exposes full repository URLs in the repository picker", () => {
@@ -276,5 +344,49 @@ describe("CreateProjectModal", () => {
     });
     expect(onClose).toHaveBeenCalled();
     expect(mocks.routerPush).toHaveBeenCalledWith("/test-workspace/projects/project-1");
+  });
+
+  it("creates and attaches a local directory repository selected in the project modal", async () => {
+    const onClose = vi.fn();
+    const { container } = render(<CreateProjectModal onClose={onClose} />);
+
+    fireEvent.change(screen.getAllByRole("textbox")[0]!, {
+      target: { value: "Local app" },
+    });
+    const chooseFolder = container.querySelector('button.h-6[type="button"]');
+    if (!(chooseFolder instanceof HTMLButtonElement)) {
+      throw new Error("choose folder button not found");
+    }
+    fireEvent.click(chooseFolder);
+    const submit = container.querySelector("button.shrink-0");
+    if (!(submit instanceof HTMLButtonElement)) {
+      throw new Error("submit button not found");
+    }
+    await waitFor(() => expect(submit).not.toBeDisabled());
+    fireEvent.click(submit);
+
+    await waitFor(() => {
+      expect(mocks.createRepository).toHaveBeenCalledWith({
+        name: "local-app",
+        source_state: "local_dir",
+        binding: {
+          daemon_id: "daemon-1",
+          runtime_id: "runtime-1",
+          machine_label: "Troy Mac · macOS",
+          binding_kind: "local_dir",
+          local_path: "/Users/troy/workspace/local-app",
+          state: "ready",
+        },
+      });
+      expect(mocks.setProjectRepositories).toHaveBeenCalledWith("project-1", {
+        repositories: [
+          {
+            repository_id: "repo-agent-managed",
+            role: "primary",
+            position: 0,
+          },
+        ],
+      });
+    });
   });
 });

@@ -1,12 +1,22 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { ChevronRight, FolderGit2, Maximize2, Minimize2, X as XIcon, UserMinus } from "lucide-react";
+import { useMemo, useState, useRef } from "react";
+import {
+  ChevronRight,
+  FolderGit2,
+  FolderOpen,
+  Maximize2,
+  Minimize2,
+  Workflow,
+  X as XIcon,
+  UserMinus,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
 import { repositoryListOptions, useCreateRepository } from "@multica/core/repositories";
 import { api } from "@multica/core/api";
+import { useAuthStore } from "@multica/core/auth";
 import {
   PROJECT_STATUS_CONFIG,
   PROJECT_STATUS_ORDER,
@@ -16,7 +26,14 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { ProjectStatus, ProjectPriority, Repository } from "@multica/core/types";
+import { runtimeListOptions } from "@multica/core/runtimes";
+import { workflowListOptions } from "@multica/core/workflows";
+import type {
+  ProjectStatus,
+  ProjectPriority,
+  Repository,
+  RuntimeDevice,
+} from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -40,6 +57,14 @@ import {
   useProjectStatusLabels,
   useProjectPriorityLabels,
 } from "../projects/components/labels";
+import { localDirectoryPickerHealthPort, pickLocalDirectory } from "../repositories/local-directory-picker";
+
+type LocalRepositoryDraft = {
+  id: string;
+  name: string;
+  path: string;
+  runtimeId: string;
+};
 
 function PillButton({
   children,
@@ -98,9 +123,14 @@ function repositoryDetail(repo: Repository): string | null {
   return repo.remote_url ?? repo.remote_key ?? repo.source_state;
 }
 
+function runtimeLabel(runtime: RuntimeDevice): string {
+  return runtime.device_info ? `${runtime.name} · ${runtime.device_info}` : runtime.name;
+}
+
 export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const { t } = useT("modals");
   const router = useNavigation();
+  const user = useAuthStore((s) => s.user);
   const workspace = useCurrentWorkspace();
   const workspaceName = workspace?.name;
   const wsPaths = useWorkspacePaths();
@@ -108,6 +138,10 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: repositories = [] } = useQuery(repositoryListOptions(wsId));
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
+  const { data: workflows = [] } = useQuery(
+    workflowListOptions(wsId, { applicability: "assignment" }),
+  );
   const { getActorName } = useActorName();
   const projectStatusLabels = useProjectStatusLabels();
   const projectPriorityLabels = useProjectPriorityLabels();
@@ -130,9 +164,25 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [customRepoUrl, setCustomRepoUrl] = useState("");
   const [customRepoUrls, setCustomRepoUrls] = useState<string[]>([]);
+  const [localRepoDrafts, setLocalRepoDrafts] = useState<LocalRepositoryDraft[]>([]);
+  const [selectedLocalRuntimeId, setSelectedLocalRuntimeId] = useState("");
+  const [workflowDefinitionId, setWorkflowDefinitionId] = useState<string | null>(null);
   const selectableRepositories = repositories.filter(
     (repo) => repo.status !== "archived" && repo.compatibility !== true,
   );
+  const localRuntimes = useMemo(
+    () =>
+      runtimes.filter(
+        (runtime) =>
+          runtime.runtime_mode === "local" &&
+          runtime.status === "online" &&
+          runtime.owner_id === user?.id &&
+          Boolean(runtime.daemon_id),
+      ),
+    [runtimes, user?.id],
+  );
+  const currentWorkflow = workflows.find((workflow) => workflow.id === workflowDefinitionId);
+  const workflowLabel = currentWorkflow?.name ?? t(($) => $.create_project.workflow_default);
 
   // Sync field changes to draft store
   const updateTitle = (v: string) => { setTitle(v); setDraft({ title: v }); };
@@ -171,6 +221,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         priority,
         lead_type: leadType,
         lead_id: leadId,
+        ...(workflowDefinitionId ? { workflow_definition_id: workflowDefinitionId } : {}),
       });
       const repositoryIds = [...selectedRepositoryIds];
       for (const url of customRepoUrls) {
@@ -182,6 +233,26 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         const repo = await createRepository.mutateAsync({
           source_state: "remote_git",
           remote_url: url,
+        });
+        repositoryIds.push(repo.id);
+      }
+      for (const localRepo of localRepoDrafts) {
+        const selectedRuntime =
+          localRuntimes.find((runtime) => runtime.id === localRepo.runtimeId) ?? null;
+        if (!selectedRuntime?.daemon_id) {
+          throw new Error(t(($) => $.create_project.repos_local_runtime_required));
+        }
+        const repo = await createRepository.mutateAsync({
+          name: localRepo.name || undefined,
+          source_state: "local_dir",
+          binding: {
+            daemon_id: selectedRuntime.daemon_id,
+            runtime_id: selectedRuntime.id,
+            machine_label: runtimeLabel(selectedRuntime),
+            binding_kind: "local_dir",
+            local_path: localRepo.path,
+            state: "ready",
+          },
         });
         repositoryIds.push(repo.id);
       }
@@ -206,8 +277,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       onClose();
       toast.success(t(($) => $.create_project.toast_created));
       router.push(wsPaths.projectDetail(project.id));
-    } catch {
-      toast.error(t(($) => $.create_project.toast_failed));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t(($) => $.create_project.toast_failed));
     } finally {
       setSubmitting(false);
     }
@@ -228,7 +299,39 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     setCustomRepoUrl("");
   };
 
-  const selectedCount = selectedRepositoryIds.length + customRepoUrls.length;
+  const addLocalRepo = async () => {
+    const runtimeId = selectedLocalRuntimeId || localRuntimes[0]?.id || "";
+    if (!runtimeId) {
+      toast.error(t(($) => $.create_project.repos_local_runtime_required));
+      return;
+    }
+    try {
+      const selectedRuntime = localRuntimes.find((runtime) => runtime.id === runtimeId) ?? null;
+      const result = await pickLocalDirectory({
+        daemonId: selectedRuntime?.daemon_id,
+        healthPort: localDirectoryPickerHealthPort(selectedRuntime?.metadata),
+      });
+      if (!result) return;
+      if (!result.path) {
+        toast.error(t(($) => $.create_project.repos_browser_path_unavailable, { name: result.name }));
+        return;
+      }
+      setLocalRepoDrafts((prev) => [
+        ...prev,
+        {
+          id: `local-${Date.now()}`,
+          name: result.name,
+          path: result.path,
+          runtimeId,
+        },
+      ]);
+    } catch {
+      toast.error(t(($) => $.create_project.repos_pick_directory_failed));
+    }
+  };
+
+  const selectedCount =
+    selectedRepositoryIds.length + customRepoUrls.length + localRepoDrafts.length;
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -469,6 +572,32 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             </PopoverContent>
           </Popover>
 
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <PillButton>
+                  <Workflow className="size-3" />
+                  <span className="truncate max-w-40">{workflowLabel}</span>
+                </PillButton>
+              }
+            />
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuItem onClick={() => setWorkflowDefinitionId(null)}>
+                <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>{t(($) => $.create_project.workflow_default)}</span>
+              </DropdownMenuItem>
+              {workflows.map((workflow) => (
+                <DropdownMenuItem
+                  key={workflow.id}
+                  onClick={() => setWorkflowDefinitionId(workflow.id)}
+                >
+                  <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="truncate">{workflow.name}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <Popover open={repoPopoverOpen} onOpenChange={setRepoPopoverOpen}>
             <PopoverTrigger
               render={
@@ -544,6 +673,41 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                   {t(($) => $.create_project.repos_add)}
                 </Button>
               </form>
+              <div className="space-y-1.5 pt-1 border-t">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t(($) => $.create_project.repos_local_heading)}
+                </div>
+                {localRuntimes.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t(($) => $.create_project.repos_local_empty)}
+                  </p>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      aria-label={t(($) => $.create_project.repos_local_runtime_aria)}
+                      value={selectedLocalRuntimeId || localRuntimes[0]?.id || ""}
+                      onChange={(e) => setSelectedLocalRuntimeId(e.target.value)}
+                      className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-xs text-foreground"
+                    >
+                      {localRuntimes.map((runtime) => (
+                        <option key={runtime.id} value={runtime.id}>
+                          {runtimeLabel(runtime)}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      onClick={addLocalRepo}
+                    >
+                      <FolderOpen className="size-3" />
+                      {t(($) => $.create_project.repos_choose_folder)}
+                    </Button>
+                  </div>
+                )}
+              </div>
               {selectedCount > 0 && (
                 <div className="space-y-1 pt-1 border-t">
                   <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
@@ -590,6 +754,34 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                       </button>
                     </div>
                   ))}
+                  {localRepoDrafts.map((draft) => {
+                    const runtime = localRuntimes.find((candidate) => candidate.id === draft.runtimeId);
+                    return (
+                      <div
+                        key={draft.id}
+                        className="flex items-center gap-2 text-xs"
+                      >
+                        <FolderOpen className="size-3 text-muted-foreground" />
+                        <RepositoryText
+                          label={draft.name}
+                          detail={
+                            runtime
+                              ? `${draft.path} · ${runtimeLabel(runtime)}`
+                              : draft.path
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLocalRepoDrafts((prev) => prev.filter((item) => item.id !== draft.id))
+                          }
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <XIcon className="size-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </PopoverContent>

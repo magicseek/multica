@@ -12,6 +12,9 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
+import { useCreateProject } from "@multica/core/projects/mutations";
+import { useCreateRepository } from "@multica/core/repositories";
+import { useCreateIssue } from "@multica/core/issues/mutations";
 import {
   useQuickCreateStore,
   type QuickCreateActorType,
@@ -30,6 +33,7 @@ import type { Agent, Squad } from "@multica/core/types";
 import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
+import { WorkflowPicker } from "../workflows";
 import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
 import {
   PropertyPicker,
@@ -52,6 +56,20 @@ import { matchesPinyin } from "../editor/extensions/pinyin-match";
 type ActorSelection =
   | { type: "agent"; id: string }
   | { type: "squad"; id: string };
+
+function titleFromPrompt(prompt: string): string {
+  const firstLine =
+    prompt
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? "";
+  const stripped = firstLine
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .trim();
+  return stripped.slice(0, 160) || "Untitled issue";
+}
 
 // AgentCreatePanel — agent-mode body of the create-issue dialog. Renders
 // only the inner content; the surrounding `<Dialog>` AND `<DialogContent>`
@@ -94,6 +112,9 @@ export function AgentCreatePanel({
   const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
     projectListOptions(wsId),
   );
+  const createIssueMutation = useCreateIssue();
+  const createProjectMutation = useCreateProject();
+  const createRepositoryMutation = useCreateRepository(wsId);
 
   const memberRole = useMemo(
     () => members.find((m) => m.user_id === userId)?.role,
@@ -200,6 +221,10 @@ export function AgentCreatePanel({
     const seed = (data?.project_id as string | undefined) ?? lastProjectId;
     return seed ?? null;
   });
+  const [workflowOverrideDefinitionId, setWorkflowOverrideDefinitionId] =
+    useState<string | null>(
+      (data?.workflow_override_definition_id as string | null) ?? null,
+    );
 
   // Stale-id sweep. Once the project list query has actually resolved
   // (`isSuccess` — distinct from "data is the empty default during loading"),
@@ -244,6 +269,7 @@ export function AgentCreatePanel({
   const editorRef = useRef<ContentEditorRef>(null);
   const [hasContent, setHasContent] = useState(initialPrompt.trim().length > 0);
   const [submitting, setSubmitting] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [justSent, setJustSent] = useState(false);
   const [sentCount, setSentCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -271,21 +297,30 @@ export function AgentCreatePanel({
   const submit = async () => {
     const md = editorRef.current?.getMarkdown()?.trim() ?? "";
     if (!md || !actor || submitting || versionBlocked || uploading) return;
+    if (!projectId) {
+      setError(t(($) => $.create_issue.agent.error_project_required));
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await api.quickCreateIssue({
-        ...(actor.type === "agent"
-          ? { agent_id: actor.id }
-          : { squad_id: actor.id }),
-        prompt: md,
-        project_id: projectId ?? undefined,
+      await createIssueMutation.mutateAsync({
+        title: titleFromPrompt(md),
+        description: md,
+        status: "todo",
+        priority: "none",
+        assignee_type: actor.type,
+        assignee_id: actor.id,
+        project_id: projectId,
+        ...(workflowOverrideDefinitionId
+          ? { workflow_override_definition_id: workflowOverrideDefinitionId }
+          : {}),
       });
       setLastActor(actor.type, actor.id);
       setLastProjectId(projectId);
       clearPrompt();
       setLastMode("agent");
-      toast.success(t(($) => $.create_issue.agent.toast_sent), {
+      toast.success(t(($) => $.create_issue.agent.toast_created), {
         duration: 4000,
       });
       if (keepOpen) {
@@ -333,9 +368,51 @@ export function AgentCreatePanel({
           return;
         }
       }
-      setError(t(($) => $.create_issue.agent.error_unknown));
+      setError(e instanceof Error ? e.message : t(($) => $.create_issue.agent.error_unknown));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const createProjectFromPrompt = async () => {
+    const md = editorRef.current?.getMarkdown()?.trim() ?? "";
+    if (!md || !actor || !selectedAgent || creatingProject) return;
+    setCreatingProject(true);
+    setError(null);
+    const projectTitle = titleFromPrompt(md);
+    try {
+      const project = await createProjectMutation.mutateAsync({
+        title: projectTitle,
+        description: md,
+        status: "planned",
+        priority: "medium",
+        lead_type: "agent",
+        lead_id: selectedAgent.id,
+        ...(workflowOverrideDefinitionId
+          ? { workflow_definition_id: workflowOverrideDefinitionId }
+          : {}),
+      });
+      const repo = await createRepositoryMutation.mutateAsync({
+        name: projectTitle,
+        source_state: "agent_managed",
+        lead_agent_id: selectedAgent.id,
+      });
+      await api.setProjectRepositories(project.id, {
+        repositories: [
+          {
+            repository_id: repo.id,
+            role: "primary",
+            position: 0,
+          },
+        ],
+      });
+      setProjectId(project.id);
+      setLastProjectId(project.id);
+      toast.success(t(($) => $.create_issue.agent.toast_project_created));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t(($) => $.create_issue.agent.error_project_create_failed));
+    } finally {
+      setCreatingProject(false);
     }
   };
 
@@ -358,7 +435,12 @@ export function AgentCreatePanel({
     // channel that already carries agent_id / parent_issue_id. The manual
     // panel reads `data.project_id` on mount; this preserves the user's
     // selection across the mode flip without piping a third store through.
-    onSwitchMode?.(projectId ? { project_id: projectId } : null);
+    onSwitchMode?.({
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(workflowOverrideDefinitionId
+        ? { workflow_override_definition_id: workflowOverrideDefinitionId }
+        : {}),
+    });
   };
 
   return (
@@ -428,6 +510,24 @@ export function AgentCreatePanel({
           </div>
         )}
 
+        {!projectId && (
+          <div className="mx-5 mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            <span>{t(($) => $.create_issue.agent.project_required_hint)}</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs"
+              onClick={createProjectFromPrompt}
+              disabled={!hasContent || !actor || !selectedAgent || creatingProject}
+            >
+              {creatingProject
+                ? t(($) => $.create_issue.agent.project_creating)
+                : t(($) => $.create_issue.agent.project_create_from_prompt)}
+            </Button>
+          </div>
+        )}
+
         {/* Prompt — same rich editor Advanced uses, so paste/drop images,
             mentions, and formatting all work. The dropZone wrapper enables
             drag-and-drop file uploads alongside paste. */}
@@ -471,6 +571,17 @@ export function AgentCreatePanel({
             triggerRender={<PillButton />}
             align="start"
           />
+          <WorkflowPicker
+            workflowId={workflowOverrideDefinitionId}
+            onUpdate={(u) =>
+              setWorkflowOverrideDefinitionId(
+                u.workflow_override_definition_id ?? null,
+              )
+            }
+            triggerRender={<PillButton />}
+            align="start"
+            projectId={projectId}
+          />
         </div>
 
         {/* Footer */}
@@ -508,7 +619,7 @@ export function AgentCreatePanel({
             <Button
               size="sm"
               onClick={submit}
-              disabled={!hasContent || !actor || submitting || versionBlocked || uploading}
+              disabled={!hasContent || !actor || !projectId || submitting || versionBlocked || uploading}
               title={
                 versionBlocked
                   ? t(($) => $.create_issue.agent.version_blocked_tooltip, { min: versionCheck.min })

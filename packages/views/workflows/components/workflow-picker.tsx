@@ -3,6 +3,7 @@
 import { Check, Workflow, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { projectListOptions } from "@multica/core/projects/queries";
 import { workflowListOptions } from "@multica/core/workflows";
 import type { UpdateIssueRequest } from "@multica/core/types";
 import {
@@ -20,19 +21,28 @@ export function WorkflowPicker({
   triggerRender,
   align = "start",
   defaultOpen = false,
+  projectId = null,
 }: {
   workflowId: string | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
   triggerRender?: React.ReactElement;
   align?: "start" | "center" | "end";
   defaultOpen?: boolean;
+  projectId?: string | null;
 }) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
   const { data: workflows = [] } = useQuery(
     workflowListOptions(wsId, { applicability: "assignment" }),
   );
+  const { data: projects = [] } = useQuery(projectListOptions(wsId));
   const current = workflows.find((w) => w.id === workflowId);
+  const projectWorkflowId =
+    projects.find((project) => project.id === projectId)?.workflow_definition_id ?? null;
+  const projectWorkflow = workflows.find((workflow) => workflow.id === projectWorkflowId);
+  const inheritedLabel = projectWorkflow
+    ? t(($) => $.picker.project_default_named, { name: projectWorkflow.name })
+    : t(($) => $.picker.project_default);
 
   return (
     <DropdownMenu defaultOpen={defaultOpen}>
@@ -46,7 +56,7 @@ export function WorkflowPicker({
       >
         <Workflow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate">
-          {current ? current.name : t(($) => $.picker.project_default)}
+          {current ? current.name : inheritedLabel}
         </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align={align} className="w-60">
@@ -54,7 +64,7 @@ export function WorkflowPicker({
           onClick={() => onUpdate({ workflow_override_definition_id: null })}
         >
           <Workflow className="h-3.5 w-3.5 text-muted-foreground" />
-          {t(($) => $.picker.project_default)}
+          <span className="truncate">{inheritedLabel}</span>
           {!workflowId && <Check className="ml-auto h-3.5 w-3.5 shrink-0" />}
         </DropdownMenuItem>
         {workflows.length > 0 && <DropdownMenuSeparator />}

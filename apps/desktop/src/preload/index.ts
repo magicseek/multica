@@ -94,6 +94,8 @@ const desktopAPI = {
    *  avoids browser rendering of HTML files on Linux.
    *  On non-desktop platforms this property is undefined. */
   downloadURL: (url: string) => ipcRenderer.invoke("file:download-url", url),
+  /** Show the native directory picker and return the selected absolute path. */
+  selectDirectory: () => ipcRenderer.invoke("file:select-directory"),
   /** Toggle immersive mode — hide macOS traffic lights for full-screen modals */
   setImmersiveMode: (immersive: boolean) =>
     ipcRenderer.invoke("window:setImmersive", immersive),

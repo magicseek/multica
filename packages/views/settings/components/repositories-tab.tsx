@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Save, Plus, Trash2, Pencil, X, FolderGit2, Loader2 } from "lucide-react";
+import { Save, Plus, Trash2, Pencil, X, FolderGit2, Loader2, FolderOpen } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
@@ -20,6 +20,7 @@ import {
 } from "@multica/core/repositories";
 import type { Repository, RepositorySourceState, RuntimeDevice } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { localDirectoryPickerHealthPort, pickLocalDirectory } from "../../repositories/local-directory-picker";
 
 type Draft = {
   name: string;
@@ -166,6 +167,27 @@ export function RepositoriesTab() {
       ...prev,
       [id]: { ...(prev[id] ?? { name: "", remoteUrl: "", localPath: "", runtimeId: "" }), ...patch },
     }));
+  };
+
+  const handlePickLocalPath = async (id: string, draft: Draft) => {
+    try {
+      const selectedRuntime = localRuntimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
+      const result = await pickLocalDirectory({
+        daemonId: selectedRuntime?.daemon_id,
+        healthPort: localDirectoryPickerHealthPort(selectedRuntime?.metadata),
+      });
+      if (!result) return;
+      if (!result.path) {
+        toast.error(t(($) => $.repositories.toast_browser_path_unavailable, { name: result.name }));
+        return;
+      }
+      handleDraftChange(id, {
+        localPath: result.path,
+        name: draft.name.trim() ? draft.name : result.name,
+      });
+    } catch {
+      toast.error(t(($) => $.repositories.toast_pick_directory_failed));
+    }
   };
 
   const clearEditing = (id: string) => {
@@ -332,16 +354,29 @@ export function RepositoriesTab() {
                         )}
                         {row.kind === "new" && row.draft.source_state === "local_dir" && (
                           <>
-                            <Input
-                              type="text"
-                              value={draft.localPath}
-                              onChange={(e) =>
-                                handleDraftChange(id, { localPath: e.target.value })
-                              }
-                              disabled={!canEditRow || saving}
-                              placeholder={t(($) => $.repositories.local_path_placeholder)}
-                              className="min-w-0 font-mono text-xs"
-                            />
+                            <div className="flex min-w-0 gap-1">
+                              <Input
+                                type="text"
+                                value={draft.localPath}
+                                onChange={(e) =>
+                                  handleDraftChange(id, { localPath: e.target.value })
+                                }
+                                disabled={!canEditRow || saving}
+                                placeholder={t(($) => $.repositories.local_path_placeholder)}
+                                className="min-w-0 font-mono text-xs"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                aria-label={t(($) => $.repositories.choose_folder_aria)}
+                                onClick={() => handlePickLocalPath(id, draft)}
+                                disabled={!canEditRow || saving}
+                                className="shrink-0"
+                              >
+                                <FolderOpen className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                             <select
                               aria-label={t(($) => $.repositories.runtime_select_aria)}
                               value={draft.runtimeId}

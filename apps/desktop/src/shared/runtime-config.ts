@@ -33,6 +33,26 @@ export interface RuntimeConfigEnv {
   appUrl?: string;
 }
 
+export interface DesktopDevProcessEnv {
+  VITE_API_URL?: string;
+  VITE_WS_URL?: string;
+  VITE_APP_URL?: string;
+  NEXT_PUBLIC_API_URL?: string;
+  NEXT_PUBLIC_WS_URL?: string;
+  MULTICA_APP_URL?: string;
+  FRONTEND_ORIGIN?: string;
+}
+
+export function runtimeConfigEnvFromDesktopDevProcess(
+  env: DesktopDevProcessEnv,
+): RuntimeConfigEnv {
+  return {
+    apiUrl: env.VITE_API_URL || env.NEXT_PUBLIC_API_URL,
+    wsUrl: env.VITE_WS_URL || env.NEXT_PUBLIC_WS_URL,
+    appUrl: env.VITE_APP_URL || env.MULTICA_APP_URL || env.FRONTEND_ORIGIN,
+  };
+}
+
 export function runtimeConfigFromDevEnv(env: RuntimeConfigEnv): RuntimeConfig {
   const apiUrl = normalizeHttpUrl(
     env.apiUrl || LOCAL_DEV_RUNTIME_CONFIG.apiUrl,

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
@@ -118,6 +120,7 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", d.healthHandler(startedAt))
 	mux.HandleFunc("/shutdown", d.shutdownHandler())
+	mux.HandleFunc("/folder/select", d.selectFolderHandler())
 
 	mux.HandleFunc("/repo/checkout", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -188,4 +191,92 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		d.logger.Warn("health server error", "error", err)
 	}
+}
+
+func (d *Daemon) selectFolderHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !allowLocalBridgeRequest(w, r) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		expectedDaemonID := strings.TrimSpace(r.URL.Query().Get("daemon_id"))
+		if expectedDaemonID != "" && d.cfg.DaemonID != "" && expectedDaemonID != d.cfg.DaemonID {
+			writeFolderSelectJSON(w, http.StatusConflict, map[string]any{
+				"success":   false,
+				"error":     "daemon_id_mismatch",
+				"daemon_id": d.cfg.DaemonID,
+			})
+			return
+		}
+
+		path, err := openNativeFolderDialogFn()
+		if err != nil {
+			writeFolderSelectJSON(w, http.StatusInternalServerError, map[string]any{
+				"success":   false,
+				"error":     err.Error(),
+				"daemon_id": d.cfg.DaemonID,
+			})
+			return
+		}
+		writeFolderSelectJSON(w, http.StatusOK, map[string]any{
+			"success":   true,
+			"canceled":  path == "",
+			"path":      path,
+			"daemon_id": d.cfg.DaemonID,
+		})
+	}
+}
+
+func allowLocalBridgeRequest(w http.ResponseWriter, r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	if !isAllowedLocalBridgeOrigin(origin) {
+		return false
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	w.Header().Add("Vary", "Origin")
+	w.Header().Add("Vary", "Access-Control-Request-Private-Network")
+	return true
+}
+
+func isAllowedLocalBridgeOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	if origin == "https://app.multica.ai" || origin == "https://multica.ai" {
+		return true
+	}
+	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN", "CORS_ALLOWED_ORIGINS"} {
+		for _, allowed := range strings.Split(os.Getenv(key), ",") {
+			if strings.TrimSpace(allowed) == origin {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func writeFolderSelectJSON(w http.ResponseWriter, status int, body map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }

@@ -1118,7 +1118,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 }
 
 // FailTask marks a task as failed.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// Assignment issue failures are moved to blocked when no retry is pending.
 //
 // sessionID/workDir are optional: when the agent established a real session
 // before failing (e.g. crashed mid-conversation, was cancelled, or hit a
@@ -1201,6 +1201,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// the new task will surface its own status to the user, and we don't
 	// want to spam the issue with "task timed out" messages on every
 	// daemon hiccup.
+	if task.IssueID.Valid && retried == nil {
+		s.markIssueBlockedAfterTaskFailure(ctx, task)
+	}
 	if errMsg != "" && task.IssueID.Valid && retried == nil {
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(errMsg), "system", task.TriggerCommentID)
 	}
@@ -1246,6 +1249,38 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
 
 	return &task, nil
+}
+
+func (s *TaskService) markIssueBlockedAfterTaskFailure(ctx context.Context, task db.AgentTaskQueue) {
+	if !task.IssueID.Valid || task.TriggerCommentID.Valid || task.ChatSessionID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("mark failed task issue blocked: load issue failed",
+			"issue_id", util.UUIDToString(task.IssueID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	switch issue.Status {
+	case "blocked", "done", "cancelled":
+		return
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:     task.IssueID,
+		Status: "blocked",
+	})
+	if err != nil {
+		slog.Warn("mark failed task issue blocked: update issue failed",
+			"issue_id", util.UUIDToString(task.IssueID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	s.broadcastIssueUpdated(updated)
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
@@ -1399,9 +1434,8 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 
 // HandleFailedTasks runs the post-failure side effects for a batch of
 // freshly-failed tasks: optional auto-retry, task:failed event broadcast,
-// agent status reconciliation, and (when an issue has no remaining active
-// task and isn't being retried) resetting the issue back to todo so the
-// daemon can pick it up again.
+// agent status reconciliation, and (when an assignment issue has no remaining
+// active task and isn't being retried) marking the issue blocked.
 //
 // All callers that surface a task as failed — sweepers, FailTask,
 // recover-orphans — funnel through here so the same UI-consistency
@@ -1436,10 +1470,11 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
 				workspaceID = util.UUIDToString(issue.WorkspaceID)
-				// Reset stuck in_progress issues only when no other active
-				// task exists for the issue and no retry was just enqueued.
+				// Mark stuck in_progress assignment issues blocked only when
+				// no other active task exists for the issue and no retry was
+				// just enqueued.
 				issueKey := util.UUIDToString(t.IssueID)
-				if issue.Status == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
+				if !t.TriggerCommentID.Valid && !t.ChatSessionID.Valid && issue.Status == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
 					processedIssues[issueKey] = true
 					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
 					if checkErr != nil {
@@ -1448,14 +1483,17 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 							"error", checkErr,
 						)
 					} else if !hasActive {
-						if _, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+						updated, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 							ID:     t.IssueID,
-							Status: "todo",
-						}); updateErr != nil {
-							slog.Warn("handle failed tasks: reset stuck issue failed",
+							Status: "blocked",
+						})
+						if updateErr != nil {
+							slog.Warn("handle failed tasks: mark issue blocked failed",
 								"issue_id", issueKey,
 								"error", updateErr,
 							)
+						} else {
+							s.broadcastIssueUpdated(updated)
 						}
 					}
 				}

@@ -3,6 +3,7 @@ import {
   DEFAULT_RUNTIME_CONFIG,
   deriveWsUrl,
   parseRuntimeConfig,
+  runtimeConfigEnvFromDesktopDevProcess,
   runtimeConfigFromDevEnv,
 } from "./runtime-config";
 
@@ -107,6 +108,40 @@ describe("runtime config", () => {
       apiUrl: "http://dev-api.example.test:8080",
       wsUrl: "ws://dev-api.example.test:8080/ws",
       appUrl: "http://dev-app.example.test:3000",
+    });
+  });
+
+  it("builds dev config from worktree env names", () => {
+    expect(
+      runtimeConfigFromDevEnv(
+        runtimeConfigEnvFromDesktopDevProcess({
+          NEXT_PUBLIC_API_URL: "http://localhost:18889",
+          NEXT_PUBLIC_WS_URL: "ws://localhost:18889/ws",
+          MULTICA_APP_URL: "http://localhost:13809",
+        }),
+      ),
+    ).toEqual({
+      schemaVersion: 1,
+      apiUrl: "http://localhost:18889",
+      wsUrl: "ws://localhost:18889/ws",
+      appUrl: "http://localhost:13809",
+    });
+  });
+
+  it("lets VITE dev config override worktree env names", () => {
+    expect(
+      runtimeConfigEnvFromDesktopDevProcess({
+        VITE_API_URL: "http://localhost:18889",
+        VITE_WS_URL: "ws://localhost:18889/ws",
+        VITE_APP_URL: "http://localhost:13809",
+        NEXT_PUBLIC_API_URL: "http://localhost:8080",
+        NEXT_PUBLIC_WS_URL: "ws://localhost:8080/ws",
+        MULTICA_APP_URL: "http://localhost:3000",
+      }),
+    ).toEqual({
+      apiUrl: "http://localhost:18889",
+      wsUrl: "ws://localhost:18889/ws",
+      appUrl: "http://localhost:13809",
     });
   });
 

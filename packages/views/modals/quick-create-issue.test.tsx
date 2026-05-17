@@ -3,7 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const mockQuickCreateIssue = vi.hoisted(() => vi.fn());
+const mockCreateIssue = vi.hoisted(() => vi.fn());
+const mockCreateProject = vi.hoisted(() => vi.fn());
+const mockCreateRepository = vi.hoisted(() => vi.fn());
+const mockSetProjectRepositories = vi.hoisted(() => vi.fn());
 const mockSetLastActor = vi.hoisted(() => vi.fn());
 const mockSetLastProjectId = vi.hoisted(() => vi.fn());
 const mockSetPrompt = vi.hoisted(() => vi.fn());
@@ -29,7 +32,7 @@ const mockQuickCreateStore = {
 // "loaded as empty" (the deleted-project case) and "still loading" without
 // re-mocking the whole module.
 const mockProjectsQuery = vi.hoisted(() => ({
-  data: [] as Array<{ id: string; title: string; icon: string | null }>,
+  data: [] as Array<{ id: string; title: string; icon: string | null; workflow_definition_id?: string | null }>,
   isSuccess: true,
 }));
 
@@ -66,11 +69,23 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    quickCreateIssue: mockQuickCreateIssue,
+    setProjectRepositories: mockSetProjectRepositories,
   },
   ApiError: class ApiError extends Error {
     body?: unknown;
   },
+}));
+
+vi.mock("@multica/core/issues/mutations", () => ({
+  useCreateIssue: () => ({ mutateAsync: mockCreateIssue }),
+}));
+
+vi.mock("@multica/core/projects/mutations", () => ({
+  useCreateProject: () => ({ mutateAsync: mockCreateProject }),
+}));
+
+vi.mock("@multica/core/repositories", () => ({
+  useCreateRepository: () => ({ mutateAsync: mockCreateRepository }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -134,6 +149,10 @@ vi.mock("../issues/components", () => ({
 
 vi.mock("../projects/components/project-picker", () => ({
   ProjectPicker: () => <div data-testid="project-picker" />,
+}));
+
+vi.mock("../workflows", () => ({
+  WorkflowPicker: () => <div data-testid="workflow-picker" />,
 }));
 
 vi.mock("../common/pill-button", () => ({
@@ -232,8 +251,18 @@ vi.mock("../issues/components/pickers/property-picker", () => ({
 }));
 
 vi.mock("@multica/ui/components/ui/button", () => ({
-  Button: ({ children, disabled, onClick }: { children: ReactNode; disabled?: boolean; onClick?: () => void }) => (
-    <button type="button" disabled={disabled} onClick={onClick}>
+  Button: ({
+    children,
+    disabled,
+    onClick,
+    type = "button",
+  }: {
+    children: ReactNode;
+    disabled?: boolean;
+    onClick?: () => void;
+    type?: "button" | "submit" | "reset";
+  }) => (
+    <button type={type} disabled={disabled} onClick={onClick}>
       {children}
     </button>
   ),
@@ -280,13 +309,18 @@ describe("AgentCreatePanel", () => {
     vi.clearAllMocks();
     mockQuickCreateStore.lastActorType = null;
     mockQuickCreateStore.lastActorId = null;
-    mockQuickCreateStore.lastProjectId = null;
+    mockQuickCreateStore.lastProjectId = "proj-1";
     mockQuickCreateStore.prompt = "Persisted draft prompt";
     mockQuickCreateStore.keepOpen = false;
-    mockProjectsQuery.data = [];
+    mockProjectsQuery.data = [
+      { id: "proj-1", title: "Vokly", icon: null, workflow_definition_id: null },
+    ];
     mockProjectsQuery.isSuccess = true;
     mockSquadsData.list = [];
-    mockQuickCreateIssue.mockResolvedValue(undefined);
+    mockCreateIssue.mockResolvedValue({ id: "issue-1", status: "todo" });
+    mockCreateProject.mockResolvedValue({ id: "project-new" });
+    mockCreateRepository.mockResolvedValue({ id: "repo-new" });
+    mockSetProjectRepositories.mockResolvedValue({ repositories: [], total: 0 });
     mockSetKeepOpen.mockImplementation((value: boolean) => {
       mockQuickCreateStore.keepOpen = value;
     });
@@ -319,17 +353,19 @@ describe("AgentCreatePanel", () => {
     await user.click(screen.getByRole("button", { name: /^Create \(/i }));
 
     await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        agent_id: "agent-1",
-        prompt: "New agent prompt",
-        project_id: undefined,
+      expect(mockCreateIssue).toHaveBeenCalledWith({
+        title: "New agent prompt",
+        description: "New agent prompt",
+        status: "todo",
+        priority: "none",
+        assignee_type: "agent",
+        assignee_id: "agent-1",
+        project_id: "proj-1",
       });
     });
 
     expect(mockSetLastActor).toHaveBeenCalledWith("agent", "agent-1");
-    // No project picked → persisted project preference is cleared so the
-    // store stays in sync with the actual outgoing request.
-    expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
+    expect(mockSetLastProjectId).toHaveBeenCalledWith("proj-1");
     expect(mockClearPrompt).toHaveBeenCalled();
     expect(mockSetLastMode).toHaveBeenCalledWith("agent");
     expect(onClose).toHaveBeenCalled();
@@ -361,13 +397,60 @@ describe("AgentCreatePanel", () => {
     await user.click(screen.getByRole("button", { name: /^Create \(/i }));
 
     await waitFor(() => {
-      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
-        squad_id: "squad-1",
-        prompt: "Investigate the regression",
-        project_id: undefined,
+      expect(mockCreateIssue).toHaveBeenCalledWith({
+        title: "Investigate the regression",
+        description: "Investigate the regression",
+        status: "todo",
+        priority: "none",
+        assignee_type: "squad",
+        assignee_id: "squad-1",
+        project_id: "proj-1",
       });
     });
     expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-1");
+  });
+
+  it("creates an explicit project from the prompt when no project is selected", async () => {
+    mockQuickCreateStore.lastProjectId = null;
+    mockProjectsQuery.data = [];
+    mockProjectsQuery.isSuccess = true;
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const editor = screen.getByPlaceholderText(
+      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Kick Off Open Source Typeless Project\n\nUse TypeScript");
+
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => {
+      expect(mockCreateProject).toHaveBeenCalledWith({
+        title: "Kick Off Open Source Typeless Project",
+        description: "Kick Off Open Source Typeless Project\n\nUse TypeScript",
+        status: "planned",
+        priority: "medium",
+        lead_type: "agent",
+        lead_id: "agent-1",
+      });
+      expect(mockCreateRepository).toHaveBeenCalledWith({
+        name: "Kick Off Open Source Typeless Project",
+        source_state: "agent_managed",
+        lead_agent_id: "agent-1",
+      });
+      expect(mockSetProjectRepositories).toHaveBeenCalledWith("project-new", {
+        repositories: [
+          {
+            repository_id: "repo-new",
+            role: "primary",
+            position: 0,
+          },
+        ],
+      });
+    });
+    expect(mockSetLastProjectId).toHaveBeenCalledWith("project-new");
   });
 
   // Squads whose leader agent isn't visible (archived, private, etc.) must

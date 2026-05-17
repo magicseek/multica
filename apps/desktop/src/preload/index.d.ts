@@ -22,6 +22,11 @@ interface DesktopAPI {
   /** Download a file by URL through Electron's native download system.
    *  Shows a native save dialog. On non-desktop platforms this is undefined. */
   downloadURL: (url: string) => Promise<void>;
+  /** Show the native directory picker and return the selected absolute path. */
+  selectDirectory: () => Promise<
+    | { canceled: true }
+    | { canceled: false; path: string }
+  >;
   /** Hide macOS traffic lights for full-screen modals; restore when false. */
   setImmersiveMode: (immersive: boolean) => Promise<void>;
   /** Show a native OS notification for a new inbox item. */

@@ -108,7 +108,15 @@
     "repos_url_placeholder": "https://github.com/owner/repo or git@github.com:owner/repo.git",
     "repos_add": "Add",
     "repos_selected": "Selected",
-    "repos_new_remote": "New remote Git repository"
+    "repos_new_remote": "New remote Git repository",
+    "repos_local_heading": "Local directory",
+    "repos_local_empty": "Connect an online local runtime to attach a local directory.",
+    "repos_local_runtime_aria": "Local runtime",
+    "repos_choose_folder": "Choose",
+    "repos_local_runtime_required": "Select an online local runtime",
+    "repos_browser_path_unavailable": "Could not confirm an absolute path for {{name}}. Use an online local daemon, the desktop app, or enter the path visible to the selected runtime.",
+    "repos_pick_directory_failed": "Failed to choose folder",
+    "workflow_default": "Workspace workflow"
   },
   "create_issue": {
     "sr_manual": "New Issue",
@@ -164,8 +172,15 @@
       "sent_count": "{{count}} sent",
       "version_blocked_tooltip": "Daemon CLI must be ≥ {{min}}",
       "toast_sent": "Sent to agent — you'll get an inbox notification when it's done",
+      "toast_created": "Issue created and assigned",
+      "toast_project_created": "Project created",
+      "project_required_hint": "Choose a project before creating the agent issue.",
+      "project_create_from_prompt": "Create project",
+      "project_creating": "Creating project...",
       "error_agent_unavailable_fallback": "Agent is unavailable. Pick another agent.",
       "error_daemon_version": "This agent's daemon CLI ({{current}}) is below the required {{min}}. Upgrade the daemon to use Create with agent.",
+      "error_project_required": "Choose a project, or create one from this prompt.",
+      "error_project_create_failed": "Failed to create project",
       "error_unknown": "Failed to submit. Try again."
     }
   }

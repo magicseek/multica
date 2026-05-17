@@ -300,6 +300,9 @@ export function ManualCreatePanel({
           ? { squad_id: assigneeId }
           : {}),
       ...(projectId ? { project_id: projectId } : {}),
+      ...(workflowOverrideDefinitionId
+        ? { workflow_override_definition_id: workflowOverrideDefinitionId }
+        : {}),
     });
   };
 
@@ -450,6 +453,7 @@ export function ManualCreatePanel({
                 }
                 triggerRender={<PillButton />}
                 align="start"
+                projectId={projectId ?? null}
               />
 
               {/* Parent chip — appears when parent is set.

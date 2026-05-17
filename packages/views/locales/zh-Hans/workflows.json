@@ -83,6 +83,7 @@
   },
   "picker": {
     "project_default": "项目 workflow",
+    "project_default_named": "项目 workflow：{{name}}",
     "clear_override": "清除覆盖"
   },
   "new_workflow": {

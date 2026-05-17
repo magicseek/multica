@@ -133,6 +133,75 @@ func TestShutdownHandlerRejectsNonPost(t *testing.T) {
 	}
 }
 
+func TestSelectFolderHandlerReturnsNativePath(t *testing.T) {
+	old := openNativeFolderDialogFn
+	openNativeFolderDialogFn = func() (string, error) {
+		return "/Users/troy/workspace/codex-mobile", nil
+	}
+	t.Cleanup(func() { openNativeFolderDialogFn = old })
+
+	d := &Daemon{cfg: Config{DaemonID: "daemon-1"}}
+	req := httptest.NewRequest(http.MethodGet, "/folder/select?daemon_id=daemon-1", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	rec := httptest.NewRecorder()
+
+	d.selectFolderHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["path"] != "/Users/troy/workspace/codex-mobile" || resp["canceled"] != false {
+		t.Fatalf("unexpected response: %#v", resp)
+	}
+}
+
+func TestSelectFolderHandlerRejectsDaemonMismatch(t *testing.T) {
+	called := false
+	old := openNativeFolderDialogFn
+	openNativeFolderDialogFn = func() (string, error) {
+		called = true
+		return "/tmp/should-not-open", nil
+	}
+	t.Cleanup(func() { openNativeFolderDialogFn = old })
+
+	d := &Daemon{cfg: Config{DaemonID: "daemon-local"}}
+	req := httptest.NewRequest(http.MethodGet, "/folder/select?daemon_id=daemon-remote", nil)
+	rec := httptest.NewRecorder()
+
+	d.selectFolderHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("native picker should not open for a daemon_id mismatch")
+	}
+}
+
+func TestSelectFolderHandlerHandlesPrivateNetworkPreflight(t *testing.T) {
+	d := &Daemon{cfg: Config{DaemonID: "daemon-1"}}
+	req := httptest.NewRequest(http.MethodOptions, "/folder/select", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:3000")
+	req.Header.Set("Access-Control-Request-Private-Network", "true")
+	rec := httptest.NewRecorder()
+
+	d.selectFolderHandler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Private-Network = %q", got)
+	}
+}
+
 func TestHealthHandlerRespondsWhileTaskRepoLookupWaits(t *testing.T) {
 	const workspaceID = "ws-health"
 	const repoURL = "https://github.com/org/repo.git"

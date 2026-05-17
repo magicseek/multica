@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, Notification } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
@@ -9,6 +9,7 @@ import { openExternalSafely, downloadURLSafely } from "./external-url";
 import { installContextMenu } from "./context-menu";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
+import { runtimeConfigEnvFromDesktopDevProcess } from "../shared/runtime-config";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
@@ -283,13 +284,14 @@ if (!gotTheLock) {
     runtimeConfigResult = await loadRuntimeConfig({
       isDev: is.dev,
       // electron-vite exposes VITE_* on import.meta.env for the main process;
-      // keep dev URL overrides on the same source the renderer used before
-      // runtime config moved endpoint resolution into main/preload.
-      env: {
-        apiUrl: viteEnv.VITE_API_URL,
-        wsUrl: viteEnv.VITE_WS_URL,
-        appUrl: viteEnv.VITE_APP_URL,
-      },
+      // worktree dev runs usually provide NEXT_PUBLIC_* / MULTICA_APP_URL via
+      // .env.worktree, so accept both sources with VITE_* taking precedence.
+      env: runtimeConfigEnvFromDesktopDevProcess({
+        ...process.env,
+        VITE_API_URL: viteEnv.VITE_API_URL || process.env.VITE_API_URL,
+        VITE_WS_URL: viteEnv.VITE_WS_URL || process.env.VITE_WS_URL,
+        VITE_APP_URL: viteEnv.VITE_APP_URL || process.env.VITE_APP_URL,
+      }),
     });
 
     electronApp.setAppUserModelId(
@@ -323,6 +325,17 @@ if (!gotTheLock) {
         return;
       }
       downloadURLSafely(mainWindow, url);
+    });
+
+    ipcMain.handle("file:select-directory", async () => {
+      if (!mainWindow) return { canceled: true } as const;
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { canceled: true } as const;
+      }
+      return { canceled: false, path: result.filePaths[0] } as const;
     });
 
     // Sync IPC: app version + normalized OS for preload. Sync (not invoke) so

@@ -83,6 +83,7 @@
   },
   "picker": {
     "project_default": "Project workflow",
+    "project_default_named": "Project workflow: {{name}}",
     "clear_override": "Clear override"
   },
   "new_workflow": {
