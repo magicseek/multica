@@ -4,7 +4,9 @@ export type {
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,
+  ExecutionProtocolSlug,
   AgentTask,
+  AgentTaskWorkflowSnapshot,
   AgentActivityBucket,
   AgentRunCount,
   TaskFailureReason,
@@ -102,6 +104,23 @@ export type {
   CreateProjectResourceRequest,
   ListProjectResourcesResponse,
 } from "./project";
+export type {
+  WorkflowApplicability,
+  WorkflowDefinition,
+  WorkflowGate,
+  WorkflowOrigin,
+  WorkflowPreviewRequest,
+  WorkflowPreviewResponse,
+  WorkflowRevision,
+  WorkflowRevisionStatus,
+  WorkflowSchema,
+  WorkflowSchemaRequest,
+  WorkflowStep,
+  WorkflowVariable,
+  CreateWorkflowRequest,
+  UpdateWorkflowRequest,
+  ForkWorkflowRequest,
+} from "./workflow";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   GitHubInstallation,

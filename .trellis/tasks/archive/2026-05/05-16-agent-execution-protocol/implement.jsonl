@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared Trellis thinking guide index for cross-layer and reuse checks"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature crosses database, API, daemon prompt injection, and frontend UI layers"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Prompt protocol and setting propagation should reuse existing patterns"}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core TypeScript agent types are touched"}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Views agent UI is touched"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Backend DB/API/daemon contract for execution protocol setting"}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Executable contract for protocol-gated task-agent prompt injection"}
+{"file": ".trellis/tasks/05-16-agent-execution-protocol/research/worktree-handoff.md", "reason": "Worktree-only handoff constraints and branch details"}

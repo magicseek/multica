@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Backend API, database, daemon, and execenv changes are in server."}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Existing contract for protocol-gated task agent execution."}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core API schemas/types must remain React Query-backed and type-safe."}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Agent create/detail UI changes live in shared views."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer behavior touches backend, core types, and UI."}

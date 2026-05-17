@@ -109,6 +109,15 @@ import type {
   GitHubConnectResponse,
   Squad,
   SquadMember,
+  WorkflowApplicability,
+  WorkflowDefinition,
+  WorkflowRevision,
+  CreateWorkflowRequest,
+  UpdateWorkflowRequest,
+  WorkflowSchemaRequest,
+  ForkWorkflowRequest,
+  WorkflowPreviewRequest,
+  WorkflowPreviewResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -1232,6 +1241,90 @@ export class ApiClient {
 
   async deleteSkill(id: string): Promise<void> {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
+  }
+
+  // Workflows
+  async listWorkflows(params?: {
+    applicability?: WorkflowApplicability;
+    include_archived?: boolean;
+  }): Promise<WorkflowDefinition[]> {
+    const search = new URLSearchParams();
+    if (params?.applicability) {
+      search.set("applicability", params.applicability);
+    }
+    if (params?.include_archived) {
+      search.set("include_archived", "true");
+    }
+    const suffix = search.toString();
+    return this.fetch(`/api/workflows${suffix ? `?${suffix}` : ""}`);
+  }
+
+  async getWorkflow(id: string): Promise<WorkflowDefinition> {
+    return this.fetch(`/api/workflows/${id}`);
+  }
+
+  async createWorkflow(data: CreateWorkflowRequest): Promise<WorkflowDefinition> {
+    return this.fetch("/api/workflows", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateWorkflow(
+    id: string,
+    data: UpdateWorkflowRequest,
+  ): Promise<WorkflowDefinition> {
+    return this.fetch(`/api/workflows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createWorkflowDraft(id: string): Promise<WorkflowDefinition> {
+    return this.fetch(`/api/workflows/${id}/draft`, { method: "POST" });
+  }
+
+  async updateWorkflowDraft(
+    id: string,
+    data: WorkflowSchemaRequest,
+  ): Promise<WorkflowRevision> {
+    return this.fetch(`/api/workflows/${id}/draft`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async publishWorkflow(
+    id: string,
+    data?: Partial<WorkflowSchemaRequest>,
+  ): Promise<WorkflowDefinition> {
+    return this.fetch(`/api/workflows/${id}/publish`, {
+      method: "POST",
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
+  async forkWorkflow(
+    id: string,
+    data?: ForkWorkflowRequest,
+  ): Promise<WorkflowDefinition> {
+    return this.fetch(`/api/workflows/${id}/fork`, {
+      method: "POST",
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
+  async previewWorkflow(
+    data: WorkflowPreviewRequest,
+  ): Promise<WorkflowPreviewResponse> {
+    return this.fetch("/api/workflows/preview", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteWorkflow(id: string): Promise<void> {
+    await this.fetch(`/api/workflows/${id}`, { method: "DELETE" });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {

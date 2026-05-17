@@ -1,0 +1,94 @@
+{
+  "page": {
+    "title": "Workflows",
+    "tagline": "Edit reusable agent execution templates and bind them to projects.",
+    "new_workflow": "New workflow",
+    "search_placeholder": "Search workflows",
+    "no_matches": "No workflows match this view.",
+    "load_failed": "Failed to load workflows."
+  },
+  "filters": {
+    "all": "All"
+  },
+  "origin": {
+    "system": "System",
+    "user": "Custom"
+  },
+  "applicability": {
+    "assignment": "Assignment",
+    "comment": "Comment"
+  },
+  "tabs": {
+    "source": "Source",
+    "steps": "Steps",
+    "preview": "Preview"
+  },
+  "editor": {
+    "empty": "Select a workflow to edit or preview.",
+    "name_label": "Name",
+    "description_label": "Description",
+    "applicability_label": "Applies to",
+    "body_label": "Markdown template",
+    "variables_hint": "Available variables: issue_id and trigger_comment_id.",
+    "preview_failed": "Preview failed.",
+    "fork_to_edit": "Fork to edit",
+    "forked": "Workflow forked.",
+    "fork_failed": "Failed to fork workflow.",
+    "publish": "Publish",
+    "published": "Workflow published.",
+    "publish_failed": "Failed to publish workflow.",
+    "archive": "Archive",
+    "archived": "Workflow archived.",
+    "archive_failed": "Failed to archive workflow."
+  },
+  "preview": {
+    "title": "Preview",
+    "markdown_title": "Rendered Markdown",
+    "empty": "Preview will appear here."
+  },
+  "graph": {
+    "title": "Graph preview",
+    "expand": "Expand graph",
+    "collapse": "Collapse graph",
+    "empty": "Add structured steps to preview the workflow graph.",
+    "required": "Required",
+    "optional": "Optional",
+    "dependency_count": "{{count}} deps",
+    "no_dependencies": "No deps",
+    "missing_dependency": "Missing dependency: {{id}}"
+  },
+  "steps": {
+    "title": "Structured steps",
+    "description": "Optional ordered steps that agents can follow alongside the Markdown template.",
+    "add": "Add step",
+    "empty": "No structured steps yet.",
+    "id_label": "ID",
+    "title_label": "Title",
+    "depends_on_label": "Depends on",
+    "description_label": "Description",
+    "body_template_label": "Step body",
+    "checklist_label": "Checklist",
+    "depends_on_placeholder": "step-1, step-2",
+    "checklist_placeholder": "One checklist item per line",
+    "new_step_title": "Step {{number}}",
+    "remove": "Remove step"
+  },
+  "project_bindings": {
+    "title": "Project bindings",
+    "description": "Issues inherit this workflow unless the issue overrides it.",
+    "empty": "No projects yet.",
+    "workspace_default": "Workspace default",
+    "select_aria": "Workflow for {{project}}",
+    "update_failed": "Failed to update project workflow."
+  },
+  "picker": {
+    "project_default": "Project workflow",
+    "clear_override": "Clear override"
+  },
+  "new_workflow": {
+    "name": "Custom workflow",
+    "description": "Editable assignment workflow.",
+    "created": "Workflow created.",
+    "failed": "Failed to create workflow."
+  }
+}

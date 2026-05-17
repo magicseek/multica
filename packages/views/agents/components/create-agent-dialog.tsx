@@ -14,6 +14,7 @@ import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
   AgentVisibility,
+  ExecutionProtocolSlug,
   RuntimeDevice,
   MemberWithUser,
   CreateAgentRequest,
@@ -29,6 +30,13 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import { toast } from "sonner";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
@@ -37,6 +45,19 @@ import {
 } from "@multica/core/agents";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
+
+const STANDARD_EXECUTION_PROTOCOL = "standard-assignment" satisfies ExecutionProtocolSlug;
+const TRELLIS_EXECUTION_PROTOCOL = "trellis-task" satisfies ExecutionProtocolSlug;
+type ExecutionProtocolSelectValue = "off" | typeof STANDARD_EXECUTION_PROTOCOL | typeof TRELLIS_EXECUTION_PROTOCOL;
+
+function initialExecutionProtocolValue(template?: Agent | null): ExecutionProtocolSelectValue {
+  if (template?.execution_protocol_enabled !== true) {
+    return "off";
+  }
+  return template.execution_protocol_slug === TRELLIS_EXECUTION_PROTOCOL
+    ? TRELLIS_EXECUTION_PROTOCOL
+    : STANDARD_EXECUTION_PROTOCOL;
+}
 
 export function CreateAgentDialog({
   runtimes,
@@ -89,6 +110,8 @@ export function CreateAgentDialog({
   const [model, setModel] = useState(template?.model ?? "");
   const [instructions, setInstructions] = useState(template?.instructions ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(template?.avatar_url ?? null);
+  const [executionProtocolValue, setExecutionProtocolValue] =
+    useState<ExecutionProtocolSelectValue>(() => initialExecutionProtocolValue(template));
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(template?.skills.map((s) => s.id) ?? []),
   );
@@ -154,6 +177,8 @@ export function CreateAgentDialog({
 
     try {
       const trimmedInstructions = instructions.trim();
+      const executionProtocolSlug: ExecutionProtocolSlug =
+        executionProtocolValue === "off" ? "" : executionProtocolValue;
       const data: CreateAgentRequest = {
         name: name.trim(),
         description: description.trim(),
@@ -162,6 +187,8 @@ export function CreateAgentDialog({
         model: model.trim() || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
+        execution_protocol_enabled: executionProtocolSlug !== "",
+        execution_protocol_slug: executionProtocolSlug,
       };
       if (template) {
         // Duplicate path: forward the hidden config fields the source
@@ -343,6 +370,46 @@ export function CreateAgentDialog({
               onChange={setModel}
               disabled={!selectedRuntime}
             />
+
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+              <Label
+                htmlFor="create-agent-execution-protocol"
+                className="text-sm font-medium"
+              >
+                {t(($) => $.create_dialog.execution_protocol_label)}
+              </Label>
+              <Select
+                value={executionProtocolValue}
+                onValueChange={(value) => {
+                  if (
+                    value === "off" ||
+                    value === STANDARD_EXECUTION_PROTOCOL ||
+                    value === TRELLIS_EXECUTION_PROTOCOL
+                  ) {
+                    setExecutionProtocolValue(value);
+                  }
+                }}
+                aria-label={t(($) => $.create_dialog.execution_protocol_aria)}
+              >
+                <SelectTrigger
+                  id="create-agent-execution-protocol"
+                  className="w-40"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">
+                    {t(($) => $.execution_protocol.option_off)}
+                  </SelectItem>
+                  <SelectItem value={STANDARD_EXECUTION_PROTOCOL}>
+                    {t(($) => $.execution_protocol.option_standard)}
+                  </SelectItem>
+                  <SelectItem value={TRELLIS_EXECUTION_PROTOCOL}>
+                    {t(($) => $.execution_protocol.option_trellis)}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
             {/* --- Optional sections (instructions / skills) ---
                 Collapsed by default so quick-create stays fast.

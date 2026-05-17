@@ -1,0 +1,94 @@
+{
+  "page": {
+    "title": "Workflow",
+    "tagline": "编辑可复用的智能体执行模板，并绑定到项目。",
+    "new_workflow": "新建 workflow",
+    "search_placeholder": "搜索 workflow",
+    "no_matches": "当前视图下没有匹配的 workflow。",
+    "load_failed": "加载 workflow 失败。"
+  },
+  "filters": {
+    "all": "全部"
+  },
+  "origin": {
+    "system": "系统",
+    "user": "自定义"
+  },
+  "applicability": {
+    "assignment": "分配任务",
+    "comment": "评论触发"
+  },
+  "tabs": {
+    "source": "源模板",
+    "steps": "步骤",
+    "preview": "预览"
+  },
+  "editor": {
+    "empty": "选择一个 workflow 进行编辑或预览。",
+    "name_label": "名称",
+    "description_label": "描述",
+    "applicability_label": "适用场景",
+    "body_label": "Markdown 模板",
+    "variables_hint": "可用变量：issue_id 和 trigger_comment_id。",
+    "preview_failed": "预览失败。",
+    "fork_to_edit": "Fork 后编辑",
+    "forked": "已 fork workflow。",
+    "fork_failed": "Fork workflow 失败。",
+    "publish": "发布",
+    "published": "已发布 workflow。",
+    "publish_failed": "发布 workflow 失败。",
+    "archive": "归档",
+    "archived": "已归档 workflow。",
+    "archive_failed": "归档 workflow 失败。"
+  },
+  "preview": {
+    "title": "预览",
+    "markdown_title": "渲染后的 Markdown",
+    "empty": "预览会显示在这里。"
+  },
+  "graph": {
+    "title": "Graph 预览",
+    "expand": "展开 Graph",
+    "collapse": "收起 Graph",
+    "empty": "新增结构化步骤后会显示 workflow graph。",
+    "required": "必需",
+    "optional": "可选",
+    "dependency_count": "{{count}} 个依赖",
+    "no_dependencies": "无依赖",
+    "missing_dependency": "缺失依赖：{{id}}"
+  },
+  "steps": {
+    "title": "结构化步骤",
+    "description": "可选的顺序步骤，会和 Markdown 模板一起提供给执行智能体。",
+    "add": "新增步骤",
+    "empty": "还没有结构化步骤。",
+    "id_label": "ID",
+    "title_label": "标题",
+    "depends_on_label": "依赖步骤",
+    "description_label": "描述",
+    "body_template_label": "步骤正文",
+    "checklist_label": "检查清单",
+    "depends_on_placeholder": "step-1, step-2",
+    "checklist_placeholder": "每行一个检查项",
+    "new_step_title": "步骤 {{number}}",
+    "remove": "删除步骤"
+  },
+  "project_bindings": {
+    "title": "项目绑定",
+    "description": "Issue 默认继承项目 workflow，除非 issue 自己覆盖。",
+    "empty": "还没有项目。",
+    "workspace_default": "工作区默认",
+    "select_aria": "{{project}} 的 workflow",
+    "update_failed": "更新项目 workflow 失败。"
+  },
+  "picker": {
+    "project_default": "项目 workflow",
+    "clear_override": "清除覆盖"
+  },
+  "new_workflow": {
+    "name": "Custom workflow",
+    "description": "可编辑的分配任务 workflow。",
+    "created": "已创建 workflow。",
+    "failed": "创建 workflow 失败。"
+  }
+}

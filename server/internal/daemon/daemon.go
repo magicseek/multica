@@ -2148,37 +2148,44 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var agentID string
 	var skills []SkillData
 	var instructions string
+	var executionProtocolEnabled bool
+	var executionProtocolSlug string
 	if task.Agent != nil {
 		agentID = task.Agent.ID
 		agentName = task.Agent.Name
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
+		executionProtocolEnabled = task.Agent.ExecutionProtocolEnabled
+		executionProtocolSlug = task.Agent.ExecutionProtocolSlug
 	}
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
-		IssueID:                 task.IssueID,
-		TriggerCommentID:        task.TriggerCommentID,
-		AgentID:                 agentID,
-		AgentName:               agentName,
-		AgentInstructions:       instructions,
-		AgentSkills:             convertSkillsForEnv(skills),
-		Repos:                   convertReposForEnv(task.Repos),
-		Repositories:            convertTaskRepositoriesForEnv(task.Repositories),
-		ProjectID:               task.ProjectID,
-		ProjectTitle:            task.ProjectTitle,
-		ProjectResources:        convertProjectResourcesForEnv(task.ProjectResources),
-		ChatSessionID:           task.ChatSessionID,
-		AutopilotRunID:          task.AutopilotRunID,
-		AutopilotID:             task.AutopilotID,
-		AutopilotTitle:          task.AutopilotTitle,
-		AutopilotDescription:    task.AutopilotDescription,
-		AutopilotSource:         task.AutopilotSource,
-		AutopilotTriggerPayload: strings.TrimSpace(string(task.AutopilotTriggerPayload)),
-		QuickCreatePrompt:       task.QuickCreatePrompt,
-		IsSquadLeader:           strings.Contains(instructions, "## Squad Operating Protocol"),
+		IssueID:                  task.IssueID,
+		TriggerCommentID:         task.TriggerCommentID,
+		AgentID:                  agentID,
+		AgentName:                agentName,
+		AgentInstructions:        instructions,
+		AgentSkills:              convertSkillsForEnv(skills),
+		Repos:                    convertReposForEnv(task.Repos),
+		Repositories:             convertTaskRepositoriesForEnv(task.Repositories),
+		ProjectID:                task.ProjectID,
+		ProjectTitle:             task.ProjectTitle,
+		ProjectResources:         convertProjectResourcesForEnv(task.ProjectResources),
+		ChatSessionID:            task.ChatSessionID,
+		AutopilotRunID:           task.AutopilotRunID,
+		AutopilotID:              task.AutopilotID,
+		AutopilotTitle:           task.AutopilotTitle,
+		AutopilotDescription:     task.AutopilotDescription,
+		AutopilotSource:          task.AutopilotSource,
+		AutopilotTriggerPayload:  strings.TrimSpace(string(task.AutopilotTriggerPayload)),
+		QuickCreatePrompt:        task.QuickCreatePrompt,
+		IsSquadLeader:            strings.Contains(instructions, "## Squad Operating Protocol"),
+		ExecutionProtocolEnabled: executionProtocolEnabled,
+		ExecutionProtocolSlug:    executionProtocolSlug,
+		WorkflowRenderedMarkdown: strings.TrimSpace(task.WorkflowSnapshot.RenderedMarkdown),
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop

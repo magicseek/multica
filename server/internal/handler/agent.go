@@ -8,12 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/execprotocol"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -27,30 +29,32 @@ import (
 const maxAgentDescriptionLength = 255
 
 type AgentResponse struct {
-	ID                 string              `json:"id"`
-	WorkspaceID        string              `json:"workspace_id"`
-	RuntimeID          string              `json:"runtime_id"`
-	Name               string              `json:"name"`
-	Description        string              `json:"description"`
-	Instructions       string              `json:"instructions"`
-	AvatarURL          *string             `json:"avatar_url"`
-	RuntimeMode        string              `json:"runtime_mode"`
-	RuntimeConfig      any                 `json:"runtime_config"`
-	CustomEnv          map[string]string   `json:"custom_env"`
-	CustomArgs         []string            `json:"custom_args"`
-	McpConfig          json.RawMessage     `json:"mcp_config"`
-	CustomEnvRedacted  bool                `json:"custom_env_redacted"`
-	McpConfigRedacted  bool                `json:"mcp_config_redacted"`
-	Visibility         string              `json:"visibility"`
-	Status             string              `json:"status"`
-	MaxConcurrentTasks int32               `json:"max_concurrent_tasks"`
-	Model              string              `json:"model"`
-	OwnerID            *string             `json:"owner_id"`
-	Skills             []AgentSkillSummary `json:"skills"`
-	CreatedAt          string              `json:"created_at"`
-	UpdatedAt          string              `json:"updated_at"`
-	ArchivedAt         *string             `json:"archived_at"`
-	ArchivedBy         *string             `json:"archived_by"`
+	ID                       string              `json:"id"`
+	WorkspaceID              string              `json:"workspace_id"`
+	RuntimeID                string              `json:"runtime_id"`
+	Name                     string              `json:"name"`
+	Description              string              `json:"description"`
+	Instructions             string              `json:"instructions"`
+	AvatarURL                *string             `json:"avatar_url"`
+	RuntimeMode              string              `json:"runtime_mode"`
+	RuntimeConfig            any                 `json:"runtime_config"`
+	CustomEnv                map[string]string   `json:"custom_env"`
+	CustomArgs               []string            `json:"custom_args"`
+	McpConfig                json.RawMessage     `json:"mcp_config"`
+	CustomEnvRedacted        bool                `json:"custom_env_redacted"`
+	McpConfigRedacted        bool                `json:"mcp_config_redacted"`
+	Visibility               string              `json:"visibility"`
+	Status                   string              `json:"status"`
+	MaxConcurrentTasks       int32               `json:"max_concurrent_tasks"`
+	Model                    string              `json:"model"`
+	ExecutionProtocolEnabled bool                `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    string              `json:"execution_protocol_slug"`
+	OwnerID                  *string             `json:"owner_id"`
+	Skills                   []AgentSkillSummary `json:"skills"`
+	CreatedAt                string              `json:"created_at"`
+	UpdatedAt                string              `json:"updated_at"`
+	ArchivedAt               *string             `json:"archived_at"`
+	ArchivedBy               *string             `json:"archived_by"`
 }
 
 func agentToResponse(a db.Agent) AgentResponse {
@@ -88,28 +92,30 @@ func agentToResponse(a db.Agent) AgentResponse {
 	}
 
 	return AgentResponse{
-		ID:                 uuidToString(a.ID),
-		WorkspaceID:        uuidToString(a.WorkspaceID),
-		RuntimeID:          uuidToString(a.RuntimeID),
-		Name:               a.Name,
-		Description:        a.Description,
-		Instructions:       a.Instructions,
-		AvatarURL:          textToPtr(a.AvatarUrl),
-		RuntimeMode:        a.RuntimeMode,
-		RuntimeConfig:      rc,
-		CustomEnv:          customEnv,
-		CustomArgs:         customArgs,
-		McpConfig:          mcpConfig,
-		Visibility:         a.Visibility,
-		Status:             a.Status,
-		MaxConcurrentTasks: a.MaxConcurrentTasks,
-		Model:              a.Model.String,
-		OwnerID:            uuidToPtr(a.OwnerID),
-		Skills:             []AgentSkillSummary{},
-		CreatedAt:          timestampToString(a.CreatedAt),
-		UpdatedAt:          timestampToString(a.UpdatedAt),
-		ArchivedAt:         timestampToPtr(a.ArchivedAt),
-		ArchivedBy:         uuidToPtr(a.ArchivedBy),
+		ID:                       uuidToString(a.ID),
+		WorkspaceID:              uuidToString(a.WorkspaceID),
+		RuntimeID:                uuidToString(a.RuntimeID),
+		Name:                     a.Name,
+		Description:              a.Description,
+		Instructions:             a.Instructions,
+		AvatarURL:                textToPtr(a.AvatarUrl),
+		RuntimeMode:              a.RuntimeMode,
+		RuntimeConfig:            rc,
+		CustomEnv:                customEnv,
+		CustomArgs:               customArgs,
+		McpConfig:                mcpConfig,
+		Visibility:               a.Visibility,
+		Status:                   a.Status,
+		MaxConcurrentTasks:       a.MaxConcurrentTasks,
+		Model:                    a.Model.String,
+		ExecutionProtocolEnabled: a.ExecutionProtocolEnabled,
+		ExecutionProtocolSlug:    a.ExecutionProtocolSlug,
+		OwnerID:                  uuidToPtr(a.OwnerID),
+		Skills:                   []AgentSkillSummary{},
+		CreatedAt:                timestampToString(a.CreatedAt),
+		UpdatedAt:                timestampToString(a.UpdatedAt),
+		ArchivedAt:               timestampToPtr(a.ArchivedAt),
+		ArchivedBy:               uuidToPtr(a.ArchivedBy),
 	}
 }
 
@@ -180,6 +186,9 @@ type AgentTaskResponse struct {
 	Attempt                 int32                 `json:"attempt"`
 	MaxAttempts             int32                 `json:"max_attempts"`
 	ParentTaskID            *string               `json:"parent_task_id,omitempty"`
+	WorkflowDefinitionID    *string               `json:"workflow_definition_id,omitempty"`
+	WorkflowRevisionID      *string               `json:"workflow_revision_id,omitempty"`
+	WorkflowSnapshot        json.RawMessage       `json:"workflow_snapshot,omitempty"`
 	Agent                   *TaskAgentData        `json:"agent,omitempty"`
 	Repos                   []RepoData            `json:"repos,omitempty"`
 	Repositories            []TaskRepositoryData  `json:"repositories,omitempty"`
@@ -225,14 +234,16 @@ type ChatAttachmentMeta struct {
 // TaskAgentData holds agent info included in claim responses so the daemon
 // can set up the execution environment (branch naming, skill files, instructions).
 type TaskAgentData struct {
-	ID           string                   `json:"id"`
-	Name         string                   `json:"name"`
-	Instructions string                   `json:"instructions"`
-	Skills       []service.AgentSkillData `json:"skills,omitempty"`
-	CustomEnv    map[string]string        `json:"custom_env,omitempty"`
-	CustomArgs   []string                 `json:"custom_args,omitempty"`
-	McpConfig    json.RawMessage          `json:"mcp_config,omitempty"`
-	Model        string                   `json:"model,omitempty"`
+	ID                       string                   `json:"id"`
+	Name                     string                   `json:"name"`
+	Instructions             string                   `json:"instructions"`
+	Skills                   []service.AgentSkillData `json:"skills,omitempty"`
+	CustomEnv                map[string]string        `json:"custom_env,omitempty"`
+	CustomArgs               []string                 `json:"custom_args,omitempty"`
+	McpConfig                json.RawMessage          `json:"mcp_config,omitempty"`
+	Model                    string                   `json:"model,omitempty"`
+	ExecutionProtocolEnabled bool                     `json:"execution_protocol_enabled,omitempty"`
+	ExecutionProtocolSlug    string                   `json:"execution_protocol_slug,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
@@ -249,25 +260,28 @@ func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
 		workDir = t.WorkDir.String
 	}
 	return AgentTaskResponse{
-		ID:               uuidToString(t.ID),
-		AgentID:          uuidToString(t.AgentID),
-		RuntimeID:        uuidToString(t.RuntimeID),
-		IssueID:          uuidToString(t.IssueID),
-		Status:           t.Status,
-		Priority:         t.Priority,
-		DispatchedAt:     timestampToPtr(t.DispatchedAt),
-		StartedAt:        timestampToPtr(t.StartedAt),
-		CompletedAt:      timestampToPtr(t.CompletedAt),
-		Result:           result,
-		Error:            textToPtr(t.Error),
-		FailureReason:    failureReason,
-		Attempt:          t.Attempt,
-		MaxAttempts:      t.MaxAttempts,
-		ParentTaskID:     uuidToPtr(t.ParentTaskID),
-		CreatedAt:        timestampToString(t.CreatedAt),
-		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
-		TriggerSummary:   textToPtr(t.TriggerSummary),
-		WorkDir:          workDir,
+		ID:                   uuidToString(t.ID),
+		AgentID:              uuidToString(t.AgentID),
+		RuntimeID:            uuidToString(t.RuntimeID),
+		IssueID:              uuidToString(t.IssueID),
+		Status:               t.Status,
+		Priority:             t.Priority,
+		DispatchedAt:         timestampToPtr(t.DispatchedAt),
+		StartedAt:            timestampToPtr(t.StartedAt),
+		CompletedAt:          timestampToPtr(t.CompletedAt),
+		Result:               result,
+		Error:                textToPtr(t.Error),
+		FailureReason:        failureReason,
+		Attempt:              t.Attempt,
+		MaxAttempts:          t.MaxAttempts,
+		ParentTaskID:         uuidToPtr(t.ParentTaskID),
+		WorkflowDefinitionID: uuidToPtr(t.WorkflowDefinitionID),
+		WorkflowRevisionID:   uuidToPtr(t.WorkflowRevisionID),
+		WorkflowSnapshot:     json.RawMessage(t.WorkflowSnapshot),
+		CreatedAt:            timestampToString(t.CreatedAt),
+		TriggerCommentID:     uuidToPtr(t.TriggerCommentID),
+		TriggerSummary:       textToPtr(t.TriggerSummary),
+		WorkDir:              workDir,
 		// Surface task source so the UI can distinguish issue-linked tasks
 		// from chat-spawned or autopilot-spawned ones; all three may arrive
 		// with issue_id = "" once a task has no linked issue.
@@ -411,18 +425,20 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateAgentRequest struct {
-	Name               string            `json:"name"`
-	Description        string            `json:"description"`
-	Instructions       string            `json:"instructions"`
-	AvatarURL          *string           `json:"avatar_url"`
-	RuntimeID          string            `json:"runtime_id"`
-	RuntimeConfig      any               `json:"runtime_config"`
-	CustomEnv          map[string]string `json:"custom_env"`
-	CustomArgs         []string          `json:"custom_args"`
-	McpConfig          json.RawMessage   `json:"mcp_config"`
-	Visibility         string            `json:"visibility"`
-	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
-	Model              string            `json:"model"`
+	Name                     string            `json:"name"`
+	Description              string            `json:"description"`
+	Instructions             string            `json:"instructions"`
+	AvatarURL                *string           `json:"avatar_url"`
+	RuntimeID                string            `json:"runtime_id"`
+	RuntimeConfig            any               `json:"runtime_config"`
+	CustomEnv                map[string]string `json:"custom_env"`
+	CustomArgs               []string          `json:"custom_args"`
+	McpConfig                json.RawMessage   `json:"mcp_config"`
+	Visibility               string            `json:"visibility"`
+	MaxConcurrentTasks       int32             `json:"max_concurrent_tasks"`
+	Model                    string            `json:"model"`
+	ExecutionProtocolEnabled bool              `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    string            `json:"execution_protocol_slug"`
 	// Template records which template slug was used to seed this agent
 	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
 	// the caller didn't come from a template picker — the `agent_created`
@@ -485,6 +501,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.MaxConcurrentTasks == 0 {
 		req.MaxConcurrentTasks = 6
 	}
+	req.ExecutionProtocolSlug = strings.TrimSpace(req.ExecutionProtocolSlug)
+	if !execprotocol.IsKnownSlug(req.ExecutionProtocolSlug) {
+		writeError(w, http.StatusBadRequest, "unknown execution_protocol_slug")
+		return
+	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
 	if !ok {
@@ -544,21 +565,23 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
-		WorkspaceID:        wsUUID,
-		Name:               req.Name,
-		Description:        req.Description,
-		Instructions:       req.Instructions,
-		AvatarUrl:          ptrToText(req.AvatarURL),
-		RuntimeMode:        runtime.RuntimeMode,
-		RuntimeConfig:      rc,
-		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
-		MaxConcurrentTasks: req.MaxConcurrentTasks,
-		OwnerID:            parseUUID(ownerID),
-		CustomEnv:          ce,
-		CustomArgs:         ca,
-		McpConfig:          mc,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		WorkspaceID:              wsUUID,
+		Name:                     req.Name,
+		Description:              req.Description,
+		Instructions:             req.Instructions,
+		AvatarUrl:                ptrToText(req.AvatarURL),
+		RuntimeMode:              runtime.RuntimeMode,
+		RuntimeConfig:            rc,
+		RuntimeID:                runtime.ID,
+		Visibility:               req.Visibility,
+		MaxConcurrentTasks:       req.MaxConcurrentTasks,
+		OwnerID:                  parseUUID(ownerID),
+		CustomEnv:                ce,
+		CustomArgs:               ca,
+		McpConfig:                mc,
+		Model:                    pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		ExecutionProtocolEnabled: req.ExecutionProtocolEnabled,
+		ExecutionProtocolSlug:    req.ExecutionProtocolSlug,
 	})
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — return a clear conflict error
@@ -597,19 +620,21 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateAgentRequest struct {
-	Name               *string            `json:"name"`
-	Description        *string            `json:"description"`
-	Instructions       *string            `json:"instructions"`
-	AvatarURL          *string            `json:"avatar_url"`
-	RuntimeID          *string            `json:"runtime_id"`
-	RuntimeConfig      any                `json:"runtime_config"`
-	CustomEnv          *map[string]string `json:"custom_env"`
-	CustomArgs         *[]string          `json:"custom_args"`
-	McpConfig          *json.RawMessage   `json:"mcp_config"`
-	Visibility         *string            `json:"visibility"`
-	Status             *string            `json:"status"`
-	MaxConcurrentTasks *int32             `json:"max_concurrent_tasks"`
-	Model              *string            `json:"model"`
+	Name                     *string            `json:"name"`
+	Description              *string            `json:"description"`
+	Instructions             *string            `json:"instructions"`
+	AvatarURL                *string            `json:"avatar_url"`
+	RuntimeID                *string            `json:"runtime_id"`
+	RuntimeConfig            any                `json:"runtime_config"`
+	CustomEnv                *map[string]string `json:"custom_env"`
+	CustomArgs               *[]string          `json:"custom_args"`
+	McpConfig                *json.RawMessage   `json:"mcp_config"`
+	Visibility               *string            `json:"visibility"`
+	Status                   *string            `json:"status"`
+	MaxConcurrentTasks       *int32             `json:"max_concurrent_tasks"`
+	Model                    *string            `json:"model"`
+	ExecutionProtocolEnabled *bool              `json:"execution_protocol_enabled"`
+	ExecutionProtocolSlug    *string            `json:"execution_protocol_slug"`
 }
 
 // canViewAgentEnv checks whether the requesting user is allowed to see the
@@ -753,6 +778,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model != nil {
 		params.Model = pgtype.Text{String: *req.Model, Valid: true}
+	}
+	if req.ExecutionProtocolEnabled != nil {
+		params.ExecutionProtocolEnabled = pgtype.Bool{Bool: *req.ExecutionProtocolEnabled, Valid: true}
+	}
+	if req.ExecutionProtocolSlug != nil {
+		slug := strings.TrimSpace(*req.ExecutionProtocolSlug)
+		if !execprotocol.IsKnownSlug(slug) {
+			writeError(w, http.StatusBadRequest, "unknown execution_protocol_slug")
+			return
+		}
+		params.ExecutionProtocolSlug = pgtype.Text{String: slug, Valid: true}
 	}
 
 	agent, err = h.Queries.UpdateAgent(r.Context(), params)

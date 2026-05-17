@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import type {
   Agent,
   AgentRuntime,
+  ExecutionProtocolSlug,
   MemberWithUser,
 } from "@multica/core/types";
 import {
@@ -23,6 +24,13 @@ import { isImeComposing, timeAgo } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -44,6 +52,19 @@ import { ModelPicker } from "./inspector/model-picker";
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { SkillAttach } from "./inspector/skill-attach";
 import { VisibilityPicker } from "./inspector/visibility-picker";
+
+const STANDARD_EXECUTION_PROTOCOL = "standard-assignment" satisfies ExecutionProtocolSlug;
+const TRELLIS_EXECUTION_PROTOCOL = "trellis-task" satisfies ExecutionProtocolSlug;
+type ExecutionProtocolSelectValue = "off" | typeof STANDARD_EXECUTION_PROTOCOL | typeof TRELLIS_EXECUTION_PROTOCOL;
+
+function executionProtocolValue(agent: Agent): ExecutionProtocolSelectValue {
+  if (agent.execution_protocol_enabled !== true) {
+    return "off";
+  }
+  return agent.execution_protocol_slug === TRELLIS_EXECUTION_PROTOCOL
+    ? TRELLIS_EXECUTION_PROTOCOL
+    : STANDARD_EXECUTION_PROTOCOL;
+}
 
 interface InspectorProps {
   agent: Agent;
@@ -143,6 +164,48 @@ export function AgentDetailInspector({
             canEdit={canEdit}
             onChange={(n) => update({ max_concurrent_tasks: n })}
           />
+        </PropRow>
+        <PropRow
+          label={t(($) => $.inspector.prop_execution_protocol)}
+          interactive={false}
+        >
+          <Select
+            value={executionProtocolValue(agent)}
+            onValueChange={(value) => {
+              if (
+                value !== "off" &&
+                value !== STANDARD_EXECUTION_PROTOCOL &&
+                value !== TRELLIS_EXECUTION_PROTOCOL
+              ) {
+                return;
+              }
+              const slug: ExecutionProtocolSlug = value === "off" ? "" : value;
+              update({
+                execution_protocol_enabled: slug !== "",
+                execution_protocol_slug: slug,
+              });
+            }}
+            aria-label={t(($) => $.inspector.execution_protocol_aria)}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-32"
+              disabled={!canEdit}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">
+                {t(($) => $.execution_protocol.option_off)}
+              </SelectItem>
+              <SelectItem value={STANDARD_EXECUTION_PROTOCOL}>
+                {t(($) => $.execution_protocol.option_standard)}
+              </SelectItem>
+              <SelectItem value={TRELLIS_EXECUTION_PROTOCOL}>
+                {t(($) => $.execution_protocol.option_trellis)}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </PropRow>
       </Section>
 

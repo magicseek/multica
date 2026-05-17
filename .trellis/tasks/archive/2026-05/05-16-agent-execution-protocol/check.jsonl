@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared Trellis thinking guide index for validation"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Validate cross-layer propagation and default behavior"}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Validate core frontend type changes"}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Validate views UI changes"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Validate backend DB/API/daemon contract coverage"}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Validate prompt gating and cross-layer execution protocol contract"}
+{"file": ".trellis/tasks/05-16-agent-execution-protocol/research/worktree-handoff.md", "reason": "Ensure validation stays in the worktree"}

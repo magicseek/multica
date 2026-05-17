@@ -1,0 +1,2 @@
+ALTER TABLE agent
+ADD COLUMN execution_protocol_enabled BOOLEAN NOT NULL DEFAULT FALSE;

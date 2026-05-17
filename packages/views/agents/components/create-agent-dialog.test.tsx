@@ -3,6 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
@@ -206,6 +207,31 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       .closest("button") as HTMLButtonElement;
     expect(publicRow).not.toBeNull();
     expect(publicRow.disabled).toBe(false);
+  });
+
+  it("submits the execution protocol template from the create form", async () => {
+    const mine = makeRuntime({
+      id: "rt-mine",
+      name: "My Runtime",
+      owner_id: ME,
+      visibility: "private",
+    });
+    const { onCreate } = renderDialog([mine]);
+    const user = userEvent.setup();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
+      target: { value: "Protocol Agent" },
+    });
+    await user.click(screen.getByLabelText("Protocol"));
+    await user.click(await screen.findByText("Trellis"));
+    await user.click(screen.getByText("Create"));
+
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+      execution_protocol_enabled: true,
+      execution_protocol_slug: "trellis-task",
+      name: "Protocol Agent",
+    });
   });
 
   it("defaults the selected runtime to a usable one, not a locked private", () => {
