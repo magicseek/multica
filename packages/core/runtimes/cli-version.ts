@@ -31,6 +31,7 @@ const SEMVER_RE = /v?(\d+)\.(\d+)\.(\d+)/;
 // is what keeps `pnpm dev:desktop` + `make daemon` unblocked without weakening
 // the gate for staging or production users running stale stable releases.
 const DEV_DESCRIBE_RE = /^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+/;
+const SOURCE_DEV_VERSION = "dev";
 
 function parseSemver(raw: string): [number, number, number] | null {
   const m = SEMVER_RE.exec(raw.trim());
@@ -48,12 +49,13 @@ function lessThan(a: [number, number, number], b: [number, number, number]) {
  * Check a daemon-reported CLI version string against the minimum. Returns
  * `"missing"` for empty/unparsable input (fail closed — same policy as the
  * server) and `"too_old"` for a parsable version below the threshold.
- * Dev-built daemons (git-describe shape) are always OK — the version string
- * itself is the shared signal, so frontend and server agree by construction.
+ * Dev-built daemons (git-describe shape or literal `dev` from `go run`) are
+ * always OK — the version string itself is the shared signal, so frontend and
+ * server agree by construction.
  */
 export function checkQuickCreateCliVersion(detected: string | undefined | null): CliVersionCheck {
   const current = (detected ?? "").trim();
-  if (DEV_DESCRIBE_RE.test(current)) {
+  if (current === SOURCE_DEV_VERSION || DEV_DESCRIBE_RE.test(current)) {
     return { state: "ok", current, min: MIN_QUICK_CREATE_CLI_VERSION };
   }
   const parsed = current ? parseSemver(current) : null;
