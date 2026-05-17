@@ -40,6 +40,32 @@ API routes:
 - `POST /api/chat/sessions` may accept `default_repository_id`
 - `PATCH /api/chat/sessions/{sessionId}` may set or clear `default_repository_id`
 
+Daemon task claim payload:
+
+- `task.repositories[]`
+  - `id`
+  - `name`
+  - `source_state`
+  - `remote_url?`
+  - `default_branch?`
+  - `role`
+  - `position`
+  - `compatibility?`
+  - `compatibility_source?`
+  - `binding_available`
+  - `binding?`
+- `task.repositories[].binding`
+  - `id`
+  - `kind`
+  - `state`
+  - `machine_label?`
+  - `daemon_id?`
+  - `runtime_id?`
+  - `available`
+  - `current_daemon?`
+  - `current_runtime?`
+- `task.repos[]` remains the legacy remote-only URL list derived from `repositories[].remote_url`.
+
 Realtime events:
 
 - `repository:created`
@@ -60,6 +86,12 @@ Realtime events:
 - `repository_binding.metadata` is private whenever `local_path` is private. Treat metadata as potentially containing path fragments, tool output, or machine-local details.
 - Workspace-wide realtime events must not include `local_path` or private binding metadata.
 - `task_output_metadata.relative_path` must be repository/workdir relative. Reject absolute paths, parent traversal, backslashes, Windows drive-letter paths, and `~/...`.
+- Task claim repository precedence is task-kind specific: issue and quick-create tasks use project first-class `project_repository`, then legacy project `project_resource(github_repo)`, then workspace first-class repositories, then legacy `workspace.repos`; chat tasks use `chat_session.default_repository_id`, then workspace first-class repositories, then legacy `workspace.repos`; autopilot run-only tasks use workspace first-class repositories, then legacy `workspace.repos`.
+- Task claim compatibility payloads are read-only synthetic repositories. They must populate `compatibility=true` and `compatibility_source` with `project_resource.github_repo` or `workspace.repos`.
+- Task claim `binding` is a sanitized current-runtime/current-daemon summary only. A `ready` binding on a different daemon/runtime is not claim-eligible and must not appear as `binding_available=true`.
+- Task claim `binding` must never include `local_path` or binding `metadata`, even for the daemon/runtime that owns the binding.
+- Daemon execenv may render repository identity, source state, checkout command, and sanitized binding summary. It must keep remote checkout behavior for repositories with `remote_url`.
+- Until local binding cwd switching is implemented, daemon execenv must not switch cwd to local/agent-managed bindings and must tell the agent not to run `multica repo checkout` for repositories without `remote_url`.
 
 ### 4. Validation & Error Matrix
 
@@ -74,14 +106,20 @@ Realtime events:
 - Binding create without `daemon_id` or `local_path` -> `400`.
 - Binding delete by non-owner non-admin -> `403`.
 - Non-object `metadata`, `request`, or `result` JSON -> `400`.
+- Task claim with first-class repositories that lack `remote_url` -> `task.repositories` populated and legacy `task.repos` empty or filtered to remote-backed repositories only.
+- Task claim with only foreign ready bindings -> `binding_available=false` and no `binding` object in the claim payload.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: list repositories returns first-class rows plus compatibility rows from legacy storage, deduplicated by normalized remote key.
 - Good: non-owner binding response includes machine label, kind, state, and visibility flag, but omits local path and returns `{}` metadata.
+- Good: issue task in a project with `project_repository` returns only project repositories in `task.repositories`; workspace repositories do not leak into that task.
+- Good: chat task with `default_repository_id` returns that repository as primary and does not fall back to workspace repositories.
+- Good: daemon task claim for a repository with a ready binding on another machine omits `binding` and keeps `binding_available=false`.
 - Base: chat create/update with a valid workspace repository stores `default_repository_id` and returns it in session responses.
 - Bad: direct GET continues returning an archived repository after soft delete.
 - Bad: binding event includes `metadata.last_verified_path` or any local absolute path.
+- Bad: task claim exposes `/Users/name/project`, binding metadata, or a foreign daemon binding as available to the claiming daemon.
 - Bad: task output metadata accepts `C:\Users\name\repo\file.ts`, `/tmp/file`, `../secret`, or `~/secret`.
 
 ### 6. Tests Required
@@ -91,6 +129,9 @@ Realtime events:
 - Binding privacy: owner sees `local_path` and metadata; other workspace member does not.
 - Project repository references: setting primary/secondary rows validates workspace membership and primary uniqueness.
 - Chat default repository: create, read/list, update, and clear nullable repository reference.
+- Task claim repository precedence: project first-class overrides workspace fallback, project legacy `github_repo` still overrides workspace fallback, chat default overrides workspace fallback, and workspace first-class overrides legacy `workspace.repos`.
+- Task claim binding privacy/eligibility: foreign ready bindings do not set `binding_available`, and claim JSON never contains `local_path` or binding metadata.
+- Daemon execenv rendering: repositories with `remote_url` render `multica repo checkout`, while local/agent-managed repositories without `remote_url` render no checkout command and no local path.
 - Migration/path constraints: output metadata rejects absolute and traversal-style paths.
 - Realtime payload tests or handler assertions must verify binding events omit local paths and private metadata.
 

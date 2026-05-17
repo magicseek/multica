@@ -240,6 +240,237 @@ func workspaceReposResponse(workspaceID string, raw []byte) daemonWorkspaceRepos
 	}
 }
 
+func taskRepositoryRole(position int) string {
+	if position == 0 {
+		return "primary"
+	}
+	return "secondary"
+}
+
+func selectTaskRepositoryBinding(bindings []db.RepositoryBinding, runtimeID pgtype.UUID, daemonID string) *TaskRepositoryBindingData {
+	var selected *TaskRepositoryBindingData
+	selectedScore := -1
+	for _, binding := range bindings {
+		currentDaemon := daemonID != "" && binding.DaemonID == daemonID
+		currentRuntime := runtimeID.Valid && binding.RuntimeID.Valid && binding.RuntimeID == runtimeID
+		if binding.State != "ready" || (!currentDaemon && !currentRuntime) {
+			continue
+		}
+		score := 0
+		if currentDaemon {
+			score += 5
+		}
+		if currentRuntime {
+			score += 10
+		}
+		if score <= selectedScore {
+			continue
+		}
+		data := TaskRepositoryBindingData{
+			ID:             uuidToString(binding.ID),
+			Kind:           binding.BindingKind,
+			State:          binding.State,
+			MachineLabel:   binding.MachineLabel,
+			DaemonID:       binding.DaemonID,
+			RuntimeID:      uuidToString(binding.RuntimeID),
+			Available:      true,
+			CurrentDaemon:  currentDaemon,
+			CurrentRuntime: currentRuntime,
+		}
+		selected = &data
+		selectedScore = score
+	}
+	return selected
+}
+
+func (h *Handler) taskRepositoryFromRow(ctx context.Context, repo db.Repository, role string, position int32, runtimeID pgtype.UUID, daemonID string) TaskRepositoryData {
+	payload := TaskRepositoryData{
+		ID:            uuidToString(repo.ID),
+		Name:          repo.Name,
+		SourceState:   repo.SourceState,
+		RemoteURL:     textToPtr(repo.RemoteUrl),
+		DefaultBranch: textToPtr(repo.DefaultBranch),
+		Role:          role,
+		Position:      position,
+	}
+	if bindings, err := h.Queries.ListRepositoryBindings(ctx, db.ListRepositoryBindingsParams{
+		RepositoryID: repo.ID,
+		WorkspaceID:  repo.WorkspaceID,
+	}); err == nil {
+		payload.Binding = selectTaskRepositoryBinding(bindings, runtimeID, daemonID)
+		payload.BindingAvailable = payload.Binding != nil && payload.Binding.Available
+	}
+	return payload
+}
+
+func (h *Handler) projectFirstClassTaskRepositories(ctx context.Context, workspaceID, projectID, runtimeID pgtype.UUID, daemonID string) []TaskRepositoryData {
+	refs, err := h.Queries.ListProjectRepositoryRefs(ctx, projectID)
+	if err != nil || len(refs) == 0 {
+		return nil
+	}
+	out := make([]TaskRepositoryData, 0, len(refs))
+	for i, ref := range refs {
+		repo, err := h.Queries.GetRepositoryInWorkspace(ctx, db.GetRepositoryInWorkspaceParams{
+			ID:          ref.RepositoryID,
+			WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			continue
+		}
+		role := strings.TrimSpace(ref.Role)
+		if role == "" {
+			role = taskRepositoryRole(i)
+		}
+		out = append(out, h.taskRepositoryFromRow(ctx, repo, role, ref.Position, runtimeID, daemonID))
+	}
+	return out
+}
+
+func legacyProjectTaskRepositoriesFromResources(workspaceID string, rows []db.ProjectResource) []TaskRepositoryData {
+	out := make([]TaskRepositoryData, 0)
+	seen := make(map[string]struct{})
+	for _, row := range rows {
+		if row.ResourceType != "github_repo" {
+			continue
+		}
+		var payload struct {
+			URL               string `json:"url"`
+			DefaultBranchHint string `json:"default_branch_hint,omitempty"`
+		}
+		if json.Unmarshal(row.ResourceRef, &payload) != nil {
+			continue
+		}
+		repo, remoteKey, ok := compatibilityRepositoryFromURL(workspaceID, payload.URL, "project_resource.github_repo")
+		if !ok {
+			continue
+		}
+		if _, exists := seen[remoteKey]; exists {
+			continue
+		}
+		seen[remoteKey] = struct{}{}
+		payload.DefaultBranchHint = strings.TrimSpace(payload.DefaultBranchHint)
+		if payload.DefaultBranchHint != "" {
+			repo.DefaultBranch = &payload.DefaultBranchHint
+		}
+		position := int32(len(out))
+		out = append(out, TaskRepositoryData{
+			ID:                  repo.ID,
+			Name:                repo.Name,
+			SourceState:         repo.SourceState,
+			RemoteURL:           repo.RemoteURL,
+			DefaultBranch:       repo.DefaultBranch,
+			Role:                taskRepositoryRole(int(position)),
+			Position:            position,
+			Compatibility:       true,
+			CompatibilitySource: repo.CompatibilitySource,
+		})
+	}
+	return out
+}
+
+func (h *Handler) projectLegacyTaskRepositories(ctx context.Context, workspaceID string, projectID pgtype.UUID, rows []db.ProjectResource) []TaskRepositoryData {
+	if len(rows) == 0 {
+		rows = h.listProjectResourcesForProject(ctx, projectID)
+	}
+	return legacyProjectTaskRepositoriesFromResources(workspaceID, rows)
+}
+
+func (h *Handler) projectTaskRepositories(ctx context.Context, workspaceID, projectID, runtimeID pgtype.UUID, daemonID string, projectResourceRows []db.ProjectResource) []TaskRepositoryData {
+	if repos := h.projectFirstClassTaskRepositories(ctx, workspaceID, projectID, runtimeID, daemonID); len(repos) > 0 {
+		return repos
+	}
+	return h.projectLegacyTaskRepositories(ctx, uuidToString(workspaceID), projectID, projectResourceRows)
+}
+
+func (h *Handler) workspaceFirstClassTaskRepositories(ctx context.Context, workspaceID, runtimeID pgtype.UUID, daemonID string) []TaskRepositoryData {
+	repositories, err := h.Queries.ListRepositories(ctx, workspaceID)
+	if err != nil || len(repositories) == 0 {
+		return nil
+	}
+	out := make([]TaskRepositoryData, 0, len(repositories))
+	for i, repo := range repositories {
+		out = append(out, h.taskRepositoryFromRow(ctx, repo, taskRepositoryRole(i), int32(i), runtimeID, daemonID))
+	}
+	return out
+}
+
+func (h *Handler) workspaceLegacyTaskRepositories(ctx context.Context, workspaceID pgtype.UUID) []TaskRepositoryData {
+	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil
+	}
+	legacyRepos := parseWorkspaceRepos(ws.Repos)
+	if len(legacyRepos) == 0 {
+		return nil
+	}
+	out := make([]TaskRepositoryData, 0, len(legacyRepos))
+	workspaceIDString := uuidToString(workspaceID)
+	for _, legacy := range legacyRepos {
+		repo, _, ok := compatibilityRepositoryFromURL(workspaceIDString, legacy.URL, "workspace.repos")
+		if !ok {
+			continue
+		}
+		position := int32(len(out))
+		out = append(out, TaskRepositoryData{
+			ID:                  repo.ID,
+			Name:                repo.Name,
+			SourceState:         repo.SourceState,
+			RemoteURL:           repo.RemoteURL,
+			DefaultBranch:       repo.DefaultBranch,
+			Role:                taskRepositoryRole(int(position)),
+			Position:            position,
+			Compatibility:       true,
+			CompatibilitySource: repo.CompatibilitySource,
+		})
+	}
+	return out
+}
+
+func (h *Handler) workspaceFallbackTaskRepositories(ctx context.Context, workspaceID, runtimeID pgtype.UUID, daemonID string) []TaskRepositoryData {
+	if repos := h.workspaceFirstClassTaskRepositories(ctx, workspaceID, runtimeID, daemonID); len(repos) > 0 {
+		return repos
+	}
+	return h.workspaceLegacyTaskRepositories(ctx, workspaceID)
+}
+
+func (h *Handler) chatDefaultTaskRepository(ctx context.Context, workspaceID, repositoryID, runtimeID pgtype.UUID, daemonID string) []TaskRepositoryData {
+	if !repositoryID.Valid {
+		return nil
+	}
+	repo, err := h.Queries.GetRepositoryInWorkspace(ctx, db.GetRepositoryInWorkspaceParams{
+		ID:          repositoryID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return nil
+	}
+	return []TaskRepositoryData{h.taskRepositoryFromRow(ctx, repo, "primary", 0, runtimeID, daemonID)}
+}
+
+func remoteReposFromTaskRepositories(repositories []TaskRepositoryData) []RepoData {
+	if len(repositories) == 0 {
+		return nil
+	}
+	repos := make([]RepoData, 0, len(repositories))
+	for _, repo := range repositories {
+		if repo.RemoteURL == nil {
+			continue
+		}
+		if url := strings.TrimSpace(*repo.RemoteURL); url != "" {
+			repos = append(repos, RepoData{URL: url})
+		}
+	}
+	return normalizeWorkspaceRepos(repos)
+}
+
+func setClaimRepositories(resp *AgentTaskResponse, repositories []TaskRepositoryData) {
+	if len(repositories) == 0 {
+		return
+	}
+	resp.Repositories = repositories
+	resp.Repos = remoteReposFromTaskRepositories(repositories)
+}
+
 func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	var req DaemonRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1044,6 +1275,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runtimeWorkspaceID := uuidToString(runtime.WorkspaceID)
+	daemonID := middleware.DaemonIDFromContext(r.Context())
 	authMs = time.Since(start).Milliseconds()
 
 	claimStart := time.Now()
@@ -1097,13 +1329,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Include workspace ID and repos so the daemon can set up worktrees.
-	//
-	// Repo precedence: project-bound github_repo resources override workspace
-	// repos when present. Mixing both would just confuse the agent — if a
-	// project explicitly attached its repos, those are the authoritative set
-	// for issues inside that project. When the project has no github_repo
-	// resources (or no project at all), we fall back to the workspace repos.
+	// Include workspace ID and repository context so the daemon can expose the
+	// task's code targets. First-class repository references are preferred;
+	// legacy Repos is still populated from remote_url values for checkout
+	// allowlisting and older daemon behavior.
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
@@ -1134,13 +1363,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			var projectRepos []RepoData
+			var projectResourceRows []db.ProjectResource
 			if issue.ProjectID.Valid {
 				resp.ProjectID = uuidToString(issue.ProjectID)
 				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
 					resp.ProjectTitle = proj.Title
 				}
 				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 {
+					projectResourceRows = rows
 					out := make([]ProjectResourceData, 0, len(rows))
 					for _, row := range rows {
 						label := ""
@@ -1157,29 +1387,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 							ResourceRef:  ref,
 							Label:        label,
 						})
-						// Lift github_repo resources into the daemon's repo list
-						// so `multica repo checkout` and the meta-skill render
-						// them as the issue's repos.
-						if row.ResourceType == "github_repo" {
-							var payload struct {
-								URL string `json:"url"`
-							}
-							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-							}
-						}
 					}
 					resp.ProjectResources = out
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
+			if issue.ProjectID.Valid {
+				setClaimRepositories(&resp, h.projectTaskRepositories(r.Context(), issue.WorkspaceID, issue.ProjectID, task.RuntimeID, daemonID, projectResourceRows))
+			}
+			if len(resp.Repositories) == 0 {
+				setClaimRepositories(&resp, h.workspaceFallbackTaskRepositories(r.Context(), issue.WorkspaceID, task.RuntimeID, daemonID))
 			}
 		}
 
@@ -1244,11 +1461,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
 			resp.WorkspaceID = uuidToString(cs.WorkspaceID)
 			resp.ChatSessionID = uuidToString(cs.ID)
-			if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
+			setClaimRepositories(&resp, h.chatDefaultTaskRepository(r.Context(), cs.WorkspaceID, cs.DefaultRepositoryID, task.RuntimeID, daemonID))
+			if len(resp.Repositories) == 0 {
+				setClaimRepositories(&resp, h.workspaceFallbackTaskRepositories(r.Context(), cs.WorkspaceID, task.RuntimeID, daemonID))
 			}
 			// Resume chat sessions only when the stored pointer was produced
 			// by the same runtime as the claiming task. When the chat_session
@@ -1320,13 +1535,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				if resp.WorkspaceID == "" {
 					resp.WorkspaceID = uuidToString(ap.WorkspaceID)
 				}
-				if len(resp.Repos) == 0 {
-					if ws, err := h.Queries.GetWorkspace(r.Context(), ap.WorkspaceID); err == nil && ws.Repos != nil {
-						var repos []RepoData
-						if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-							resp.Repos = repos
-						}
-					}
+				if len(resp.Repositories) == 0 {
+					setClaimRepositories(&resp, h.workspaceFallbackTaskRepositories(r.Context(), ap.WorkspaceID, task.RuntimeID, daemonID))
 				}
 			}
 		}
@@ -1348,7 +1558,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			// it would for an issue-bound task: the prompt template can name
 			// the project, and `multica repo checkout` sees the project's
 			// github_repo resources instead of the workspace fallback.
-			var projectRepos []RepoData
+			var projectResourceRows []db.ProjectResource
 			if qc.ProjectID != "" {
 				projectUUID, err := util.ParseUUID(qc.ProjectID)
 				if err == nil {
@@ -1357,6 +1567,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						resp.ProjectTitle = proj.Title
 					}
 					if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
+						projectResourceRows = rows
 						out := make([]ProjectResourceData, 0, len(rows))
 						for _, row := range rows {
 							label := ""
@@ -1373,27 +1584,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 								ResourceRef:  ref,
 								Label:        label,
 							})
-							if row.ResourceType == "github_repo" {
-								var payload struct {
-									URL string `json:"url"`
-								}
-								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-								}
-							}
 						}
 						resp.ProjectResources = out
 					}
 				}
 			}
 
-			if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(qc.WorkspaceID)); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
+			if qc.ProjectID != "" {
+				if projectUUID, err := util.ParseUUID(qc.ProjectID); err == nil {
+					setClaimRepositories(&resp, h.projectTaskRepositories(r.Context(), parseUUID(qc.WorkspaceID), projectUUID, task.RuntimeID, daemonID, projectResourceRows))
 				}
+			}
+			if len(resp.Repositories) == 0 {
+				setClaimRepositories(&resp, h.workspaceFallbackTaskRepositories(r.Context(), parseUUID(qc.WorkspaceID), task.RuntimeID, daemonID))
 			}
 
 			// Squad-leader briefing injection for quick-create tasks. When

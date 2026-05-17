@@ -119,6 +119,36 @@ type RepoData struct {
 	URL string `json:"url"`
 }
 
+// TaskRepositoryBindingData is a sanitized binding summary for daemon task
+// claims. It intentionally omits local_path and binding metadata.
+type TaskRepositoryBindingData struct {
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	State          string `json:"state"`
+	MachineLabel   string `json:"machine_label,omitempty"`
+	DaemonID       string `json:"daemon_id,omitempty"`
+	RuntimeID      string `json:"runtime_id,omitempty"`
+	Available      bool   `json:"available"`
+	CurrentDaemon  bool   `json:"current_daemon,omitempty"`
+	CurrentRuntime bool   `json:"current_runtime,omitempty"`
+}
+
+// TaskRepositoryData carries first-class repository semantics in daemon task
+// claims while Repos preserves the legacy remote URL checkout allowlist.
+type TaskRepositoryData struct {
+	ID                  string                     `json:"id"`
+	Name                string                     `json:"name"`
+	SourceState         string                     `json:"source_state"`
+	RemoteURL           *string                    `json:"remote_url,omitempty"`
+	DefaultBranch       *string                    `json:"default_branch,omitempty"`
+	Role                string                     `json:"role,omitempty"`
+	Position            int32                      `json:"position"`
+	Compatibility       bool                       `json:"compatibility,omitempty"`
+	CompatibilitySource string                     `json:"compatibility_source,omitempty"`
+	BindingAvailable    bool                       `json:"binding_available"`
+	Binding             *TaskRepositoryBindingData `json:"binding,omitempty"`
+}
+
 // ProjectResourceData is the wire shape for a project resource included in a
 // claim response. The daemon reads this list and writes it into the agent's
 // working directory so skills/agents can discover project-scoped context.
@@ -152,6 +182,7 @@ type AgentTaskResponse struct {
 	ParentTaskID            *string               `json:"parent_task_id,omitempty"`
 	Agent                   *TaskAgentData        `json:"agent,omitempty"`
 	Repos                   []RepoData            `json:"repos,omitempty"`
+	Repositories            []TaskRepositoryData  `json:"repositories,omitempty"`
 	ProjectID               string                `json:"project_id,omitempty"`        // issue's project, when present
 	ProjectTitle            string                `json:"project_title,omitempty"`     // for surfacing in agent context
 	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"` // resources attached to the project

@@ -17,6 +17,37 @@ type RepoContextForEnv struct {
 	URL string // remote URL
 }
 
+// RepositoryBindingContextForEnv is a sanitized binding summary. It never
+// carries local paths or private binding metadata.
+type RepositoryBindingContextForEnv struct {
+	ID             string
+	Kind           string
+	State          string
+	MachineLabel   string
+	DaemonID       string
+	RuntimeID      string
+	Available      bool
+	CurrentDaemon  bool
+	CurrentRuntime bool
+}
+
+// RepositoryContextForEnv describes the first-class repository context for a
+// task. RemoteURL keeps existing checkout behavior; local binding cwd
+// switching is intentionally not performed in this slice.
+type RepositoryContextForEnv struct {
+	ID                  string
+	Name                string
+	SourceState         string
+	RemoteURL           string
+	DefaultBranch       string
+	Role                string
+	Position            int32
+	Compatibility       bool
+	CompatibilitySource string
+	BindingAvailable    bool
+	Binding             *RepositoryBindingContextForEnv
+}
+
 // ProjectResourceForEnv describes a single resource attached to the issue's
 // project. The resource_ref payload is type-specific JSON; the agent reads
 // resources.json on disk for the full structure. This struct only carries
@@ -49,7 +80,8 @@ type TaskContextForEnv struct {
 	AgentName               string
 	AgentInstructions       string // agent identity/persona instructions, injected into CLAUDE.md
 	AgentSkills             []SkillContextForEnv
-	Repos                   []RepoContextForEnv     // workspace repos available for checkout
+	Repos                   []RepoContextForEnv // workspace repos available for checkout
+	Repositories            []RepositoryContextForEnv
 	ProjectID               string                  // issue's project, when present
 	ProjectTitle            string                  // human-readable project title
 	ProjectResources        []ProjectResourceForEnv // resources attached to the project

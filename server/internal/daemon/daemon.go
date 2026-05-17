@@ -2156,6 +2156,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AgentInstructions:       instructions,
 		AgentSkills:             convertSkillsForEnv(skills),
 		Repos:                   convertReposForEnv(task.Repos),
+		Repositories:            convertTaskRepositoriesForEnv(task.Repositories),
 		ProjectID:               task.ProjectID,
 		ProjectTitle:            task.ProjectTitle,
 		ProjectResources:        convertProjectResourcesForEnv(task.ProjectResources),
@@ -2935,6 +2936,48 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	result := make([]execenv.RepoContextForEnv, len(repos))
 	for i, r := range repos {
 		result[i] = execenv.RepoContextForEnv{URL: r.URL}
+	}
+	return result
+}
+
+func convertTaskRepositoriesForEnv(repositories []TaskRepositoryData) []execenv.RepositoryContextForEnv {
+	if len(repositories) == 0 {
+		return nil
+	}
+	result := make([]execenv.RepositoryContextForEnv, len(repositories))
+	for i, r := range repositories {
+		var remoteURL, defaultBranch string
+		if r.RemoteURL != nil {
+			remoteURL = *r.RemoteURL
+		}
+		if r.DefaultBranch != nil {
+			defaultBranch = *r.DefaultBranch
+		}
+		result[i] = execenv.RepositoryContextForEnv{
+			ID:                  r.ID,
+			Name:                r.Name,
+			SourceState:         r.SourceState,
+			RemoteURL:           remoteURL,
+			DefaultBranch:       defaultBranch,
+			Role:                r.Role,
+			Position:            r.Position,
+			Compatibility:       r.Compatibility,
+			CompatibilitySource: r.CompatibilitySource,
+			BindingAvailable:    r.BindingAvailable,
+		}
+		if r.Binding != nil {
+			result[i].Binding = &execenv.RepositoryBindingContextForEnv{
+				ID:             r.Binding.ID,
+				Kind:           r.Binding.Kind,
+				State:          r.Binding.State,
+				MachineLabel:   r.Binding.MachineLabel,
+				DaemonID:       r.Binding.DaemonID,
+				RuntimeID:      r.Binding.RuntimeID,
+				Available:      r.Binding.Available,
+				CurrentDaemon:  r.Binding.CurrentDaemon,
+				CurrentRuntime: r.Binding.CurrentRuntime,
+			}
+		}
 	}
 	return result
 }

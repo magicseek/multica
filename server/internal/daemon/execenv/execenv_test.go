@@ -335,6 +335,66 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	}
 }
 
+func TestInjectRuntimeConfigRendersMixedRepositoryContext(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ctx := TaskContextForEnv{
+		Repositories: []RepositoryContextForEnv{
+			{
+				ID:            "repo-remote",
+				Name:          "Remote app",
+				SourceState:   "remote_git",
+				RemoteURL:     "https://github.com/org/remote-app.git",
+				DefaultBranch: "main",
+				Role:          "primary",
+			},
+			{
+				ID:                  "repo-managed",
+				Name:                "Managed scratch",
+				SourceState:         "agent_managed",
+				Role:                "secondary",
+				BindingAvailable:    true,
+				Compatibility:       false,
+				CompatibilitySource: "",
+				Binding: &RepositoryBindingContextForEnv{
+					ID:            "binding-managed",
+					Kind:          "daemon_workdir",
+					State:         "ready",
+					MachineLabel:  "Troy MacBook",
+					Available:     true,
+					CurrentDaemon: true,
+				},
+			},
+		},
+	}
+	if _, err := InjectRuntimeConfig(dir, "codex", ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	s := string(content)
+	for _, want := range []string{
+		"**Remote app** (`primary`, source: `remote_git`, id: `repo-remote`)",
+		"Checkout: `multica repo checkout https://github.com/org/remote-app.git` (default branch: `main`)",
+		"**Managed scratch** (`secondary`, source: `agent_managed`, id: `repo-managed`)",
+		"Remote checkout: unavailable because this repository has no `remote_url`.",
+		"Local binding execution is not available in this slice",
+		"Binding: `daemon_workdir` is `ready` on Troy MacBook",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("AGENTS.md missing %q", want)
+		}
+	}
+	if strings.Count(s, "  - Checkout:") != 1 {
+		t.Fatalf("expected exactly one repository checkout instruction, got content:\n%s", s)
+	}
+	if strings.Contains(s, "/Users/troy") {
+		t.Fatalf("repository context must not render local paths: %s", s)
+	}
+}
+
 func TestWriteContextFiles(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

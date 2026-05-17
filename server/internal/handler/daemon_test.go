@@ -1447,6 +1447,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	var resp struct {
 		Task *struct {
 			Repos            []RepoData            `json:"repos"`
+			Repositories     []TaskRepositoryData  `json:"repositories"`
 			ProjectID        string                `json:"project_id"`
 			ProjectResources []ProjectResourceData `json:"project_resources"`
 		} `json:"task"`
@@ -1463,6 +1464,15 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != projectRepoURL {
 		t.Fatalf("expected resp.Repos to contain only the project repo URL, got %+v", resp.Task.Repos)
 	}
+	if len(resp.Task.Repositories) != 1 {
+		t.Fatalf("expected one compatibility repository payload, got %+v", resp.Task.Repositories)
+	}
+	if resp.Task.Repositories[0].RemoteURL == nil || *resp.Task.Repositories[0].RemoteURL != projectRepoURL {
+		t.Fatalf("compatibility repository remote_url = %v, want %q", resp.Task.Repositories[0].RemoteURL, projectRepoURL)
+	}
+	if !resp.Task.Repositories[0].Compatibility || resp.Task.Repositories[0].CompatibilitySource != "project_resource.github_repo" {
+		t.Fatalf("expected legacy project resource compatibility payload, got %+v", resp.Task.Repositories[0])
+	}
 	for _, r := range resp.Task.Repos {
 		if strings.HasSuffix(r.URL, "workspace-repo-a") || strings.HasSuffix(r.URL, "workspace-repo-b") {
 			t.Errorf("workspace repo %q leaked into resp.Repos despite project override", r.URL)
@@ -1470,6 +1480,203 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	}
 	if len(resp.Task.ProjectResources) != 1 {
 		t.Errorf("expected 1 project_resources entry, got %d", len(resp.Task.ProjectResources))
+	}
+}
+
+func TestClaimTask_ProjectFirstClassRepositoryOverridesWorkspaceFallback(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{"url": "https://github.com/example/legacy-workspace-fallback"},
+	})
+
+	workspaceRepo := createHandlerTestRepository(t, "Workspace first-class fallback", "https://github.com/example/workspace-first-class.git")
+	projectRepo := createHandlerTestRepository(t, "Project first-class primary", "https://github.com/example/project-first-class.git")
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Claim first-class project repository").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_repository (project_id, repository_id, workspace_id, role, position)
+		VALUES ($1, $2, $3, 'primary', 0)
+	`, projectID, projectRepo.ID, testWorkspaceID); err != nil {
+		t.Fatalf("create project_repository: %v", err)
+	}
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, $2, 'first-class project repo', 'todo', 'medium', $3, 'member', 88011, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-first-class-project")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repos        []RepoData           `json:"repos"`
+			Repositories []TaskRepositoryData `json:"repositories"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if len(resp.Task.Repositories) != 1 {
+		t.Fatalf("expected only the project repository, got %+v", resp.Task.Repositories)
+	}
+	gotRepo := resp.Task.Repositories[0]
+	if gotRepo.ID != projectRepo.ID || gotRepo.RemoteURL == nil || *gotRepo.RemoteURL != "https://github.com/example/project-first-class.git" {
+		t.Fatalf("unexpected project repository payload: %+v", gotRepo)
+	}
+	if gotRepo.Compatibility {
+		t.Fatalf("first-class project repository should not be compatibility: %+v", gotRepo)
+	}
+	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != "https://github.com/example/project-first-class.git" {
+		t.Fatalf("legacy repos should contain only the project remote URL, got %+v", resp.Task.Repos)
+	}
+	for _, repo := range resp.Task.Repositories {
+		if repo.ID == workspaceRepo.ID {
+			t.Fatalf("workspace repository leaked despite project override: %+v", resp.Task.Repositories)
+		}
+	}
+}
+
+func TestClaimTask_FirstClassRepositoryBindingMustBelongToClaimingDaemon(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	repo := createHandlerTestRepository(t, "Project repo with foreign binding", "https://github.com/example/project-foreign-binding.git")
+	const privatePath = "/Users/other/private/project-foreign-binding"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO repository_binding (
+			repository_id, workspace_id, owner_user_id, daemon_id, machine_label,
+			binding_kind, local_path, state, metadata
+		) VALUES ($1, $2, $3, 'other-daemon', 'Other Mac', 'local_dir', $4, 'ready', $5::jsonb)
+	`, repo.ID, testWorkspaceID, testUserID, privatePath, `{"last_verified_path":"`+privatePath+`"}`); err != nil {
+		t.Fatalf("create repository_binding: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM repository_binding WHERE repository_id = $1`, repo.ID)
+	})
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Claim binding eligibility project").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_repository (project_id, repository_id, workspace_id, role, position)
+		VALUES ($1, $2, $3, 'primary', 0)
+	`, projectID, repo.ID, testWorkspaceID); err != nil {
+		t.Fatalf("create project_repository: %v", err)
+	}
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, $2, 'first-class repo foreign binding', 'todo', 'medium', $3, 'member', 88013, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "claiming-daemon")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), privatePath) {
+		t.Fatalf("claim response leaked foreign binding path: %s", w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repositories []TaskRepositoryData `json:"repositories"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if len(resp.Task.Repositories) != 1 {
+		t.Fatalf("expected project repository payload, got %+v", resp.Task.Repositories)
+	}
+	gotRepo := resp.Task.Repositories[0]
+	if gotRepo.ID != repo.ID {
+		t.Fatalf("unexpected repository payload: %+v", gotRepo)
+	}
+	if gotRepo.BindingAvailable || gotRepo.Binding != nil {
+		t.Fatalf("foreign ready binding must not be claim-eligible, got %+v", gotRepo)
 	}
 }
 
@@ -1545,6 +1752,165 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 	}
 	if len(resp.Task.Repos) != 1 || !strings.HasSuffix(resp.Task.Repos[0].URL, "workspace-fallback") {
 		t.Fatalf("expected workspace fallback repo, got %+v", resp.Task.Repos)
+	}
+}
+
+func TestClaimTask_WorkspaceFirstClassRepositoryFallbackBeforeLegacyRepos(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{"url": "https://github.com/example/legacy-workspace-only"},
+	})
+	workspaceRepo := createHandlerTestRepository(t, "Workspace first-class claim fallback", "https://github.com/example/workspace-first-class-claim.git")
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, 'workspace first-class fallback', 'todo', 'medium', $2, 'member', 88012, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-workspace-first-class")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repos        []RepoData           `json:"repos"`
+			Repositories []TaskRepositoryData `json:"repositories"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	foundFirstClass := false
+	for _, repo := range resp.Task.Repositories {
+		if repo.ID == workspaceRepo.ID {
+			foundFirstClass = true
+		}
+		if repo.CompatibilitySource == "workspace.repos" {
+			t.Fatalf("legacy workspace repo should not be included when first-class workspace repos exist: %+v", resp.Task.Repositories)
+		}
+	}
+	if !foundFirstClass {
+		t.Fatalf("first-class workspace repository missing from payload: %+v", resp.Task.Repositories)
+	}
+	for _, repo := range resp.Task.Repos {
+		if strings.Contains(repo.URL, "legacy-workspace-only") {
+			t.Fatalf("legacy workspace URL should not be in compatibility repos when first-class workspace repos exist: %+v", resp.Task.Repos)
+		}
+	}
+}
+
+func TestClaimTask_ChatDefaultRepositoryOverridesWorkspaceFallback(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{"url": "https://github.com/example/chat-legacy-workspace"},
+	})
+	workspaceRepo := createHandlerTestRepository(t, "Chat workspace fallback", "https://github.com/example/chat-workspace-fallback.git")
+	defaultRepo := createHandlerTestRepository(t, "Chat default repository", "https://github.com/example/chat-default-first-class.git")
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	var sessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title, status, default_repository_id
+		) VALUES ($1, $2, $3, 'chat default repository claim', 'active', $4)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID, defaultRepo.ID).Scan(&sessionID); err != nil {
+		t.Fatalf("create chat session: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("create chat task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-chat-default")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repos        []RepoData           `json:"repos"`
+			Repositories []TaskRepositoryData `json:"repositories"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if len(resp.Task.Repositories) != 1 {
+		t.Fatalf("expected only chat default repository, got %+v", resp.Task.Repositories)
+	}
+	gotRepo := resp.Task.Repositories[0]
+	if gotRepo.ID != defaultRepo.ID || gotRepo.RemoteURL == nil || *gotRepo.RemoteURL != "https://github.com/example/chat-default-first-class.git" {
+		t.Fatalf("unexpected chat default repository payload: %+v", gotRepo)
+	}
+	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != "https://github.com/example/chat-default-first-class.git" {
+		t.Fatalf("legacy repos should contain only chat default remote URL, got %+v", resp.Task.Repos)
+	}
+	for _, repo := range resp.Task.Repositories {
+		if repo.ID == workspaceRepo.ID {
+			t.Fatalf("workspace fallback leaked despite chat default repository: %+v", resp.Task.Repositories)
+		}
 	}
 }
 

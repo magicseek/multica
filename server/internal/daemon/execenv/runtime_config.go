@@ -49,6 +49,50 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 	}
 }
 
+func appendRepositoryContext(b *strings.Builder, repo RepositoryContextForEnv) {
+	name := strings.TrimSpace(repo.Name)
+	if name == "" {
+		name = "Repository"
+	}
+	role := strings.TrimSpace(repo.Role)
+	if role == "" {
+		role = taskRepositoryRole(int(repo.Position))
+	}
+	fmt.Fprintf(b, "- **%s** (`%s`, source: `%s`, id: `%s`)\n", name, role, repo.SourceState, repo.ID)
+	if repo.Compatibility {
+		fmt.Fprintf(b, "  - Compatibility source: `%s`\n", repo.CompatibilitySource)
+	}
+	if repo.RemoteURL != "" {
+		fmt.Fprintf(b, "  - Checkout: `multica repo checkout %s`", repo.RemoteURL)
+		if repo.DefaultBranch != "" {
+			fmt.Fprintf(b, " (default branch: `%s`)", repo.DefaultBranch)
+		}
+		b.WriteString("\n")
+	} else {
+		b.WriteString("  - Remote checkout: unavailable because this repository has no `remote_url`.\n")
+		b.WriteString("  - Local binding execution is not available in this slice; do not run `multica repo checkout` for this repository until it has a remote URL.\n")
+	}
+	if repo.Binding != nil {
+		fmt.Fprintf(b, "  - Binding: `%s` is `%s`", repo.Binding.Kind, repo.Binding.State)
+		if repo.Binding.MachineLabel != "" {
+			fmt.Fprintf(b, " on %s", repo.Binding.MachineLabel)
+		}
+		if repo.Binding.CurrentDaemon || repo.Binding.CurrentRuntime {
+			b.WriteString(" (current runtime)")
+		}
+		b.WriteString("\n")
+	} else if repo.BindingAvailable {
+		b.WriteString("  - Binding: available\n")
+	}
+}
+
+func taskRepositoryRole(position int) string {
+	if position == 0 {
+		return "primary"
+	}
+	return "secondary"
+}
+
 // InjectRuntimeConfig writes the meta skill content into the runtime-specific
 // config file so the agent discovers its environment through its native mechanism.
 //
@@ -183,7 +227,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	}
 
 	// Inject available repositories section.
-	if len(ctx.Repos) > 0 {
+	if len(ctx.Repositories) > 0 {
+		b.WriteString("## Repositories\n\n")
+		b.WriteString("The following code repositories are available for this task.\n\n")
+		for _, repo := range ctx.Repositories {
+			appendRepositoryContext(&b, repo)
+		}
+		b.WriteString("\nRemote checkout commands create git worktrees with dedicated branches. You can check out one or more remote repositories as needed, and can pass `--ref` for review/QA on a non-default branch or commit.\n\n")
+	} else if len(ctx.Repos) > 0 {
 		b.WriteString("## Repositories\n\n")
 		b.WriteString("The following code repositories are available in this workspace.\n")
 		b.WriteString("Use `multica repo checkout <url>` to check out a repository into your working directory. Add `--ref <branch-or-sha>` when you need an exact branch, tag, or commit.\n\n")
@@ -223,7 +274,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- If asked about issues, use `multica issue list --output json` or `multica issue get <id> --output json`\n")
 		b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
 		b.WriteString("- If asked to perform actions (create issues, update status, etc.), use the appropriate CLI commands\n")
-		b.WriteString("- If the task requires code changes, use `multica repo checkout <url>` to get the code first. Use `--ref <branch-or-sha>` when you need an exact revision\n")
+		b.WriteString("- If the task requires code changes, use the Repositories section to identify the code target. For repositories with a checkout command, run it first; for local-only repositories without `remote_url`, local binding execution is not available in this slice\n")
 		b.WriteString("- Keep responses concise and direct\n\n")
 	} else if ctx.QuickCreatePrompt != "" {
 		// Quick-create task: detailed field / output rules live in the
