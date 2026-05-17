@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-05-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~110 | Active |
+| `journal-1.md` | ~143 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-05-17 | Editable agent workflows | `4730d164` | `trellis/agent-execution-protocol` |
 | 3 | 2026-05-17 | Trellis execution protocol template | `74ced6a2` | `trellis/agent-execution-protocol` |
 | 2 | 2026-05-16 | Enable protocol-gated task agent execution workflow | `ef3fa19b`, `3b3155df` | `trellis/agent-execution-protocol` |
 | 1 | 2026-05-16 | Handoff agent execution protocol worktree | - | `trellis/agent-execution-protocol` |

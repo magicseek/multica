@@ -108,3 +108,36 @@ Added slug-backed execution protocol templates with standard assignment compatib
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Editable agent workflows
+
+**Date**: 2026-05-17
+**Task**: Editable agent workflows
+**Branch**: `trellis/agent-execution-protocol`
+
+### Summary
+
+Implemented workspace-level editable workflow definitions with system templates, project bindings, issue overrides, queue-time snapshots, daemon prompt injection, global Workflows UI, rendered Markdown and graph preview, then archived the completed Trellis task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4730d164` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
