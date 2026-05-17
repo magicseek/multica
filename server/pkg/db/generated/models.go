@@ -172,18 +172,19 @@ type ChatMessage struct {
 }
 
 type ChatSession struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	CreatorID   pgtype.UUID        `json:"creator_id"`
-	Title       string             `json:"title"`
-	SessionID   pgtype.Text        `json:"session_id"`
-	WorkDir     pgtype.Text        `json:"work_dir"`
-	Status      string             `json:"status"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	UnreadSince pgtype.Timestamptz `json:"unread_since"`
-	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	CreatorID           pgtype.UUID        `json:"creator_id"`
+	Title               string             `json:"title"`
+	SessionID           pgtype.Text        `json:"session_id"`
+	WorkDir             pgtype.Text        `json:"work_dir"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	UnreadSince         pgtype.Timestamptz `json:"unread_since"`
+	RuntimeID           pgtype.UUID        `json:"runtime_id"`
+	DefaultRepositoryID pgtype.UUID        `json:"default_repository_id"`
 }
 
 type Comment struct {
@@ -416,6 +417,15 @@ type Project struct {
 	Priority    string             `json:"priority"`
 }
 
+type ProjectRepository struct {
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	RepositoryID pgtype.UUID        `json:"repository_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	Role         string             `json:"role"`
+	Position     int32              `json:"position"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type ProjectResource struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
@@ -426,6 +436,59 @@ type ProjectResource struct {
 	Position     int32              `json:"position"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	CreatedBy    pgtype.UUID        `json:"created_by"`
+}
+
+type Repository struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Name             string             `json:"name"`
+	SourceState      string             `json:"source_state"`
+	RemoteUrl        pgtype.Text        `json:"remote_url"`
+	RemoteKey        pgtype.Text        `json:"remote_key"`
+	DefaultBranch    pgtype.Text        `json:"default_branch"`
+	LeadAgentID      pgtype.UUID        `json:"lead_agent_id"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedByAgentID pgtype.UUID        `json:"created_by_agent_id"`
+	Status           string             `json:"status"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RepositoryBinding struct {
+	ID           pgtype.UUID        `json:"id"`
+	RepositoryID pgtype.UUID        `json:"repository_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	OwnerUserID  pgtype.UUID        `json:"owner_user_id"`
+	DaemonID     string             `json:"daemon_id"`
+	RuntimeID    pgtype.UUID        `json:"runtime_id"`
+	MachineLabel string             `json:"machine_label"`
+	BindingKind  string             `json:"binding_kind"`
+	LocalPath    string             `json:"local_path"`
+	State        string             `json:"state"`
+	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RepositoryOperation struct {
+	ID              pgtype.UUID        `json:"id"`
+	RepositoryID    pgtype.UUID        `json:"repository_id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	OperationType   string             `json:"operation_type"`
+	Status          string             `json:"status"`
+	RequestedByType string             `json:"requested_by_type"`
+	RequestedByID   pgtype.UUID        `json:"requested_by_id"`
+	TargetDaemonID  pgtype.Text        `json:"target_daemon_id"`
+	TargetRuntimeID pgtype.UUID        `json:"target_runtime_id"`
+	BindingID       pgtype.UUID        `json:"binding_id"`
+	Request         []byte             `json:"request"`
+	Result          []byte             `json:"result"`
+	Error           pgtype.Text        `json:"error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
 }
 
 type Skill struct {
@@ -483,6 +546,20 @@ type TaskMessage struct {
 	Input     []byte             `json:"input"`
 	Output    pgtype.Text        `json:"output"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskOutputMetadatum struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	RepositoryID pgtype.UUID        `json:"repository_id"`
+	TaskID       pgtype.UUID        `json:"task_id"`
+	RelativePath string             `json:"relative_path"`
+	Filename     string             `json:"filename"`
+	Kind         string             `json:"kind"`
+	SizeBytes    pgtype.Int8        `json:"size_bytes"`
+	MimeType     pgtype.Text        `json:"mime_type"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskUsage struct {

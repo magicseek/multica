@@ -24,8 +24,9 @@ const chatSessionTitleMaxLen = 200
 // ---------------------------------------------------------------------------
 
 type CreateChatSessionRequest struct {
-	AgentID string `json:"agent_id"`
-	Title   string `json:"title"`
+	AgentID             string  `json:"agent_id"`
+	Title               string  `json:"title"`
+	DefaultRepositoryID *string `json:"default_repository_id"`
 }
 
 func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
@@ -75,11 +76,29 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var defaultRepositoryID pgtype.UUID
+	if req.DefaultRepositoryID != nil && strings.TrimSpace(*req.DefaultRepositoryID) != "" {
+		repoUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.DefaultRepositoryID), "default_repository_id")
+		if !ok {
+			return
+		}
+		repo, err := h.Queries.GetRepositoryInWorkspace(r.Context(), db.GetRepositoryInWorkspaceParams{
+			ID:          repoUUID,
+			WorkspaceID: workspaceUUID,
+		})
+		if err != nil || repo.Status == "archived" {
+			writeError(w, http.StatusNotFound, "repository not found")
+			return
+		}
+		defaultRepositoryID = repoUUID
+	}
+
 	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
-		WorkspaceID: workspaceUUID,
-		AgentID:     agentID,
-		CreatorID:   parseUUID(userID),
-		Title:       req.Title,
+		WorkspaceID:         workspaceUUID,
+		AgentID:             agentID,
+		CreatorID:           parseUUID(userID),
+		Title:               req.Title,
+		DefaultRepositoryID: defaultRepositoryID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
@@ -133,15 +152,16 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.HasUnread,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
+				ID:                  uuidToString(s.ID),
+				WorkspaceID:         uuidToString(s.WorkspaceID),
+				AgentID:             uuidToString(s.AgentID),
+				CreatorID:           uuidToString(s.CreatorID),
+				Title:               s.Title,
+				Status:              s.Status,
+				DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
+				HasUnread:           s.HasUnread,
+				CreatedAt:           timestampToString(s.CreatedAt),
+				UpdatedAt:           timestampToString(s.UpdatedAt),
 			})
 		}
 	} else {
@@ -159,15 +179,16 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.HasUnread,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
+				ID:                  uuidToString(s.ID),
+				WorkspaceID:         uuidToString(s.WorkspaceID),
+				AgentID:             uuidToString(s.AgentID),
+				CreatorID:           uuidToString(s.CreatorID),
+				Title:               s.Title,
+				Status:              s.Status,
+				DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
+				HasUnread:           s.HasUnread,
+				CreatedAt:           timestampToString(s.CreatedAt),
+				UpdatedAt:           timestampToString(s.UpdatedAt),
 			})
 		}
 	}
@@ -238,14 +259,13 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateChatSessionRequest struct {
-	Title *string `json:"title"`
+	Title               *string `json:"title"`
+	DefaultRepositoryID *string `json:"default_repository_id"`
 }
 
-// UpdateChatSession updates user-editable fields on a chat session — today
-// just `title`, surfaced by the inline rename affordance in the session
-// dropdown. Title is the only field accepted: `status` is legacy + read-only,
-// agent/creator/workspace are immutable, the resume pointers
-// (session_id / work_dir / runtime_id) are daemon-owned.
+// UpdateChatSession updates user-editable fields on a chat session. The resume
+// pointers (session_id / work_dir / runtime_id) are daemon-owned and stay off
+// this surface.
 func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -255,22 +275,33 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionId")
 
 	var req UpdateChatSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	rawFields, err := decodeJSONBodyWithRawFields(r.Body, &req)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Title == nil {
-		writeError(w, http.StatusBadRequest, "title is required")
+	titleRaw, titleProvided := rawFields["title"]
+	repoRaw, repoProvided := rawFields["default_repository_id"]
+	if !titleProvided && !repoProvided {
+		writeError(w, http.StatusBadRequest, "no supported fields provided")
 		return
 	}
-	title := strings.TrimSpace(*req.Title)
-	if title == "" {
-		writeError(w, http.StatusBadRequest, "title is required")
-		return
-	}
-	if len([]rune(title)) > chatSessionTitleMaxLen {
-		writeError(w, http.StatusBadRequest, "title is too long")
-		return
+	var title pgtype.Text
+	if titleProvided {
+		if string(titleRaw) == "null" || req.Title == nil {
+			writeError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		trimmed := strings.TrimSpace(*req.Title)
+		if trimmed == "" {
+			writeError(w, http.StatusBadRequest, "title is required")
+			return
+		}
+		if len([]rune(trimmed)) > chatSessionTitleMaxLen {
+			writeError(w, http.StatusBadRequest, "title is too long")
+			return
+		}
+		title = pgtype.Text{String: trimmed, Valid: true}
 	}
 
 	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
@@ -278,9 +309,32 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := h.Queries.UpdateChatSessionTitle(r.Context(), db.UpdateChatSessionTitleParams{
-		ID:    session.ID,
-		Title: title,
+	var defaultRepositoryID pgtype.UUID
+	if repoProvided && string(repoRaw) != "null" && req.DefaultRepositoryID != nil && strings.TrimSpace(*req.DefaultRepositoryID) != "" {
+		repoUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.DefaultRepositoryID), "default_repository_id")
+		if !ok {
+			return
+		}
+		workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+		if !ok {
+			return
+		}
+		repo, err := h.Queries.GetRepositoryInWorkspace(r.Context(), db.GetRepositoryInWorkspaceParams{
+			ID:          repoUUID,
+			WorkspaceID: workspaceUUID,
+		})
+		if err != nil || repo.Status == "archived" {
+			writeError(w, http.StatusNotFound, "repository not found")
+			return
+		}
+		defaultRepositoryID = repoUUID
+	}
+
+	updated, err := h.Queries.UpdateChatSessionFields(r.Context(), db.UpdateChatSessionFieldsParams{
+		ID:                     session.ID,
+		Title:                  title,
+		SetDefaultRepositoryID: repoProvided,
+		DefaultRepositoryID:    defaultRepositoryID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update chat session")
@@ -741,12 +795,13 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type ChatSessionResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	AgentID     string `json:"agent_id"`
-	CreatorID   string `json:"creator_id"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
+	ID                  string  `json:"id"`
+	WorkspaceID         string  `json:"workspace_id"`
+	AgentID             string  `json:"agent_id"`
+	CreatorID           string  `json:"creator_id"`
+	Title               string  `json:"title"`
+	Status              string  `json:"status"`
+	DefaultRepositoryID *string `json:"default_repository_id"`
 	// Only populated by list endpoints — single-session fetches return false.
 	HasUnread bool   `json:"has_unread"`
 	CreatedAt string `json:"created_at"`
@@ -776,14 +831,15 @@ type ChatMessageResponse struct {
 
 func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 	return ChatSessionResponse{
-		ID:          uuidToString(s.ID),
-		WorkspaceID: uuidToString(s.WorkspaceID),
-		AgentID:     uuidToString(s.AgentID),
-		CreatorID:   uuidToString(s.CreatorID),
-		Title:       s.Title,
-		Status:      s.Status,
-		CreatedAt:   timestampToString(s.CreatedAt),
-		UpdatedAt:   timestampToString(s.UpdatedAt),
+		ID:                  uuidToString(s.ID),
+		WorkspaceID:         uuidToString(s.WorkspaceID),
+		AgentID:             uuidToString(s.AgentID),
+		CreatorID:           uuidToString(s.CreatorID),
+		Title:               s.Title,
+		Status:              s.Status,
+		DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
+		CreatedAt:           timestampToString(s.CreatedAt),
+		UpdatedAt:           timestampToString(s.UpdatedAt),
 	}
 }
 

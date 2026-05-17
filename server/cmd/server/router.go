@@ -387,9 +387,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetProject)
 					r.Put("/", h.UpdateProject)
 					r.Delete("/", h.DeleteProject)
+					r.Get("/repositories", h.ListProjectRepositories)
+					r.Put("/repositories", h.SetProjectRepositories)
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
+				})
+			})
+
+			// Repositories
+			r.Route("/api/repositories", func(r chi.Router) {
+				r.Get("/", h.ListRepositories)
+				r.Post("/", h.CreateRepository)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetRepository)
+					r.Patch("/", h.UpdateRepository)
+					r.Delete("/", h.DeleteRepository)
+					r.Get("/bindings", h.ListRepositoryBindings)
+					r.Post("/bindings", h.CreateRepositoryBinding)
+					r.Delete("/bindings/{bindingId}", h.DeleteRepositoryBinding)
+					r.Get("/operations", h.ListRepositoryOperations)
 				})
 			})
 

@@ -1,6 +1,6 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2))
+INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id, default_repository_id)
+VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), sqlc.narg('default_repository_id'))
 RETURNING *;
 
 -- name: GetChatSession :one
@@ -30,6 +30,17 @@ ORDER BY cs.updated_at DESC;
 
 -- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChatSessionFields :one
+UPDATE chat_session SET
+    title = COALESCE(sqlc.narg('title'), title),
+    default_repository_id = CASE
+        WHEN sqlc.arg('set_default_repository_id')::bool THEN sqlc.narg('default_repository_id')
+        ELSE default_repository_id
+    END,
+    updated_at = now()
 WHERE id = $1
 RETURNING *;
 
