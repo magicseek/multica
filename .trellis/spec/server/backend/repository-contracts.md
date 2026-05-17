@@ -105,6 +105,7 @@ Realtime events:
 - Workspace Settings may create a `local_dir` repository with an inline `binding` object; the server must create the repository and binding in one transaction.
 - Web clients must not create a `local_dir` binding from a browser-only folder handle, selected folder name, or browser-relative path. A binding path must come from desktop native IPC, an authenticated local daemon/native helper, a server-mediated target-daemon picker/confirmation flow, or explicit manual path entry.
 - A `local_dir` binding path is scoped to the selected daemon/runtime's machine. If the browser is running on a different machine than the selected runtime, the picker must run on the target runtime machine or the UI must disable the path-pick flow and require an explicit runtime-visible path.
+- Daemon-assisted folder picking follows [Daemon Runtime Contracts](./daemon-runtime-contracts.md): the local bridge must confirm the target daemon before opening the native picker, and canceled picks must not create repositories or bindings.
 - Chat sessions expose `default_repository_id` as a nullable field. Clearing it is done by sending JSON `null`.
 - Compatibility reads may synthesize read-only repository responses from old `workspace.repos` and `project_resource(github_repo)` storage. New writes must target first-class repository storage.
 - `repository_binding.local_path` is private. Return it only to the binding owner or the corresponding daemon/runtime context.
