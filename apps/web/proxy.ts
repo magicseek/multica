@@ -13,6 +13,7 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "my-issues",
   "autopilots",
   "runtimes",
+  "workflows",
   "skills",
   "settings",
 ]);

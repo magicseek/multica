@@ -61,6 +61,29 @@ type Task struct {
 	QuickCreatePrompt       string                `json:"quick_create_prompt,omitempty"`       // user's natural-language input for quick-create tasks
 	SquadID                 string                `json:"squad_id,omitempty"`                  // when the picker was a squad, the squad's UUID; Agent is still the resolved leader
 	SquadName               string                `json:"squad_name,omitempty"`                // display name for the picker squad, used in prompt text
+	WorkflowDefinitionID    string                `json:"workflow_definition_id,omitempty"`    // workflow definition selected at queue time
+	WorkflowRevisionID      string                `json:"workflow_revision_id,omitempty"`      // immutable workflow revision selected at queue time
+	WorkflowSnapshot        WorkflowSnapshot      `json:"workflow_snapshot,omitempty"`         // rendered workflow snapshot captured at queue time
+}
+
+type WorkflowSnapshot struct {
+	SchemaVersion      int                         `json:"schema_version"`
+	TriggerType        string                      `json:"trigger_type"`
+	DefinitionID       string                      `json:"definition_id"`
+	RevisionID         string                      `json:"revision_id"`
+	RevisionNumber     int32                       `json:"revision_number"`
+	WorkflowName       string                      `json:"workflow_name"`
+	Origin             string                      `json:"origin"`
+	SystemKey          string                      `json:"system_key,omitempty"`
+	Schema             json.RawMessage             `json:"schema"`
+	RenderedMarkdown   string                      `json:"rendered_markdown"`
+	CapabilityWarnings []WorkflowCapabilityWarning `json:"capability_warnings,omitempty"`
+	ResolvedAt         string                      `json:"resolved_at,omitempty"`
+}
+
+type WorkflowCapabilityWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

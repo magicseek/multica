@@ -80,13 +80,17 @@ ORDER BY created_at DESC;
 -- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
-    trigger_summary, force_fresh_session, is_leader_task
+    trigger_summary, force_fresh_session, is_leader_task,
+    workflow_definition_id, workflow_revision_id, workflow_snapshot
 )
 VALUES (
     $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
     sqlc.narg(trigger_summary),
     COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE),
-    COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE)
+    COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
+    sqlc.narg('workflow_definition_id'),
+    sqlc.narg('workflow_revision_id'),
+    sqlc.narg('workflow_snapshot')
 )
 RETURNING *;
 
@@ -120,13 +124,15 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, chat_session_id, autopilot_run_id,
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
-    attempt, max_attempts, parent_task_id, is_leader_task
+    attempt, max_attempts, parent_task_id, is_leader_task,
+    workflow_definition_id, workflow_revision_id, workflow_snapshot
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     p.session_id, p.work_dir,
-    p.attempt + 1, p.max_attempts, p.id, p.is_leader_task
+    p.attempt + 1, p.max_attempts, p.id, p.is_leader_task,
+    p.workflow_definition_id, p.workflow_revision_id, p.workflow_snapshot
 FROM agent_task_queue p
 WHERE p.id = $1
 RETURNING *;

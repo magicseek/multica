@@ -139,6 +139,7 @@
     "prop_assignee": "Assignee",
     "prop_due_date": "Due date",
     "prop_project": "Project",
+    "prop_workflow": "Workflow",
     "prop_labels": "Labels",
     "add_property_action": "Add property",
     "prop_created_by": "Created by",

@@ -35,6 +35,7 @@ import { ContentEditor, type ContentEditorRef, TitleEditor, useFileDropZone, Fil
 import { StatusIcon, StatusPicker, PriorityPicker, AssigneePicker, DueDatePicker } from "../issues/components";
 import { BacklogAgentHintContent } from "../issues/components/backlog-agent-hint-dialog";
 import { ProjectPicker } from "../projects/components/project-picker";
+import { WorkflowPicker } from "../workflows";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
@@ -116,6 +117,10 @@ export function ManualCreatePanel({
   const [projectId, setProjectId] = useState<string | undefined>(
     (data?.project_id as string) || undefined,
   );
+  const [workflowOverrideDefinitionId, setWorkflowOverrideDefinitionId] =
+    useState<string | null>(
+      (data?.workflow_override_definition_id as string | null) ?? null,
+    );
   const [parentIssueId, setParentIssueId] = useState<string | undefined>(
     (data?.parent_issue_id as string) || undefined,
   );
@@ -161,6 +166,7 @@ export function ManualCreatePanel({
     setPriority("none");
     setDueDate(null);
     setProjectId(undefined);
+    setWorkflowOverrideDefinitionId(null);
     setParentIssueId(undefined);
     setChildIssues([]);
     setAttachmentIds([]);
@@ -181,6 +187,9 @@ export function ManualCreatePanel({
     if (!title.trim() || submitting) return;
     setSubmitting(true);
     try {
+      const workflowOverridePayload = workflowOverrideDefinitionId
+        ? { workflow_override_definition_id: workflowOverrideDefinitionId }
+        : {};
       const issue = await createIssueMutation.mutateAsync({
         title: title.trim(),
         description: descEditorRef.current?.getMarkdown()?.trim() || undefined,
@@ -192,6 +201,7 @@ export function ManualCreatePanel({
         attachment_ids: attachmentIds.length > 0 ? attachmentIds : undefined,
         parent_issue_id: parentIssueId,
         project_id: projectId,
+        ...workflowOverridePayload,
       });
 
       // Link queued children to the new parent. Deferred to after create
@@ -426,6 +436,18 @@ export function ManualCreatePanel({
               <ProjectPicker
                 projectId={projectId ?? null}
                 onUpdate={(u) => setProjectId(u.project_id ?? undefined)}
+                triggerRender={<PillButton />}
+                align="start"
+              />
+
+              {/* Workflow override */}
+              <WorkflowPicker
+                workflowId={workflowOverrideDefinitionId}
+                onUpdate={(u) =>
+                  setWorkflowOverrideDefinitionId(
+                    u.workflow_override_definition_id ?? null,
+                  )
+                }
                 triggerRender={<PillButton />}
                 align="start"
               />

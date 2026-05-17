@@ -5,7 +5,7 @@ import (
 )
 
 func shouldUseTaskExecutionProtocol(ctx TaskContextForEnv) bool {
-	return ctx.ExecutionProtocolEnabled &&
+	return (ctx.WorkflowRenderedMarkdown != "" || ctx.ExecutionProtocolEnabled) &&
 		ctx.IssueID != "" &&
 		ctx.TriggerCommentID == "" &&
 		ctx.ChatSessionID == "" &&
@@ -15,6 +15,9 @@ func shouldUseTaskExecutionProtocol(ctx TaskContextForEnv) bool {
 }
 
 func renderTaskExecutionProtocol(ctx TaskContextForEnv) string {
+	if ctx.WorkflowRenderedMarkdown != "" {
+		return ctx.WorkflowRenderedMarkdown
+	}
 	tpl, ok := execprotocol.Resolve(ctx.ExecutionProtocolEnabled, ctx.ExecutionProtocolSlug)
 	if !ok {
 		return ""

@@ -17,19 +17,20 @@ import (
 )
 
 type ProjectResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	Icon        *string `json:"icon"`
-	Status      string  `json:"status"`
-	Priority    string  `json:"priority"`
-	LeadType    *string `json:"lead_type"`
-	LeadID      *string `json:"lead_id"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-	IssueCount  int64   `json:"issue_count"`
-	DoneCount   int64   `json:"done_count"`
+	ID                   string  `json:"id"`
+	WorkspaceID          string  `json:"workspace_id"`
+	Title                string  `json:"title"`
+	Description          *string `json:"description"`
+	Icon                 *string `json:"icon"`
+	Status               string  `json:"status"`
+	Priority             string  `json:"priority"`
+	LeadType             *string `json:"lead_type"`
+	LeadID               *string `json:"lead_id"`
+	WorkflowDefinitionID *string `json:"workflow_definition_id"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
+	IssueCount           int64   `json:"issue_count"`
+	DoneCount            int64   `json:"done_count"`
 	// ResourceCount is a breadcrumb pointing at the sub-collection at
 	// /api/projects/{id}/resources. Resources themselves stay out of this
 	// payload to keep parent metadata and child collections separate; clients
@@ -39,17 +40,18 @@ type ProjectResponse struct {
 
 func projectToResponse(p db.Project) ProjectResponse {
 	return ProjectResponse{
-		ID:          uuidToString(p.ID),
-		WorkspaceID: uuidToString(p.WorkspaceID),
-		Title:       p.Title,
-		Description: textToPtr(p.Description),
-		Icon:        textToPtr(p.Icon),
-		Status:      p.Status,
-		Priority:    p.Priority,
-		LeadType:    textToPtr(p.LeadType),
-		LeadID:      uuidToPtr(p.LeadID),
-		CreatedAt:   timestampToString(p.CreatedAt),
-		UpdatedAt:   timestampToString(p.UpdatedAt),
+		ID:                   uuidToString(p.ID),
+		WorkspaceID:          uuidToString(p.WorkspaceID),
+		Title:                p.Title,
+		Description:          textToPtr(p.Description),
+		Icon:                 textToPtr(p.Icon),
+		Status:               p.Status,
+		Priority:             p.Priority,
+		LeadType:             textToPtr(p.LeadType),
+		LeadID:               uuidToPtr(p.LeadID),
+		WorkflowDefinitionID: uuidToPtr(p.WorkflowDefinitionID),
+		CreatedAt:            timestampToString(p.CreatedAt),
+		UpdatedAt:            timestampToString(p.UpdatedAt),
 	}
 }
 
@@ -70,14 +72,15 @@ func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype
 }
 
 type CreateProjectRequest struct {
-	Title       string                                `json:"title"`
-	Description *string                               `json:"description"`
-	Icon        *string                               `json:"icon"`
-	Status      string                                `json:"status"`
-	Priority    string                                `json:"priority"`
-	LeadType    *string                               `json:"lead_type"`
-	LeadID      *string                               `json:"lead_id"`
-	Resources   []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
+	Title                string                                `json:"title"`
+	Description          *string                               `json:"description"`
+	Icon                 *string                               `json:"icon"`
+	Status               string                                `json:"status"`
+	Priority             string                                `json:"priority"`
+	LeadType             *string                               `json:"lead_type"`
+	LeadID               *string                               `json:"lead_id"`
+	WorkflowDefinitionID *string                               `json:"workflow_definition_id"`
+	Resources            []CreateProjectResourceRequestPayload `json:"resources,omitempty"`
 }
 
 // CreateProjectResourceRequestPayload mirrors CreateProjectResourceRequest but
@@ -91,13 +94,14 @@ type CreateProjectResourceRequestPayload struct {
 }
 
 type UpdateProjectRequest struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	Icon        *string `json:"icon"`
-	Status      *string `json:"status"`
-	Priority    *string `json:"priority"`
-	LeadType    *string `json:"lead_type"`
-	LeadID      *string `json:"lead_id"`
+	Title                *string `json:"title"`
+	Description          *string `json:"description"`
+	Icon                 *string `json:"icon"`
+	Status               *string `json:"status"`
+	Priority             *string `json:"priority"`
+	LeadType             *string `json:"lead_type"`
+	LeadID               *string `json:"lead_id"`
+	WorkflowDefinitionID *string `json:"workflow_definition_id"`
 }
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +225,17 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var workflowDefinitionID pgtype.UUID
+	if req.WorkflowDefinitionID != nil {
+		id, ok := parseUUIDOrBadRequest(w, *req.WorkflowDefinitionID, "workflow_definition_id")
+		if !ok {
+			return
+		}
+		if !h.validateWorkflowDefinitionForUse(w, r, wsUUID, id, "assignment", "workflow_definition_id") {
+			return
+		}
+		workflowDefinitionID = id
+	}
 
 	// Pre-validate every resource payload before opening a transaction so an
 	// invalid ref produces a clean 400 with no DB work.
@@ -240,14 +255,15 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createParams := db.CreateProjectParams{
-		WorkspaceID: wsUUID,
-		Title:       req.Title,
-		Description: ptrToText(req.Description),
-		Icon:        ptrToText(req.Icon),
-		Status:      status,
-		LeadType:    leadType,
-		LeadID:      leadID,
-		Priority:    priority,
+		WorkspaceID:          wsUUID,
+		Title:                req.Title,
+		Description:          ptrToText(req.Description),
+		Icon:                 ptrToText(req.Icon),
+		Status:               status,
+		LeadType:             leadType,
+		LeadID:               leadID,
+		Priority:             priority,
+		WorkflowDefinitionID: workflowDefinitionID,
 	}
 
 	// Without resources, keep the simple non-tx path.
@@ -374,11 +390,12 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(bodyBytes, &rawFields)
 
 	params := db.UpdateProjectParams{
-		ID:          prevProject.ID,
-		Description: prevProject.Description,
-		Icon:        prevProject.Icon,
-		LeadType:    prevProject.LeadType,
-		LeadID:      prevProject.LeadID,
+		ID:                   prevProject.ID,
+		Description:          prevProject.Description,
+		Icon:                 prevProject.Icon,
+		LeadType:             prevProject.LeadType,
+		LeadID:               prevProject.LeadID,
+		WorkflowDefinitionID: prevProject.WorkflowDefinitionID,
 	}
 	if req.Title != nil {
 		params.Title = pgtype.Text{String: *req.Title, Valid: true}
@@ -419,6 +436,20 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			params.LeadID = leadUUID
 		} else {
 			params.LeadID = pgtype.UUID{Valid: false}
+		}
+	}
+	if _, ok := rawFields["workflow_definition_id"]; ok {
+		if req.WorkflowDefinitionID != nil {
+			workflowUUID, ok := parseUUIDOrBadRequest(w, *req.WorkflowDefinitionID, "workflow_definition_id")
+			if !ok {
+				return
+			}
+			if !h.validateWorkflowDefinitionForUse(w, r, wsUUID, workflowUUID, "assignment", "workflow_definition_id") {
+				return
+			}
+			params.WorkflowDefinitionID = workflowUUID
+		} else {
+			params.WorkflowDefinitionID = pgtype.UUID{Valid: false}
 		}
 	}
 	project, err := h.Queries.UpdateProject(r.Context(), params)

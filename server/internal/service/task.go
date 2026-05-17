@@ -406,14 +406,23 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 
+	workflowSnapshot, err := s.ResolveWorkflowSnapshotForIssueTask(ctx, issue, triggerCommentID)
+	if err != nil {
+		s.logWorkflowResolutionError(issue, err)
+		return db.AgentTaskQueue{}, fmt.Errorf("resolve workflow snapshot: %w", err)
+	}
+
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:           issue.AssigneeID,
-		RuntimeID:         agent.RuntimeID,
-		IssueID:           issue.ID,
-		Priority:          priorityToInt(issue.Priority),
-		TriggerCommentID:  triggerCommentID,
-		TriggerSummary:    s.buildCommentTriggerSummary(ctx, triggerCommentID),
-		ForceFreshSession: pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
+		AgentID:              issue.AssigneeID,
+		RuntimeID:            agent.RuntimeID,
+		IssueID:              issue.ID,
+		Priority:             priorityToInt(issue.Priority),
+		TriggerCommentID:     triggerCommentID,
+		TriggerSummary:       s.buildCommentTriggerSummary(ctx, triggerCommentID),
+		ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
+		WorkflowDefinitionID: workflowSnapshot.DefinitionID,
+		WorkflowRevisionID:   workflowSnapshot.RevisionID,
+		WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
 	})
 	if err != nil {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
@@ -469,14 +478,23 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 
+	workflowSnapshot, err := s.ResolveWorkflowSnapshotForIssueTask(ctx, issue, triggerCommentID)
+	if err != nil {
+		s.logWorkflowResolutionError(issue, err)
+		return db.AgentTaskQueue{}, fmt.Errorf("resolve workflow snapshot: %w", err)
+	}
+
 	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:          agentID,
-		RuntimeID:        agent.RuntimeID,
-		IssueID:          issue.ID,
-		Priority:         priorityToInt(issue.Priority),
-		TriggerCommentID: triggerCommentID,
-		TriggerSummary:   s.buildCommentTriggerSummary(ctx, triggerCommentID),
-		IsLeaderTask:     pgtype.Bool{Bool: isLeader, Valid: isLeader},
+		AgentID:              agentID,
+		RuntimeID:            agent.RuntimeID,
+		IssueID:              issue.ID,
+		Priority:             priorityToInt(issue.Priority),
+		TriggerCommentID:     triggerCommentID,
+		TriggerSummary:       s.buildCommentTriggerSummary(ctx, triggerCommentID),
+		IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
+		WorkflowDefinitionID: workflowSnapshot.DefinitionID,
+		WorkflowRevisionID:   workflowSnapshot.RevisionID,
+		WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
 	})
 	if err != nil {
 		slog.Error("mention task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)

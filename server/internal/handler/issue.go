@@ -27,26 +27,27 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID            string                  `json:"id"`
-	WorkspaceID   string                  `json:"workspace_id"`
-	Number        int32                   `json:"number"`
-	Identifier    string                  `json:"identifier"`
-	Title         string                  `json:"title"`
-	Description   *string                 `json:"description"`
-	Status        string                  `json:"status"`
-	Priority      string                  `json:"priority"`
-	AssigneeType  *string                 `json:"assignee_type"`
-	AssigneeID    *string                 `json:"assignee_id"`
-	CreatorType   string                  `json:"creator_type"`
-	CreatorID     string                  `json:"creator_id"`
-	ParentIssueID *string                 `json:"parent_issue_id"`
-	ProjectID     *string                 `json:"project_id"`
-	Position      float64                 `json:"position"`
-	DueDate       *string                 `json:"due_date"`
-	CreatedAt     string                  `json:"created_at"`
-	UpdatedAt     string                  `json:"updated_at"`
-	Reactions     []IssueReactionResponse `json:"reactions,omitempty"`
-	Attachments   []AttachmentResponse    `json:"attachments,omitempty"`
+	ID                           string                  `json:"id"`
+	WorkspaceID                  string                  `json:"workspace_id"`
+	Number                       int32                   `json:"number"`
+	Identifier                   string                  `json:"identifier"`
+	Title                        string                  `json:"title"`
+	Description                  *string                 `json:"description"`
+	Status                       string                  `json:"status"`
+	Priority                     string                  `json:"priority"`
+	AssigneeType                 *string                 `json:"assignee_type"`
+	AssigneeID                   *string                 `json:"assignee_id"`
+	CreatorType                  string                  `json:"creator_type"`
+	CreatorID                    string                  `json:"creator_id"`
+	ParentIssueID                *string                 `json:"parent_issue_id"`
+	ProjectID                    *string                 `json:"project_id"`
+	WorkflowOverrideDefinitionID *string                 `json:"workflow_override_definition_id"`
+	Position                     float64                 `json:"position"`
+	DueDate                      *string                 `json:"due_date"`
+	CreatedAt                    string                  `json:"created_at"`
+	UpdatedAt                    string                  `json:"updated_at"`
+	Reactions                    []IssueReactionResponse `json:"reactions,omitempty"`
+	Attachments                  []AttachmentResponse    `json:"attachments,omitempty"`
 	// Labels are bulk-attached by list/detail endpoints so the client can render
 	// chips without an N+1 round-trip per row. Pointer + omitempty so paths that
 	// don't load labels (e.g. UpdateIssue, batch UpdateIssues, the issue:updated
@@ -59,24 +60,25 @@ type IssueResponse struct {
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		DueDate:       timestampToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
+		ID:                           uuidToString(i.ID),
+		WorkspaceID:                  uuidToString(i.WorkspaceID),
+		Number:                       i.Number,
+		Identifier:                   identifier,
+		Title:                        i.Title,
+		Description:                  textToPtr(i.Description),
+		Status:                       i.Status,
+		Priority:                     i.Priority,
+		AssigneeType:                 textToPtr(i.AssigneeType),
+		AssigneeID:                   uuidToPtr(i.AssigneeID),
+		CreatorType:                  i.CreatorType,
+		CreatorID:                    uuidToString(i.CreatorID),
+		ParentIssueID:                uuidToPtr(i.ParentIssueID),
+		ProjectID:                    uuidToPtr(i.ProjectID),
+		WorkflowOverrideDefinitionID: uuidToPtr(i.WorkflowOverrideDefinitionID),
+		Position:                     i.Position,
+		DueDate:                      timestampToPtr(i.DueDate),
+		CreatedAt:                    timestampToString(i.CreatedAt),
+		UpdatedAt:                    timestampToString(i.UpdatedAt),
 	}
 }
 
@@ -84,24 +86,25 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		DueDate:       timestampToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
+		ID:                           uuidToString(i.ID),
+		WorkspaceID:                  uuidToString(i.WorkspaceID),
+		Number:                       i.Number,
+		Identifier:                   identifier,
+		Title:                        i.Title,
+		Description:                  textToPtr(i.Description),
+		Status:                       i.Status,
+		Priority:                     i.Priority,
+		AssigneeType:                 textToPtr(i.AssigneeType),
+		AssigneeID:                   uuidToPtr(i.AssigneeID),
+		CreatorType:                  i.CreatorType,
+		CreatorID:                    uuidToString(i.CreatorID),
+		ParentIssueID:                uuidToPtr(i.ParentIssueID),
+		ProjectID:                    uuidToPtr(i.ProjectID),
+		WorkflowOverrideDefinitionID: uuidToPtr(i.WorkflowOverrideDefinitionID),
+		Position:                     i.Position,
+		DueDate:                      timestampToPtr(i.DueDate),
+		CreatedAt:                    timestampToString(i.CreatedAt),
+		UpdatedAt:                    timestampToString(i.UpdatedAt),
 	}
 }
 
@@ -139,24 +142,25 @@ func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueID
 func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		DueDate:       timestampToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
+		ID:                           uuidToString(i.ID),
+		WorkspaceID:                  uuidToString(i.WorkspaceID),
+		Number:                       i.Number,
+		Identifier:                   identifier,
+		Title:                        i.Title,
+		Description:                  textToPtr(i.Description),
+		Status:                       i.Status,
+		Priority:                     i.Priority,
+		AssigneeType:                 textToPtr(i.AssigneeType),
+		AssigneeID:                   uuidToPtr(i.AssigneeID),
+		CreatorType:                  i.CreatorType,
+		CreatorID:                    uuidToString(i.CreatorID),
+		ParentIssueID:                uuidToPtr(i.ParentIssueID),
+		ProjectID:                    uuidToPtr(i.ProjectID),
+		WorkflowOverrideDefinitionID: uuidToPtr(i.WorkflowOverrideDefinitionID),
+		Position:                     i.Position,
+		DueDate:                      timestampToPtr(i.DueDate),
+		CreatedAt:                    timestampToString(i.CreatedAt),
+		UpdatedAt:                    timestampToString(i.UpdatedAt),
 	}
 }
 
@@ -1511,16 +1515,17 @@ func readRuntimeCLIVersion(metadata []byte) string {
 }
 
 type CreateIssueRequest struct {
-	Title         string   `json:"title"`
-	Description   *string  `json:"description"`
-	Status        string   `json:"status"`
-	Priority      string   `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
-	DueDate       *string  `json:"due_date"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	Title                        string   `json:"title"`
+	Description                  *string  `json:"description"`
+	Status                       string   `json:"status"`
+	Priority                     string   `json:"priority"`
+	AssigneeType                 *string  `json:"assignee_type"`
+	AssigneeID                   *string  `json:"assignee_id"`
+	ParentIssueID                *string  `json:"parent_issue_id"`
+	ProjectID                    *string  `json:"project_id"`
+	WorkflowOverrideDefinitionID *string  `json:"workflow_override_definition_id"`
+	DueDate                      *string  `json:"due_date"`
+	AttachmentIDs                []string `json:"attachment_ids,omitempty"`
 	// OriginType / OriginID stamp the new issue with its provenance so
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
@@ -1589,6 +1594,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	var parentIssueID pgtype.UUID
 	var projectID pgtype.UUID
+	var workflowOverrideDefinitionID pgtype.UUID
 	if req.ProjectID != nil {
 		id, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 		if !ok {
@@ -1614,6 +1620,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		if req.ProjectID == nil {
 			projectID = parent.ProjectID
 		}
+	}
+	if req.WorkflowOverrideDefinitionID != nil {
+		id, ok := parseUUIDOrBadRequest(w, *req.WorkflowOverrideDefinitionID, "workflow_override_definition_id")
+		if !ok {
+			return
+		}
+		if !h.validateWorkflowDefinitionForUse(w, r, wsUUID, id, "assignment", "workflow_override_definition_id") {
+			return
+		}
+		workflowOverrideDefinitionID = id
 	}
 
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
@@ -1716,20 +1732,21 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		})
 	} else {
 		issue, err = qtx.CreateIssue(r.Context(), db.CreateIssueParams{
-			WorkspaceID:   wsUUID,
-			Title:         req.Title,
-			Description:   ptrToText(req.Description),
-			Status:        status,
-			Priority:      priority,
-			AssigneeType:  assigneeType,
-			AssigneeID:    assigneeID,
-			CreatorType:   creatorType,
-			CreatorID:     parseUUID(actualCreatorID),
-			ParentIssueID: parentIssueID,
-			Position:      0,
-			DueDate:       dueDate,
-			Number:        issueNumber,
-			ProjectID:     projectID,
+			WorkspaceID:                  wsUUID,
+			Title:                        req.Title,
+			Description:                  ptrToText(req.Description),
+			Status:                       status,
+			Priority:                     priority,
+			AssigneeType:                 assigneeType,
+			AssigneeID:                   assigneeID,
+			CreatorType:                  creatorType,
+			CreatorID:                    parseUUID(actualCreatorID),
+			ParentIssueID:                parentIssueID,
+			Position:                     0,
+			DueDate:                      dueDate,
+			Number:                       issueNumber,
+			ProjectID:                    projectID,
+			WorkflowOverrideDefinitionID: workflowOverrideDefinitionID,
 		})
 	}
 	if err != nil {
@@ -1822,16 +1839,17 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateIssueRequest struct {
-	Title         *string  `json:"title"`
-	Description   *string  `json:"description"`
-	Status        *string  `json:"status"`
-	Priority      *string  `json:"priority"`
-	AssigneeType  *string  `json:"assignee_type"`
-	AssigneeID    *string  `json:"assignee_id"`
-	Position      *float64 `json:"position"`
-	DueDate       *string  `json:"due_date"`
-	ParentIssueID *string  `json:"parent_issue_id"`
-	ProjectID     *string  `json:"project_id"`
+	Title                        *string  `json:"title"`
+	Description                  *string  `json:"description"`
+	Status                       *string  `json:"status"`
+	Priority                     *string  `json:"priority"`
+	AssigneeType                 *string  `json:"assignee_type"`
+	AssigneeID                   *string  `json:"assignee_id"`
+	Position                     *float64 `json:"position"`
+	DueDate                      *string  `json:"due_date"`
+	ParentIssueID                *string  `json:"parent_issue_id"`
+	ProjectID                    *string  `json:"project_id"`
+	WorkflowOverrideDefinitionID *string  `json:"workflow_override_definition_id"`
 	// AttachmentIDs lets the description editor bind newly uploaded files to
 	// this issue so they surface in `GET /api/issues/:id/attachments` and the
 	// editor's preview Eye keeps working past a refresh. Existing bindings
@@ -1867,12 +1885,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
-		ID:            prevIssue.ID,
-		AssigneeType:  prevIssue.AssigneeType,
-		AssigneeID:    prevIssue.AssigneeID,
-		DueDate:       prevIssue.DueDate,
-		ParentIssueID: prevIssue.ParentIssueID,
-		ProjectID:     prevIssue.ProjectID,
+		ID:                           prevIssue.ID,
+		AssigneeType:                 prevIssue.AssigneeType,
+		AssigneeID:                   prevIssue.AssigneeID,
+		DueDate:                      prevIssue.DueDate,
+		ParentIssueID:                prevIssue.ParentIssueID,
+		ProjectID:                    prevIssue.ProjectID,
+		WorkflowOverrideDefinitionID: prevIssue.WorkflowOverrideDefinitionID,
 	}
 
 	// COALESCE fields — only set when explicitly provided
@@ -1970,6 +1989,20 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			params.ProjectID = projectUUID
 		} else {
 			params.ProjectID = pgtype.UUID{Valid: false}
+		}
+	}
+	if _, ok := rawFields["workflow_override_definition_id"]; ok {
+		if req.WorkflowOverrideDefinitionID != nil {
+			workflowUUID, ok := parseUUIDOrBadRequest(w, *req.WorkflowOverrideDefinitionID, "workflow_override_definition_id")
+			if !ok {
+				return
+			}
+			if !h.validateWorkflowDefinitionForUse(w, r, prevIssue.WorkspaceID, workflowUUID, "assignment", "workflow_override_definition_id") {
+				return
+			}
+			params.WorkflowOverrideDefinitionID = workflowUUID
+		} else {
+			params.WorkflowOverrideDefinitionID = pgtype.UUID{Valid: false}
 		}
 	}
 

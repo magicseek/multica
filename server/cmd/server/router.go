@@ -496,6 +496,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Workflow definitions
+			r.Route("/api/workflows", func(r chi.Router) {
+				r.Get("/", h.ListWorkflows)
+				r.Post("/", h.CreateWorkflow)
+				r.Post("/preview", h.PreviewWorkflow)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflow)
+					r.Patch("/", h.UpdateWorkflow)
+					r.Delete("/", h.DeleteWorkflow)
+					r.Post("/draft", h.CreateWorkflowDraft)
+					r.Put("/draft", h.UpdateWorkflowDraft)
+					r.Post("/publish", h.PublishWorkflow)
+					r.Post("/fork", h.ForkWorkflow)
+				})
+			})
+
 			// Usage
 			r.Route("/api/usage", func(r chi.Router) {
 				r.Get("/daily", h.GetWorkspaceUsageByDay)

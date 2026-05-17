@@ -1151,6 +1151,43 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 	})
 
+	t.Run("workflow snapshot overrides legacy assignment protocol", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ExecutionProtocolEnabled: true,
+			ExecutionProtocolSlug:    "trellis-task",
+			WorkflowRenderedMarkdown: "## Snapshot Workflow\n\nUse the queued workflow snapshot.\n",
+		})
+		if !strings.Contains(s, "## Snapshot Workflow") {
+			t.Fatalf("workflow snapshot missing\n---\n%s", s)
+		}
+		for _, notWant := range []string{
+			"## Trellis Task Protocol",
+			"## Task Execution Protocol",
+		} {
+			if strings.Contains(s, notWant) {
+				t.Fatalf("legacy execution protocol %q rendered despite workflow snapshot\n---\n%s", notWant, s)
+			}
+		}
+	})
+
+	t.Run("comment trigger uses workflow snapshot when present", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			TriggerCommentID:         "comment-1",
+			ExecutionProtocolEnabled: true,
+			WorkflowRenderedMarkdown: "## Comment Snapshot\n\nReply to comment-1.\n",
+		})
+		if !strings.Contains(s, "## Comment Snapshot") {
+			t.Fatalf("comment workflow snapshot missing\n---\n%s", s)
+		}
+		if strings.Contains(s, "This task was triggered by a NEW comment") {
+			t.Fatalf("legacy comment workflow rendered despite snapshot\n---\n%s", s)
+		}
+	})
+
 	t.Run("enabled comment trigger keeps comment workflow", func(t *testing.T) {
 		t.Parallel()
 		s := readClaudeMD(t, TaskContextForEnv{

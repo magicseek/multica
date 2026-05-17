@@ -64,6 +64,7 @@ type TaskContextForEnv struct {
 	IsSquadLeader            bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	ExecutionProtocolEnabled bool   // true when this agent opted into a template-backed assignment-task workflow
 	ExecutionProtocolSlug    string // selected assignment-task protocol template; empty resolves to the standard template
+	WorkflowRenderedMarkdown string // immutable workflow snapshot rendered when the task was queued
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

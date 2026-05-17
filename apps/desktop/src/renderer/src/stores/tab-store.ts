@@ -107,6 +107,7 @@ const ROUTE_ICONS: Record<string, string> = {
   autopilots: "ListTodo",
   agents: "Bot",
   runtimes: "Monitor",
+  workflows: "Workflow",
   skills: "BookOpenText",
   settings: "Settings",
 };
