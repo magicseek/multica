@@ -78,6 +78,14 @@ SELECT * FROM repository_operation
 WHERE repository_id = $1 AND workspace_id = $2
 ORDER BY created_at DESC;
 
+-- name: GetRepositoryOperationInWorkspace :one
+SELECT * FROM repository_operation
+WHERE id = $1 AND workspace_id = $2;
+
+-- name: GetRepositoryOperationForDaemon :one
+SELECT * FROM repository_operation
+WHERE id = $1 AND workspace_id = $2 AND target_daemon_id = $3;
+
 -- name: CreateRepositoryOperation :one
 INSERT INTO repository_operation (
     repository_id, workspace_id, operation_type, status, requested_by_type,
@@ -87,6 +95,65 @@ INSERT INTO repository_operation (
     sqlc.narg('requested_by_id'), sqlc.narg('target_daemon_id'), sqlc.narg('target_runtime_id'),
     sqlc.narg('binding_id'), $6
 ) RETURNING *;
+
+-- name: ClaimRepositoryOperationForDaemon :one
+WITH candidate AS (
+    SELECT ro.id FROM repository_operation ro
+    WHERE ro.workspace_id = $1
+      AND ro.target_daemon_id = $2
+      AND ro.status = 'queued'
+      AND (
+        sqlc.narg('target_runtime_id')::uuid IS NULL
+        OR ro.target_runtime_id IS NULL
+        OR ro.target_runtime_id = sqlc.narg('target_runtime_id')::uuid
+      )
+    ORDER BY ro.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE repository_operation op
+SET status = 'running', updated_at = now()
+FROM candidate
+WHERE op.id = candidate.id
+RETURNING op.*;
+
+-- name: MarkRepositoryOperationRunning :one
+UPDATE repository_operation
+SET status = 'running', updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status IN ('queued', 'running')
+RETURNING *;
+
+-- name: CompleteRepositoryOperation :one
+UPDATE repository_operation
+SET
+    status = 'succeeded',
+    binding_id = COALESCE(sqlc.narg('binding_id'), binding_id),
+    result = $4,
+    error = NULL,
+    updated_at = now(),
+    completed_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status = 'running'
+RETURNING *;
+
+-- name: FailRepositoryOperation :one
+UPDATE repository_operation
+SET
+    status = 'failed',
+    result = $4,
+    error = $5,
+    updated_at = now(),
+    completed_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status = 'running'
+RETURNING *;
 
 -- name: ListGithubProjectResourceURLsInWorkspace :many
 SELECT DISTINCT btrim(resource_ref->>'url') AS url

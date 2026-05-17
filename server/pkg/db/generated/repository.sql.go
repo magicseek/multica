@@ -44,6 +44,112 @@ func (q *Queries) ArchiveRepository(ctx context.Context, arg ArchiveRepositoryPa
 	return i, err
 }
 
+const claimRepositoryOperationForDaemon = `-- name: ClaimRepositoryOperationForDaemon :one
+WITH candidate AS (
+    SELECT ro.id FROM repository_operation ro
+    WHERE ro.workspace_id = $1
+      AND ro.target_daemon_id = $2
+      AND ro.status = 'queued'
+      AND (
+        $3::uuid IS NULL
+        OR ro.target_runtime_id IS NULL
+        OR ro.target_runtime_id = $3::uuid
+      )
+    ORDER BY ro.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE repository_operation op
+SET status = 'running', updated_at = now()
+FROM candidate
+WHERE op.id = candidate.id
+RETURNING op.id, op.repository_id, op.workspace_id, op.operation_type, op.status, op.requested_by_type, op.requested_by_id, op.target_daemon_id, op.target_runtime_id, op.binding_id, op.request, op.result, op.error, op.created_at, op.updated_at, op.completed_at
+`
+
+type ClaimRepositoryOperationForDaemonParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	TargetDaemonID  pgtype.Text `json:"target_daemon_id"`
+	TargetRuntimeID pgtype.UUID `json:"target_runtime_id"`
+}
+
+func (q *Queries) ClaimRepositoryOperationForDaemon(ctx context.Context, arg ClaimRepositoryOperationForDaemonParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, claimRepositoryOperationForDaemon, arg.WorkspaceID, arg.TargetDaemonID, arg.TargetRuntimeID)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const completeRepositoryOperation = `-- name: CompleteRepositoryOperation :one
+UPDATE repository_operation
+SET
+    status = 'succeeded',
+    binding_id = COALESCE($5, binding_id),
+    result = $4,
+    error = NULL,
+    updated_at = now(),
+    completed_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status = 'running'
+RETURNING id, repository_id, workspace_id, operation_type, status, requested_by_type, requested_by_id, target_daemon_id, target_runtime_id, binding_id, request, result, error, created_at, updated_at, completed_at
+`
+
+type CompleteRepositoryOperationParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	TargetDaemonID pgtype.Text `json:"target_daemon_id"`
+	Result         []byte      `json:"result"`
+	BindingID      pgtype.UUID `json:"binding_id"`
+}
+
+func (q *Queries) CompleteRepositoryOperation(ctx context.Context, arg CompleteRepositoryOperationParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, completeRepositoryOperation,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.TargetDaemonID,
+		arg.Result,
+		arg.BindingID,
+	)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const createProjectRepositoryRef = `-- name: CreateProjectRepositoryRef :one
 INSERT INTO project_repository (
     project_id, repository_id, workspace_id, role, position
@@ -281,6 +387,59 @@ func (q *Queries) DeleteRepositoryBinding(ctx context.Context, arg DeleteReposit
 	return err
 }
 
+const failRepositoryOperation = `-- name: FailRepositoryOperation :one
+UPDATE repository_operation
+SET
+    status = 'failed',
+    result = $4,
+    error = $5,
+    updated_at = now(),
+    completed_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status = 'running'
+RETURNING id, repository_id, workspace_id, operation_type, status, requested_by_type, requested_by_id, target_daemon_id, target_runtime_id, binding_id, request, result, error, created_at, updated_at, completed_at
+`
+
+type FailRepositoryOperationParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	TargetDaemonID pgtype.Text `json:"target_daemon_id"`
+	Result         []byte      `json:"result"`
+	Error          pgtype.Text `json:"error"`
+}
+
+func (q *Queries) FailRepositoryOperation(ctx context.Context, arg FailRepositoryOperationParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, failRepositoryOperation,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.TargetDaemonID,
+		arg.Result,
+		arg.Error,
+	)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getRepositoryBindingInWorkspace = `-- name: GetRepositoryBindingInWorkspace :one
 SELECT id, repository_id, workspace_id, owner_user_id, daemon_id, runtime_id, machine_label, binding_kind, local_path, state, last_seen_at, metadata, created_at, updated_at FROM repository_binding
 WHERE id = $1 AND repository_id = $2 AND workspace_id = $3
@@ -342,6 +501,75 @@ func (q *Queries) GetRepositoryInWorkspace(ctx context.Context, arg GetRepositor
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRepositoryOperationForDaemon = `-- name: GetRepositoryOperationForDaemon :one
+SELECT id, repository_id, workspace_id, operation_type, status, requested_by_type, requested_by_id, target_daemon_id, target_runtime_id, binding_id, request, result, error, created_at, updated_at, completed_at FROM repository_operation
+WHERE id = $1 AND workspace_id = $2 AND target_daemon_id = $3
+`
+
+type GetRepositoryOperationForDaemonParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	TargetDaemonID pgtype.Text `json:"target_daemon_id"`
+}
+
+func (q *Queries) GetRepositoryOperationForDaemon(ctx context.Context, arg GetRepositoryOperationForDaemonParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, getRepositoryOperationForDaemon, arg.ID, arg.WorkspaceID, arg.TargetDaemonID)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const getRepositoryOperationInWorkspace = `-- name: GetRepositoryOperationInWorkspace :one
+SELECT id, repository_id, workspace_id, operation_type, status, requested_by_type, requested_by_id, target_daemon_id, target_runtime_id, binding_id, request, result, error, created_at, updated_at, completed_at FROM repository_operation
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetRepositoryOperationInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetRepositoryOperationInWorkspace(ctx context.Context, arg GetRepositoryOperationInWorkspaceParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, getRepositoryOperationInWorkspace, arg.ID, arg.WorkspaceID)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
 	)
 	return i, err
 }
@@ -570,6 +798,46 @@ func (q *Queries) ListRepositoryOperations(ctx context.Context, arg ListReposito
 		return nil, err
 	}
 	return items, nil
+}
+
+const markRepositoryOperationRunning = `-- name: MarkRepositoryOperationRunning :one
+UPDATE repository_operation
+SET status = 'running', updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND target_daemon_id = $3
+  AND status IN ('queued', 'running')
+RETURNING id, repository_id, workspace_id, operation_type, status, requested_by_type, requested_by_id, target_daemon_id, target_runtime_id, binding_id, request, result, error, created_at, updated_at, completed_at
+`
+
+type MarkRepositoryOperationRunningParams struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	TargetDaemonID pgtype.Text `json:"target_daemon_id"`
+}
+
+func (q *Queries) MarkRepositoryOperationRunning(ctx context.Context, arg MarkRepositoryOperationRunningParams) (RepositoryOperation, error) {
+	row := q.db.QueryRow(ctx, markRepositoryOperationRunning, arg.ID, arg.WorkspaceID, arg.TargetDaemonID)
+	var i RepositoryOperation
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.WorkspaceID,
+		&i.OperationType,
+		&i.Status,
+		&i.RequestedByType,
+		&i.RequestedByID,
+		&i.TargetDaemonID,
+		&i.TargetRuntimeID,
+		&i.BindingID,
+		&i.Request,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
 }
 
 const updateRepository = `-- name: UpdateRepository :one

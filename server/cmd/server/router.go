@@ -228,6 +228,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/heartbeat", h.DaemonHeartbeat)
 		r.Get("/ws", h.DaemonWebSocket)
 		r.Get("/workspaces/{workspaceId}/repos", h.GetDaemonWorkspaceRepos)
+		r.Get("/repository-operations/claim", h.ClaimRepositoryOperation)
+		r.Post("/repository-operations/{operationId}/start", h.StartRepositoryOperation)
+		r.Post("/repository-operations/{operationId}/complete", h.CompleteRepositoryOperation)
+		r.Post("/repository-operations/{operationId}/fail", h.FailRepositoryOperation)
 
 		r.Post("/runtimes/{runtimeId}/tasks/claim", h.ClaimTaskByRuntime)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
@@ -407,6 +411,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/bindings", h.CreateRepositoryBinding)
 					r.Delete("/bindings/{bindingId}", h.DeleteRepositoryBinding)
 					r.Get("/operations", h.ListRepositoryOperations)
+					r.Post("/operations", h.CreateRepositoryOperation)
+					r.Post("/operations/{operationType}", h.CreateRepositoryOperation)
 				})
 			})
 

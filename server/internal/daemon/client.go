@@ -252,6 +252,58 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 	return resp.Status, nil
 }
 
+func repositoryOperationRuntimeQuery(runtimeID string) string {
+	runtimeID = strings.TrimSpace(runtimeID)
+	if runtimeID == "" {
+		return ""
+	}
+	return "?runtime_id=" + runtimeID
+}
+
+func (c *Client) ClaimRepositoryOperation(ctx context.Context, runtimeID string) (*RepositoryOperation, error) {
+	var resp struct {
+		Operation *RepositoryOperation `json:"operation"`
+	}
+	if err := c.getJSON(ctx, "/api/daemon/repository-operations/claim"+repositoryOperationRuntimeQuery(runtimeID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Operation, nil
+}
+
+func (c *Client) StartRepositoryOperation(ctx context.Context, operationID, runtimeID string) (*RepositoryOperation, error) {
+	var op RepositoryOperation
+	err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/repository-operations/%s/start%s", operationID, repositoryOperationRuntimeQuery(runtimeID)), map[string]any{}, &op)
+	if err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
+func (c *Client) CompleteRepositoryOperation(ctx context.Context, operationID, runtimeID string, body map[string]any) (*RepositoryOperation, error) {
+	if body == nil {
+		body = map[string]any{}
+	}
+	var op RepositoryOperation
+	err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/repository-operations/%s/complete%s", operationID, repositoryOperationRuntimeQuery(runtimeID)), body, &op)
+	if err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
+func (c *Client) FailRepositoryOperation(ctx context.Context, operationID, runtimeID, errMsg string, result map[string]any) (*RepositoryOperation, error) {
+	body := map[string]any{"error": errMsg}
+	if result != nil {
+		body["result"] = result
+	}
+	var op RepositoryOperation
+	err := c.postJSON(ctx, fmt.Sprintf("/api/daemon/repository-operations/%s/fail%s", operationID, repositoryOperationRuntimeQuery(runtimeID)), body, &op)
+	if err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
 // HeartbeatResponse, PendingUpdate, etc. alias the wire types so HTTP and WS
 // heartbeat paths share a single type and a single decoder shape. Aliases
 // (rather than wrappers) keep call sites unchanged.

@@ -35,10 +35,19 @@ API routes:
 - `POST /api/repositories/{id}/bindings`
 - `DELETE /api/repositories/{id}/bindings/{bindingId}`
 - `GET /api/repositories/{id}/operations`
+- `POST /api/repositories/{id}/operations`
+- `POST /api/repositories/{id}/operations/{operationType}`
 - `GET /api/projects/{id}/repositories`
 - `PUT /api/projects/{id}/repositories`
 - `POST /api/chat/sessions` may accept `default_repository_id`
 - `PATCH /api/chat/sessions/{sessionId}` may set or clear `default_repository_id`
+
+Daemon repository operation routes:
+
+- `GET /api/daemon/repository-operations/claim?runtime_id=...`
+- `POST /api/daemon/repository-operations/{operationId}/start?runtime_id=...`
+- `POST /api/daemon/repository-operations/{operationId}/complete?runtime_id=...`
+- `POST /api/daemon/repository-operations/{operationId}/fail?runtime_id=...`
 
 Daemon task claim payload:
 
@@ -86,6 +95,13 @@ Realtime events:
 - `repository_binding.metadata` is private whenever `local_path` is private. Treat metadata as potentially containing path fragments, tool output, or machine-local details.
 - Workspace-wide realtime events must not include `local_path` or private binding metadata.
 - `task_output_metadata.relative_path` must be repository/workdir relative. Reject absolute paths, parent traversal, backslashes, Windows drive-letter paths, and `~/...`.
+- Repository operations are a daemon-claim lifecycle with statuses `queued -> running -> succeeded|failed`.
+- Operation types currently exposed through the lifecycle are `create_binding`, `init_git`, `publish_remote`, and `refresh_binding`; do not expose operation types that have no daemon/server completion semantics.
+- `create_binding`, `init_git`, `publish_remote`, and `refresh_binding` require a target daemon. `init_git`, `publish_remote`, and `refresh_binding` require an existing binding.
+- `init_git` is only valid from `local_dir` or `agent_managed`; successful completion transitions the repository to `local_git`.
+- `publish_remote` is only valid from `local_git`; successful completion requires a valid `remote_url`, transitions the repository to `remote_git`, and emits `repository:published`.
+- Daemon operation claim may be daemon-wide or runtime-scoped. If a daemon passes `runtime_id`, start/complete/fail must reject operations targeted at a sibling runtime, even when the daemon id matches.
+- Operation request/result/error responses must redact or reject local paths. Binding completion may receive `binding.local_path` for server storage, but responses/events must not echo it.
 - Task claim repository precedence is task-kind specific: issue and quick-create tasks use project first-class `project_repository`, then legacy project `project_resource(github_repo)`, then workspace first-class repositories, then legacy `workspace.repos`; chat tasks use `chat_session.default_repository_id`, then workspace first-class repositories, then legacy `workspace.repos`; autopilot run-only tasks use workspace first-class repositories, then legacy `workspace.repos`.
 - Task claim compatibility payloads are read-only synthetic repositories. They must populate `compatibility=true` and `compatibility_source` with `project_resource.github_repo` or `workspace.repos`.
 - Task claim `binding` is a sanitized current-runtime/current-daemon summary only. A `ready` binding on a different daemon/runtime is not claim-eligible and must not appear as `binding_available=true`.
@@ -106,6 +122,13 @@ Realtime events:
 - Binding create without `daemon_id` or `local_path` -> `400`.
 - Binding delete by non-owner non-admin -> `403`.
 - Non-object `metadata`, `request`, or `result` JSON -> `400`.
+- Repository operation with invalid operation type -> `400`.
+- Repository operation requiring daemon without `target_daemon_id` or daemon-bearing `target_runtime_id`/`binding_id` -> `400`.
+- Repository operation with sibling runtime trying to start/complete/fail -> `404`.
+- Repository operation complete/fail when status is not `running` -> `409`.
+- `init_git` from non-local source state -> `400`.
+- `publish_remote` from non-`local_git` source state -> `400`.
+- `publish_remote` completion without valid `remote_url` -> `400`.
 - Task claim with first-class repositories that lack `remote_url` -> `task.repositories` populated and legacy `task.repos` empty or filtered to remote-backed repositories only.
 - Task claim with only foreign ready bindings -> `binding_available=false` and no `binding` object in the claim payload.
 
@@ -116,6 +139,9 @@ Realtime events:
 - Good: issue task in a project with `project_repository` returns only project repositories in `task.repositories`; workspace repositories do not leak into that task.
 - Good: chat task with `default_repository_id` returns that repository as primary and does not fall back to workspace repositories.
 - Good: daemon task claim for a repository with a ready binding on another machine omits `binding` and keeps `binding_available=false`.
+- Good: daemon claims the oldest queued operation for its daemon, marks it running, completes it once, and receives `409` on a second terminal completion attempt.
+- Good: `create_binding` completion stores a private binding path but returns only sanitized operation and binding summaries.
+- Good: runtime-scoped operation cannot be started by a sibling runtime on the same daemon.
 - Base: chat create/update with a valid workspace repository stores `default_repository_id` and returns it in session responses.
 - Bad: direct GET continues returning an archived repository after soft delete.
 - Bad: binding event includes `metadata.last_verified_path` or any local absolute path.
@@ -129,6 +155,9 @@ Realtime events:
 - Binding privacy: owner sees `local_path` and metadata; other workspace member does not.
 - Project repository references: setting primary/secondary rows validates workspace membership and primary uniqueness.
 - Chat default repository: create, read/list, update, and clear nullable repository reference.
+- Repository operation lifecycle: create/list, daemon claim/start/complete/fail, terminal conflict behavior, cross-workspace rejection, and runtime-scoped sibling rejection.
+- Repository operation transitions: `create_binding` initializes a binding, `init_git` moves to `local_git`, and `publish_remote` moves to `remote_git` with canonical `remote_url`.
+- Repository operation privacy: request/result/error responses redact local paths; binding completion does not echo `local_path` in operation responses or realtime events.
 - Task claim repository precedence: project first-class overrides workspace fallback, project legacy `github_repo` still overrides workspace fallback, chat default overrides workspace fallback, and workspace first-class overrides legacy `workspace.repos`.
 - Task claim binding privacy/eligibility: foreign ready bindings do not set `binding_available`, and claim JSON never contains `local_path` or binding metadata.
 - Daemon execenv rendering: repositories with `remote_url` render `multica repo checkout`, while local/agent-managed repositories without `remote_url` render no checkout command and no local path.
