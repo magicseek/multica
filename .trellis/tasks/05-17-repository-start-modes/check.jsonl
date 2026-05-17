@@ -1,0 +1,12 @@
+{"file": "docs/design-repository-start-modes.md", "reason": "Design acceptance source for verification"}
+{"file": "docs/adr/0001-repositories-as-workspace-code-working-targets.md", "reason": "ADR constraints for review"}
+{"file": "CONTEXT.md", "reason": "Terminology and privacy constraints"}
+{"file": ".trellis/tasks/05-17-repository-start-modes/research/code-map.md", "reason": "Affected-files map for reviewer"}
+{"file": "server/internal/handler/daemon.go", "reason": "Verify task claim repository behavior"}
+{"file": "server/internal/daemon/execenv/execenv.go", "reason": "Verify cwd/binding behavior"}
+{"file": "packages/views/settings/components/repositories-tab.tsx", "reason": "Verify Workspace Settings repository UI"}
+{"file": "packages/views/modals/create-project.tsx", "reason": "Verify Project creation repository association"}
+{"file": "packages/views/chat/components/chat-window.tsx", "reason": "Verify Chat repository selector/chip behavior"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared review guidance"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Server backend repository contract index"}
+{"file": ".trellis/spec/server/backend/repository-contracts.md", "reason": "Repository backend API, DB, privacy, and compatibility contracts"}

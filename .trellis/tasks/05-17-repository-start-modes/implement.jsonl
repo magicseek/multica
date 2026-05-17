@@ -1,0 +1,23 @@
+{"file": "docs/design-repository-start-modes.md", "reason": "Primary design document for repository start modes"}
+{"file": "docs/adr/0001-repositories-as-workspace-code-working-targets.md", "reason": "ADR for repository as canonical code working target"}
+{"file": "CONTEXT.md", "reason": "Shared product terminology and resolved ambiguities"}
+{"file": "server/migrations/014_workspace_repos.up.sql", "reason": "Existing workspace repo storage to migrate"}
+{"file": "server/migrations/034_projects.up.sql", "reason": "Project data model boundary"}
+{"file": "server/migrations/065_project_resources.up.sql", "reason": "Existing project github_repo resource storage to migrate"}
+{"file": "server/internal/handler/daemon.go", "reason": "Task claim repository payload assembly"}
+{"file": "server/internal/handler/project_resource.go", "reason": "Existing project repository resource API"}
+{"file": "server/internal/daemon/execenv/execenv.go", "reason": "Daemon task working directory resolution"}
+{"file": "server/internal/daemon/repocache/cache.go", "reason": "Existing remote git cache/worktree behavior"}
+{"file": "packages/core/types/workspace.ts", "reason": "Existing workspace repository type"}
+{"file": "packages/core/types/project.ts", "reason": "Existing project resource type"}
+{"file": "packages/views/settings/components/repositories-tab.tsx", "reason": "Workspace Settings repository UI"}
+{"file": "packages/views/projects/components/project-resources-section.tsx", "reason": "Project resource UI"}
+{"file": "packages/views/modals/create-project.tsx", "reason": "Project creation repository selection UI"}
+{"file": "packages/core/chat/store.ts", "reason": "Chat state without repository identity"}
+{"file": "packages/views/chat/components/chat-window.tsx", "reason": "Chat UI repository context surface"}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core package frontend rules for repository types/hooks"}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Views package frontend rules for UI surfaces"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared cross-layer and reuse guidance"}
+{"file": ".trellis/tasks/05-17-repository-start-modes/research/code-map.md", "reason": "Codebase map for affected repository start-mode touchpoints"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Server backend repository contract index"}
+{"file": ".trellis/spec/server/backend/repository-contracts.md", "reason": "Repository backend API, DB, privacy, and compatibility contracts"}
