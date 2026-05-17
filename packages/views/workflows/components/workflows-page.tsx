@@ -289,6 +289,10 @@ function ProjectWorkflowBindings({
 }) {
   const { t } = useT("workflows");
   const updateProject = useUpdateProject();
+  const workflowNameById = useMemo(
+    () => new Map(workflows.map((workflow) => [workflow.id, workflow.name])),
+    [workflows],
+  );
 
   return (
     <div className="flex min-h-0 flex-col border-t">
@@ -328,12 +332,20 @@ function ProjectWorkflowBindings({
                     },
                   );
                 }}
-                aria-label={t(($) => $.project_bindings.select_aria, {
-                  project: project.title,
-                })}
               >
-                <SelectTrigger size="sm" className="w-full justify-between">
-                  <SelectValue />
+                <SelectTrigger
+                  size="sm"
+                  className="w-full justify-between"
+                  aria-label={t(($) => $.project_bindings.select_aria, {
+                    project: project.title,
+                  })}
+                >
+                  <SelectValue>
+                    {project.workflow_definition_id
+                      ? workflowNameById.get(project.workflow_definition_id) ??
+                        project.workflow_definition_id
+                      : t(($) => $.project_bindings.workspace_default)}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent align="end">
                   <SelectItem value="__default">
