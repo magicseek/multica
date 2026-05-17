@@ -107,6 +107,208 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("uses the expected HTTP contract for repository endpoints", async () => {
+    const repo = {
+      id: "repo-1",
+      workspace_id: "ws-1",
+      name: "multica",
+      source_state: "remote_git",
+      remote_url: "https://github.com/multica-ai/multica",
+      remote_key: "github.com/multica-ai/multica",
+      default_branch: null,
+      lead_agent_id: null,
+      created_by: "user-1",
+      created_by_agent_id: null,
+      status: "ready",
+      metadata: {},
+      created_at: "2026-05-17T00:00:00Z",
+      updated_at: "2026-05-17T00:00:00Z",
+    };
+    const binding = {
+      id: "binding-1",
+      repository_id: "repo-1",
+      workspace_id: "ws-1",
+      owner_user_id: "user-1",
+      daemon_id: "daemon-1",
+      runtime_id: null,
+      machine_label: "Mac",
+      binding_kind: "local_dir",
+      local_path: "/repo",
+      state: "ready",
+      last_seen_at: null,
+      metadata: {},
+      created_at: "2026-05-17T00:00:00Z",
+      updated_at: "2026-05-17T00:00:00Z",
+      local_path_visible: true,
+    };
+    const operation = {
+      id: "op-1",
+      repository_id: "repo-1",
+      workspace_id: "ws-1",
+      operation_type: "create_binding",
+      status: "queued",
+      requested_by_type: "member",
+      requested_by_id: "user-1",
+      target_daemon_id: "daemon-1",
+      target_runtime_id: null,
+      binding_id: null,
+      request: {},
+      result: {},
+      error: null,
+      created_at: "2026-05-17T00:00:00Z",
+      updated_at: "2026-05-17T00:00:00Z",
+      completed_at: null,
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      let body: unknown = repo;
+      if (url.endsWith("/api/repositories")) body = { repositories: [repo], total: 1 };
+      if (url.endsWith("/bindings")) body = method === "GET" ? { bindings: [binding], total: 1 } : binding;
+      if (url.endsWith("/operations") || url.endsWith("/operations/create_binding")) {
+        body = method === "GET" ? { operations: [operation], total: 1 } : operation;
+      }
+      if (url.endsWith("/projects/project-1/repositories")) {
+        body = {
+          repositories: [
+            {
+              project_id: "project-1",
+              repository_id: "repo-1",
+              role: "primary",
+              position: 0,
+              created_at: "2026-05-17T00:00:00Z",
+              repository: repo,
+            },
+          ],
+          total: 1,
+        };
+      }
+      if (url.endsWith("/api/tasks/task-1/outputs")) {
+        body = {
+          outputs: [
+            {
+              id: "output-1",
+              workspace_id: "ws-1",
+              repository_id: "repo-1",
+              task_id: "task-1",
+              relative_path: "docs/design.md",
+              filename: "design.md",
+              kind: "doc",
+              size_bytes: 42,
+              mime_type: "text/markdown",
+              metadata: {},
+              created_at: "2026-05-17T00:00:00Z",
+            },
+          ],
+          total: 1,
+        };
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: method === "POST" ? 201 : 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+
+    await client.listRepositories();
+    await client.getRepository("repo-1");
+    await client.createRepository({
+      source_state: "remote_git",
+      remote_url: "https://github.com/multica-ai/multica",
+    });
+    await client.updateRepository("repo-1", { name: "Multica" });
+    await client.deleteRepository("repo-1");
+    await client.listRepositoryBindings("repo-1");
+    await client.createRepositoryBinding("repo-1", {
+      daemon_id: "daemon-1",
+      local_path: "/repo",
+    });
+    await client.deleteRepositoryBinding("repo-1", "binding-1");
+    await client.listRepositoryOperations("repo-1");
+    await client.createRepositoryOperation("repo-1", {
+      operation_type: "create_binding",
+      target_daemon_id: "daemon-1",
+    });
+    await client.listProjectRepositories("project-1");
+    await client.setProjectRepositories("project-1", {
+      repositories: [{ repository_id: "repo-1", role: "primary" }],
+    });
+    await client.listTaskOutputMetadata("task-1");
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }));
+
+    expect(calls).toMatchObject([
+      { url: "https://api.example.test/api/repositories", method: "GET" },
+      { url: "https://api.example.test/api/repositories/repo-1", method: "GET" },
+      {
+        url: "https://api.example.test/api/repositories",
+        method: "POST",
+        body: JSON.stringify({
+          source_state: "remote_git",
+          remote_url: "https://github.com/multica-ai/multica",
+        }),
+      },
+      {
+        url: "https://api.example.test/api/repositories/repo-1",
+        method: "PATCH",
+        body: JSON.stringify({ name: "Multica" }),
+      },
+      { url: "https://api.example.test/api/repositories/repo-1", method: "DELETE" },
+      { url: "https://api.example.test/api/repositories/repo-1/bindings", method: "GET" },
+      {
+        url: "https://api.example.test/api/repositories/repo-1/bindings",
+        method: "POST",
+        body: JSON.stringify({ daemon_id: "daemon-1", local_path: "/repo" }),
+      },
+      { url: "https://api.example.test/api/repositories/repo-1/bindings/binding-1", method: "DELETE" },
+      { url: "https://api.example.test/api/repositories/repo-1/operations", method: "GET" },
+      {
+        url: "https://api.example.test/api/repositories/repo-1/operations/create_binding",
+        method: "POST",
+        body: JSON.stringify({
+          operation_type: "create_binding",
+          target_daemon_id: "daemon-1",
+        }),
+      },
+      { url: "https://api.example.test/api/projects/project-1/repositories", method: "GET" },
+      {
+        url: "https://api.example.test/api/projects/project-1/repositories",
+        method: "PUT",
+        body: JSON.stringify({
+          repositories: [{ repository_id: "repo-1", role: "primary" }],
+        }),
+      },
+      { url: "https://api.example.test/api/tasks/task-1/outputs", method: "GET" },
+    ]);
+  });
+
+  it("falls back to an empty repository list for malformed responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ repositories: [{ id: "repo-1" }], total: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const repositories = await client.listRepositories();
+
+    expect(repositories).toEqual({ repositories: [], total: 0 });
+  });
+
   it("emits X-Client-* headers when identity is configured", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify([]), {

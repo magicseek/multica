@@ -64,6 +64,32 @@ export type { Attachment } from "./attachment";
 export type { ChatSession, ChatMessage, ChatPendingTask, PendingChatTaskItem, PendingChatTasksResponse, SendChatMessageResponse } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
+  Repository,
+  RepositoryBinding,
+  RepositoryBindingKind,
+  RepositoryBindingState,
+  RepositoryOperation,
+  RepositoryOperationStatus,
+  RepositoryOperationType,
+  RepositorySourceState,
+  RepositoryStatus,
+  TaskOutputMetadata,
+  TaskOutputMetadataKind,
+  ProjectRepository,
+  ProjectRepositoryRole,
+  ListRepositoriesResponse,
+  ListRepositoryBindingsResponse,
+  ListProjectRepositoriesResponse,
+  ListRepositoryOperationsResponse,
+  ListTaskOutputMetadataResponse,
+  CreateRepositoryRequest,
+  UpdateRepositoryRequest,
+  CreateRepositoryBindingRequest,
+  SetProjectRepositoryItem,
+  SetProjectRepositoriesRequest,
+  CreateRepositoryOperationRequest,
+} from "./repository";
+export type {
   Project,
   ProjectStatus,
   ProjectPriority,

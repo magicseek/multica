@@ -2,6 +2,8 @@ package daemon
 
 import "encoding/json"
 
+const TaskOutputManifestRelativePath = ".multica/outputs.json"
+
 // AgentEntry describes a single available agent CLI.
 type AgentEntry struct {
 	Path  string // path to CLI binary
@@ -159,6 +161,21 @@ type TaskUsageEntry struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
+}
+
+type TaskOutputManifest struct {
+	Outputs []TaskOutputMetadata `json:"outputs"`
+}
+
+type TaskOutputMetadata struct {
+	RepositoryID *string         `json:"repository_id,omitempty"`
+	RelativePath string          `json:"relative_path"`
+	Filename     *string         `json:"filename,omitempty"`
+	Kind         string          `json:"kind,omitempty"`
+	SizeBytes    *int64          `json:"size_bytes,omitempty"`
+	Size         *int64          `json:"size,omitempty"`
+	MimeType     *string         `json:"mime_type,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // TaskResult is the outcome of executing a task.

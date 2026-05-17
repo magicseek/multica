@@ -2058,7 +2058,9 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			if failErr := d.client.FailTask(ctx, taskID, fmt.Sprintf("complete task failed: %s", err.Error()), result.SessionID, result.WorkDir, "agent_error"); failErr != nil {
 				taskLog.Error("fail task fallback also failed", "error", failErr)
 			}
+			return
 		}
+		d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
 	default:
 		failureReason := result.FailureReason
 		if failureReason == "" {
@@ -2071,7 +2073,9 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		taskLog.Info("task did not complete, reporting failure", "status", result.Status, "failure_reason", failureReason)
 		if err := d.client.FailTask(ctx, taskID, result.Comment, result.SessionID, result.WorkDir, failureReason); err != nil {
 			taskLog.Error("report failed task failed", "error", err)
+			return
 		}
+		d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
 	}
 }
 

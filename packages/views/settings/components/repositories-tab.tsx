@@ -1,106 +1,206 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Save, Plus, Trash2, Pencil, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Save, Plus, Trash2, Pencil, X, FolderGit2, Loader2 } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { toast } from "sonner";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
-import { api } from "@multica/core/api";
-import type { Workspace, WorkspaceRepo } from "@multica/core/types";
+import { memberListOptions } from "@multica/core/workspace/queries";
+import {
+  repositoryListOptions,
+  useArchiveRepository,
+  useCreateRepository,
+  useUpdateRepository,
+} from "@multica/core/repositories";
+import type { Repository, RepositorySourceState } from "@multica/core/types";
 import { useT } from "../../i18n";
 
-function dropAndShiftIndex(set: Set<number>, removed: number): Set<number> {
-  const next = new Set<number>();
-  set.forEach((i) => {
-    if (i === removed) return;
-    next.add(i > removed ? i - 1 : i);
-  });
-  return next;
+type Draft = {
+  name: string;
+  remoteUrl: string;
+};
+
+type NewRepositoryDraft = Draft & {
+  id: string;
+  source_state: RepositorySourceState;
+};
+
+type RepositoryRow =
+  | { kind: "repository"; repository: Repository }
+  | { kind: "new"; draft: NewRepositoryDraft };
+
+function rowID(row: RepositoryRow): string {
+  return row.kind === "repository" ? row.repository.id : row.draft.id;
 }
 
-function isDirty(local: WorkspaceRepo[], saved: WorkspaceRepo[]): boolean {
-  if (local.length !== saved.length) return true;
-  return local.some((r, i) => r.url !== saved[i]?.url);
+function rowSourceState(row: RepositoryRow): RepositorySourceState {
+  return row.kind === "repository" ? row.repository.source_state : row.draft.source_state;
+}
+
+function rowCompatibility(row: RepositoryRow): boolean {
+  return row.kind === "repository" && row.repository.compatibility === true;
+}
+
+function rowName(row: RepositoryRow): string {
+  return row.kind === "repository" ? row.repository.name : row.draft.name;
+}
+
+function rowRemoteURL(row: RepositoryRow): string {
+  return row.kind === "repository" ? row.repository.remote_url ?? "" : row.draft.remoteUrl;
+}
+
+function draftFromRow(row: RepositoryRow): Draft {
+  return { name: rowName(row), remoteUrl: rowRemoteURL(row) };
+}
+
+function isRemoteEditable(row: RepositoryRow): boolean {
+  return row.kind === "new" || row.repository.source_state === "remote_git";
 }
 
 export function RepositoriesTab() {
   const { t } = useT("settings");
   const user = useAuthStore((s) => s.user);
-  const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
-  const qc = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: repositories = [], isLoading } = useQuery(repositoryListOptions(wsId));
+  const createRepository = useCreateRepository(wsId);
+  const updateRepository = useUpdateRepository(wsId);
+  const archiveRepository = useArchiveRepository(wsId);
 
-  const [repos, setRepos] = useState<WorkspaceRepo[]>(workspace?.repos ?? []);
-  const [editingIndices, setEditingIndices] = useState<Set<number>>(new Set());
-  const [saving, setSaving] = useState(false);
+  const [newDrafts, setNewDrafts] = useState<NewRepositoryDraft[]>([]);
+  const [editingIDs, setEditingIDs] = useState<Set<string>>(new Set());
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [savingID, setSavingID] = useState<string | null>(null);
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
 
-  useEffect(() => {
-    setRepos(workspace?.repos ?? []);
-  }, [workspace]);
+  const rows = useMemo<RepositoryRow[]>(() => {
+    const activeRepositories = repositories.filter((repo) => repo.status !== "archived");
+    return [
+      ...activeRepositories.map((repository) => ({ kind: "repository" as const, repository })),
+      ...newDrafts.map((draft) => ({ kind: "new" as const, draft })),
+    ];
+  }, [repositories, newDrafts]);
 
-  const savedRepos = workspace?.repos ?? [];
-  const dirty = isDirty(repos, savedRepos);
+  const sourceLabel = (sourceState: RepositorySourceState) => {
+    switch (sourceState) {
+      case "local_dir":
+        return t(($) => $.repositories.source_local_dir);
+      case "agent_managed":
+        return t(($) => $.repositories.source_agent_managed);
+      case "local_git":
+        return t(($) => $.repositories.source_local_git);
+      case "remote_git":
+      default:
+        return t(($) => $.repositories.source_remote_git);
+    }
+  };
 
-  const handleSave = async () => {
-    if (!workspace) return;
-    setSaving(true);
+  const handleAddRemote = () => {
+    const id = `new-${Date.now()}`;
+    const draft: NewRepositoryDraft = {
+      id,
+      source_state: "remote_git",
+      name: "",
+      remoteUrl: "",
+    };
+    setNewDrafts((prev) => [...prev, draft]);
+    setDrafts((prev) => ({ ...prev, [id]: draft }));
+    setEditingIDs((prev) => new Set(prev).add(id));
+  };
+
+  const handleEdit = (row: RepositoryRow) => {
+    const id = rowID(row);
+    setDrafts((prev) => ({ ...prev, [id]: draftFromRow(row) }));
+    setEditingIDs((prev) => new Set(prev).add(id));
+  };
+
+  const handleDraftChange = (id: string, patch: Partial<Draft>) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { name: "", remoteUrl: "" }), ...patch },
+    }));
+  };
+
+  const clearEditing = (id: string) => {
+    setEditingIDs((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const handleCancel = (row: RepositoryRow) => {
+    const id = rowID(row);
+    if (row.kind === "new") {
+      setNewDrafts((prev) => prev.filter((draft) => draft.id !== id));
+    }
+    clearEditing(id);
+  };
+
+  const handleSave = async (row: RepositoryRow) => {
+    const id = rowID(row);
+    const draft = drafts[id] ?? draftFromRow(row);
+    const name = draft.name.trim();
+    const remoteUrl = draft.remoteUrl.trim();
+    if (isRemoteEditable(row) && !remoteUrl) {
+      toast.error(t(($) => $.repositories.toast_url_required));
+      return;
+    }
+    setSavingID(id);
     try {
-      const updated = await api.updateWorkspace(workspace.id, { repos });
-      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
-        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
-      );
-      setEditingIndices(new Set());
+      if (row.kind === "new") {
+        await createRepository.mutateAsync({
+          name: name || undefined,
+          source_state: "remote_git",
+          remote_url: remoteUrl,
+        });
+        setNewDrafts((prev) => prev.filter((draft) => draft.id !== id));
+      } else {
+        await updateRepository.mutateAsync({
+          id: row.repository.id,
+          name: name || row.repository.name,
+          ...(isRemoteEditable(row) ? { remote_url: remoteUrl } : {}),
+        });
+      }
+      clearEditing(id);
       toast.success(t(($) => $.repositories.toast_saved));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.repositories.toast_save_failed));
     } finally {
-      setSaving(false);
+      setSavingID(null);
     }
   };
 
-  const handleAddRepo = () => {
-    const nextIndex = repos.length;
-    setRepos([...repos, { url: "" }]);
-    setEditingIndices(new Set(editingIndices).add(nextIndex));
-  };
-
-  const handleRemoveRepo = (index: number) => {
-    setRepos(repos.filter((_, i) => i !== index));
-    setEditingIndices(dropAndShiftIndex(editingIndices, index));
-  };
-
-  const handleRepoChange = (index: number, value: string) => {
-    setRepos(repos.map((r, i) => (i === index ? { ...r, url: value } : r)));
-  };
-
-  const handleEditRepo = (index: number) => {
-    setEditingIndices(new Set(editingIndices).add(index));
-  };
-
-  const handleCancelEdit = (index: number) => {
-    const savedUrl = savedRepos[index]?.url;
-    if (savedUrl === undefined) {
-      // Newly added row that was never persisted — drop it entirely.
-      handleRemoveRepo(index);
+  const handleRemove = async (row: RepositoryRow) => {
+    const id = rowID(row);
+    if (row.kind === "new") {
+      setNewDrafts((prev) => prev.filter((draft) => draft.id !== id));
+      clearEditing(id);
       return;
     }
-    setRepos(repos.map((r, i) => (i === index ? { ...r, url: savedUrl } : r)));
-    const next = new Set(editingIndices);
-    next.delete(index);
-    setEditingIndices(next);
+    if (row.repository.compatibility) return;
+    setSavingID(id);
+    try {
+      await archiveRepository.mutateAsync(row.repository.id);
+      toast.success(t(($) => $.repositories.toast_archived));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.repositories.toast_archive_failed));
+    } finally {
+      setSavingID(null);
+    }
   };
-
-  if (!workspace) return null;
 
   return (
     <div className="space-y-8">
@@ -113,37 +213,83 @@ export function RepositoriesTab() {
               {t(($) => $.repositories.description)}
             </p>
 
-            {repos.length === 0 && (
+            {isLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                {t(($) => $.repositories.loading)}
+              </div>
+            )}
+
+            {!isLoading && rows.length === 0 && (
               <p className="text-xs text-muted-foreground italic">
                 {t(($) => $.repositories.empty)}
               </p>
             )}
 
-            {repos.map((repo, index) => {
-              const isEditing = editingIndices.has(index);
+            {rows.map((row) => {
+              const id = rowID(row);
+              const isEditing = editingIDs.has(id);
+              const draft = drafts[id] ?? draftFromRow(row);
+              const sourceState = rowSourceState(row);
+              const compatibility = rowCompatibility(row);
+              const canEditRow = canManageWorkspace && !compatibility;
+              const saving = savingID === id;
               return (
                 <div
-                  key={index}
-                  className="group flex items-center gap-2"
+                  key={id}
+                  className="group flex items-start gap-2 rounded-md border bg-background px-3 py-2"
                 >
-                  {isEditing ? (
-                    <Input
-                      type="text"
-                      value={repo.url}
-                      onChange={(e) => handleRepoChange(index, e.target.value)}
-                      disabled={!canManageWorkspace}
-                      placeholder={t(($) => $.repositories.url_placeholder)}
-                      className="flex-1 min-w-0 text-sm"
-                    />
-                  ) : (
-                    <div
-                      className="flex-1 min-w-0 truncate rounded-md border bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground"
-                      title={repo.url}
-                    >
-                      {repo.url || t(($) => $.repositories.url_empty)}
-                    </div>
-                  )}
-                  {canManageWorkspace && (
+                  <FolderGit2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    {isEditing ? (
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)]">
+                        <Input
+                          type="text"
+                          value={draft.name}
+                          onChange={(e) => handleDraftChange(id, { name: e.target.value })}
+                          disabled={!canEditRow || saving}
+                          placeholder={t(($) => $.repositories.name_placeholder)}
+                          className="min-w-0 text-sm"
+                        />
+                        {isRemoteEditable(row) && (
+                          <Input
+                            type="text"
+                            value={draft.remoteUrl}
+                            onChange={(e) =>
+                              handleDraftChange(id, { remoteUrl: e.target.value })
+                            }
+                            disabled={!canEditRow || saving}
+                            placeholder={t(($) => $.repositories.url_placeholder)}
+                            className="min-w-0 font-mono text-xs"
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="min-w-0 truncate text-sm font-medium">
+                            {rowName(row) || t(($) => $.repositories.name_empty)}
+                          </span>
+                          <Badge variant="secondary" className="rounded-sm px-1.5 py-0 text-[10px]">
+                            {sourceLabel(sourceState)}
+                          </Badge>
+                          {compatibility && (
+                            <Badge variant="outline" className="rounded-sm px-1.5 py-0 text-[10px]">
+                              {t(($) => $.repositories.compatibility_badge)}
+                            </Badge>
+                          )}
+                        </div>
+                        <div
+                          className="truncate font-mono text-xs text-muted-foreground"
+                          title={rowRemoteURL(row)}
+                        >
+                          {rowRemoteURL(row) || t(($) => $.repositories.no_remote_url)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {canEditRow && (
                     <div
                       className={
                         isEditing
@@ -151,26 +297,42 @@ export function RepositoriesTab() {
                           : "flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                       }
                     >
-                      {!isEditing && (
+                      {isEditing ? (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t(($) => $.repositories.save_aria)}
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => handleSave(row)}
+                            disabled={saving}
+                          >
+                            {saving ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Save className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t(($) => $.repositories.cancel_aria)}
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => handleCancel(row)}
+                            disabled={saving}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </>
+                      ) : (
                         <Button
                           variant="ghost"
                           size="icon"
                           aria-label={t(($) => $.repositories.edit_aria)}
                           className="text-muted-foreground hover:text-foreground"
-                          onClick={() => handleEditRepo(index)}
+                          onClick={() => handleEdit(row)}
                         >
                           <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {isEditing && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t(($) => $.repositories.cancel_aria)}
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCancelEdit(index)}
-                        >
-                          <X className="h-3.5 w-3.5" />
                         </Button>
                       )}
                       <Button
@@ -178,7 +340,8 @@ export function RepositoriesTab() {
                         size="icon"
                         aria-label={t(($) => $.repositories.delete_aria)}
                         className="text-muted-foreground hover:text-destructive"
-                        onClick={() => handleRemoveRepo(index)}
+                        onClick={() => handleRemove(row)}
+                        disabled={saving}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -188,31 +351,14 @@ export function RepositoriesTab() {
               );
             })}
 
-            {canManageWorkspace && (
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                <Button variant="outline" size="sm" onClick={handleAddRepo}>
+            {canManageWorkspace ? (
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={handleAddRemote}>
                   <Plus className="h-3 w-3" />
-                  {t(($) => $.repositories.add)}
+                  {t(($) => $.repositories.add_remote_git)}
                 </Button>
-                <div className="flex items-center gap-3">
-                  {!dirty && repos.length > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      {t(($) => $.repositories.saved_hint)}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={handleSave}
-                    disabled={saving || !dirty}
-                  >
-                    <Save className="h-3 w-3" />
-                    {saving ? t(($) => $.repositories.saving) : t(($) => $.repositories.save)}
-                  </Button>
-                </div>
               </div>
-            )}
-
-            {!canManageWorkspace && (
+            ) : (
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.repositories.manage_hint)}
               </p>

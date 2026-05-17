@@ -17,7 +17,9 @@ import {
   Cloud,
   Cpu,
   Filter,
+  FileText,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@multica/ui/components/ui/collapsible";
@@ -31,7 +33,9 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
 import { api } from "@multica/core/api";
+import { taskOutputMetadataOptions } from "@multica/core/repositories/queries";
 import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
+import type { TaskOutputMetadata } from "@multica/core/types";
 import { redactSecrets } from "./redact";
 import type { TimelineItem } from "./build-timeline";
 import { useT } from "../../i18n";
@@ -153,6 +157,27 @@ function formatElapsedMs(ms: number): string {
   return `${minutes}m ${secs}s`;
 }
 
+function formatOutputKind(kind: string): string {
+  const map: Record<string, string> = {
+    source: "Source",
+    doc: "Doc",
+    artifact: "Artifact",
+    log: "Log",
+    report: "Report",
+    unknown: "Output",
+  };
+  return map[kind] ?? kind;
+}
+
+function formatOutputSize(sizeBytes: number | null): string | null {
+  if (sizeBytes === null || !Number.isFinite(sizeBytes)) return null;
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  const kb = sizeBytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 100 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+}
+
 // ─── Main dialog ────────────────────────────────────────────────────────────
 
 export function AgentTranscriptDialog({
@@ -167,11 +192,13 @@ export function AgentTranscriptDialog({
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedOutputId, setCopiedOutputId] = useState<string | null>(null);
   const [agentInfo, setAgentInfo] = useState<Agent | null>(null);
   const [runtimeInfo, setRuntimeInfo] = useState<AgentRuntime | null>(null);
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const eventRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const { data: taskOutputs = [] } = useQuery(taskOutputMetadataOptions(task.id));
 
   // Derive filter options from each item:
   //   tool_use / tool_result → filter value = tool, display = "tool:Bash"
@@ -255,6 +282,13 @@ export function AgentTranscriptDialog({
       setTimeout(() => setCopied(false), 2000);
     });
   }, [filteredItems]);
+
+  const handleCopyOutputPath = useCallback((output: TaskOutputMetadata) => {
+    navigator.clipboard.writeText(output.relative_path).then(() => {
+      setCopiedOutputId(output.id);
+      setTimeout(() => setCopiedOutputId(null), 2000);
+    });
+  }, []);
 
   // Toggle tool filter
   const toggleTool = useCallback((tool: string) => {
@@ -420,6 +454,9 @@ export function AgentTranscriptDialog({
             {toolCount > 0 && (
               <MetadataChip>{t(($) => $.transcript.tool_calls, { count: toolCount })}</MetadataChip>
             )}
+            {taskOutputs.length > 0 && (
+              <MetadataChip>{t(($) => $.transcript.task_outputs, { count: taskOutputs.length })}</MetadataChip>
+            )}
             <MetadataChip>
               {selectedTools.size > 0
                 ? t(($) => $.transcript.events_filtered, { shown: filteredItems.length, total: items.length })
@@ -448,6 +485,27 @@ export function AgentTranscriptDialog({
               selectedSeq={selectedSeq}
               onSegmentClick={handleSegmentClick}
             />
+          </div>
+        )}
+
+        {taskOutputs.length > 0 && (
+          <div className="border-b px-4 py-2.5 shrink-0">
+            <div className="flex gap-2 overflow-x-auto pb-0.5">
+              {taskOutputs.map((output) => (
+                <TaskOutputMetadataPill
+                  key={output.id}
+                  output={output}
+                  copied={copiedOutputId === output.id}
+                  labels={{
+                    open: t(($) => $.transcript.open_output),
+                    publish: t(($) => $.transcript.publish_output),
+                    copy: t(($) => $.transcript.copy_relative_path),
+                    copied: t(($) => $.transcript.copied),
+                  }}
+                  onCopy={handleCopyOutputPath}
+                />
+              ))}
+            </div>
           </div>
         )}
 
@@ -489,6 +547,75 @@ export function AgentTranscriptDialog({
 }
 
 // ─── Metadata chip ──────────────────────────────────────────────────────────
+
+function TaskOutputMetadataPill({
+  output,
+  copied,
+  labels,
+  onCopy,
+}: {
+  output: TaskOutputMetadata;
+  copied: boolean;
+  labels: {
+    open: string;
+    publish: string;
+    copy: string;
+    copied: string;
+  };
+  onCopy: (output: TaskOutputMetadata) => void;
+}) {
+  const size = formatOutputSize(output.size_bytes);
+  const title = output.relative_path || output.filename;
+
+  return (
+    <div className="flex min-h-12 min-w-[240px] max-w-[340px] items-center gap-2 rounded-md border bg-muted/35 px-2.5 py-1.5">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-medium text-foreground" title={title}>
+          {output.filename || output.relative_path}
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <span>{formatOutputKind(output.kind)}</span>
+          {size && (
+            <>
+              <span className="text-muted-foreground/40">/</span>
+              <span>{size}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button
+          type="button"
+          disabled
+          aria-label={labels.open}
+          title={labels.open}
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/35"
+        >
+          <Monitor className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          disabled
+          aria-label={labels.publish}
+          title={labels.publish}
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground/35"
+        >
+          <Cloud className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          aria-label={copied ? labels.copied : labels.copy}
+          title={copied ? labels.copied : labels.copy}
+          onClick={() => onCopy(output)}
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function MetadataChip({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
   return (

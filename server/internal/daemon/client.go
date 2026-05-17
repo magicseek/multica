@@ -203,6 +203,15 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
+func (c *Client) ReportTaskOutputMetadata(ctx context.Context, taskID string, outputs []TaskOutputMetadata) error {
+	if outputs == nil {
+		return nil
+	}
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/outputs", taskID), map[string]any{
+		"outputs": outputs,
+	}, nil)
+}
+
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
 	body := map[string]any{"error": errMsg}
 	if sessionID != "" {

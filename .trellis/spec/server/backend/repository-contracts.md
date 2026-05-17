@@ -39,6 +39,7 @@ API routes:
 - `POST /api/repositories/{id}/operations/{operationType}`
 - `GET /api/projects/{id}/repositories`
 - `PUT /api/projects/{id}/repositories`
+- `GET /api/tasks/{taskId}/outputs`
 - `POST /api/chat/sessions` may accept `default_repository_id`
 - `PATCH /api/chat/sessions/{sessionId}` may set or clear `default_repository_id`
 
@@ -48,6 +49,7 @@ Daemon repository operation routes:
 - `POST /api/daemon/repository-operations/{operationId}/start?runtime_id=...`
 - `POST /api/daemon/repository-operations/{operationId}/complete?runtime_id=...`
 - `POST /api/daemon/repository-operations/{operationId}/fail?runtime_id=...`
+- `POST /api/daemon/tasks/{taskId}/outputs`
 
 Daemon task claim payload:
 
@@ -81,6 +83,7 @@ Realtime events:
 - `repository:updated`
 - `repository:binding_updated`
 - `repository:published`
+- `task:outputs_updated`
 
 ### 3. Contracts
 
@@ -94,7 +97,9 @@ Realtime events:
 - `repository_binding.local_path` is private. Return it only to the binding owner or the corresponding daemon/runtime context.
 - `repository_binding.metadata` is private whenever `local_path` is private. Treat metadata as potentially containing path fragments, tool output, or machine-local details.
 - Workspace-wide realtime events must not include `local_path` or private binding metadata.
+- Agents publish task output metadata by writing `.multica/outputs.json` under their workdir. The daemon uploads metadata only from that explicit manifest; it must not scan worktrees or upload file contents.
 - `task_output_metadata.relative_path` must be repository/workdir relative. Reject absolute paths, parent traversal, backslashes, Windows drive-letter paths, and `~/...`.
+- `task_output_metadata.metadata` must be a JSON object and must not include absolute local paths, workdir fields, secrets, logs, stack traces, screenshots, or file contents.
 - Repository operations are a daemon-claim lifecycle with statuses `queued -> running -> succeeded|failed`.
 - Operation types currently exposed through the lifecycle are `create_binding`, `init_git`, `publish_remote`, and `refresh_binding`; do not expose operation types that have no daemon/server completion semantics.
 - `create_binding`, `init_git`, `publish_remote`, and `refresh_binding` require a target daemon. `init_git`, `publish_remote`, and `refresh_binding` require an existing binding.
@@ -156,6 +161,7 @@ Realtime events:
 - Bad: binding event includes `metadata.last_verified_path` or any local absolute path.
 - Bad: task claim exposes `/Users/name/project`, binding metadata, or a foreign daemon binding as available to the claiming daemon.
 - Bad: task output metadata accepts `C:\Users\name\repo\file.ts`, `/tmp/file`, `../secret`, or `~/secret`.
+- Bad: daemon scans the whole workdir and uploads discovered file lists without an explicit `.multica/outputs.json` manifest.
 
 ### 6. Tests Required
 
@@ -171,6 +177,7 @@ Realtime events:
 - Task claim repository precedence: project first-class overrides workspace fallback, project legacy `github_repo` still overrides workspace fallback, chat default overrides workspace fallback, and workspace first-class overrides legacy `workspace.repos`.
 - Task claim binding privacy/eligibility: foreign ready bindings do not set `binding_available`, and claim JSON never contains `local_path` or binding metadata.
 - Daemon execenv rendering: repositories with `remote_url` render `multica repo checkout`, while local/agent-managed repositories without `remote_url` render no checkout command and no local path.
+- Task output metadata: daemon reads only `.multica/outputs.json`, handler replaces prior task output metadata on upload, user API lists metadata after workspace membership checks, and unsafe manifests are rejected.
 - Migration/path constraints: output metadata rejects absolute and traversal-style paths.
 - Realtime payload tests or handler assertions must verify binding events omit local paths and private metadata.
 

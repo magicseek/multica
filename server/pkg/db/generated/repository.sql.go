@@ -361,6 +361,57 @@ func (q *Queries) CreateRepositoryOperation(ctx context.Context, arg CreateRepos
 	return i, err
 }
 
+const createTaskOutputMetadata = `-- name: CreateTaskOutputMetadata :one
+INSERT INTO task_output_metadata (
+    workspace_id, repository_id, task_id, relative_path, filename,
+    kind, size_bytes, mime_type, metadata
+) VALUES (
+    $1, $7, $2, $3, $4,
+    $5, $8, $9, $6
+) RETURNING id, workspace_id, repository_id, task_id, relative_path, filename, kind, size_bytes, mime_type, metadata, created_at
+`
+
+type CreateTaskOutputMetadataParams struct {
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	TaskID       pgtype.UUID `json:"task_id"`
+	RelativePath string      `json:"relative_path"`
+	Filename     string      `json:"filename"`
+	Kind         string      `json:"kind"`
+	Metadata     []byte      `json:"metadata"`
+	RepositoryID pgtype.UUID `json:"repository_id"`
+	SizeBytes    pgtype.Int8 `json:"size_bytes"`
+	MimeType     pgtype.Text `json:"mime_type"`
+}
+
+func (q *Queries) CreateTaskOutputMetadata(ctx context.Context, arg CreateTaskOutputMetadataParams) (TaskOutputMetadatum, error) {
+	row := q.db.QueryRow(ctx, createTaskOutputMetadata,
+		arg.WorkspaceID,
+		arg.TaskID,
+		arg.RelativePath,
+		arg.Filename,
+		arg.Kind,
+		arg.Metadata,
+		arg.RepositoryID,
+		arg.SizeBytes,
+		arg.MimeType,
+	)
+	var i TaskOutputMetadatum
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.RepositoryID,
+		&i.TaskID,
+		&i.RelativePath,
+		&i.Filename,
+		&i.Kind,
+		&i.SizeBytes,
+		&i.MimeType,
+		&i.Metadata,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteProjectRepositoryRefs = `-- name: DeleteProjectRepositoryRefs :exec
 DELETE FROM project_repository
 WHERE project_id = $1
@@ -384,6 +435,21 @@ type DeleteRepositoryBindingParams struct {
 
 func (q *Queries) DeleteRepositoryBinding(ctx context.Context, arg DeleteRepositoryBindingParams) error {
 	_, err := q.db.Exec(ctx, deleteRepositoryBinding, arg.ID, arg.RepositoryID, arg.WorkspaceID)
+	return err
+}
+
+const deleteTaskOutputMetadataForTask = `-- name: DeleteTaskOutputMetadataForTask :exec
+DELETE FROM task_output_metadata
+WHERE task_id = $1 AND workspace_id = $2
+`
+
+type DeleteTaskOutputMetadataForTaskParams struct {
+	TaskID      pgtype.UUID `json:"task_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteTaskOutputMetadataForTask(ctx context.Context, arg DeleteTaskOutputMetadataForTaskParams) error {
+	_, err := q.db.Exec(ctx, deleteTaskOutputMetadataForTask, arg.TaskID, arg.WorkspaceID)
 	return err
 }
 
@@ -789,6 +855,49 @@ func (q *Queries) ListRepositoryOperations(ctx context.Context, arg ListReposito
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskOutputMetadata = `-- name: ListTaskOutputMetadata :many
+SELECT id, workspace_id, repository_id, task_id, relative_path, filename, kind, size_bytes, mime_type, metadata, created_at FROM task_output_metadata
+WHERE task_id = $1 AND workspace_id = $2
+ORDER BY created_at ASC, filename ASC
+`
+
+type ListTaskOutputMetadataParams struct {
+	TaskID      pgtype.UUID `json:"task_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListTaskOutputMetadata(ctx context.Context, arg ListTaskOutputMetadataParams) ([]TaskOutputMetadatum, error) {
+	rows, err := q.db.Query(ctx, listTaskOutputMetadata, arg.TaskID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskOutputMetadatum{}
+	for rows.Next() {
+		var i TaskOutputMetadatum
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RepositoryID,
+			&i.TaskID,
+			&i.RelativePath,
+			&i.Filename,
+			&i.Kind,
+			&i.SizeBytes,
+			&i.MimeType,
+			&i.Metadata,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -170,3 +170,21 @@ WHERE project_id = $1
   AND resource_type = 'github_repo'
   AND btrim(resource_ref->>'url') <> ''
 ORDER BY url ASC;
+
+-- name: ListTaskOutputMetadata :many
+SELECT * FROM task_output_metadata
+WHERE task_id = $1 AND workspace_id = $2
+ORDER BY created_at ASC, filename ASC;
+
+-- name: DeleteTaskOutputMetadataForTask :exec
+DELETE FROM task_output_metadata
+WHERE task_id = $1 AND workspace_id = $2;
+
+-- name: CreateTaskOutputMetadata :one
+INSERT INTO task_output_metadata (
+    workspace_id, repository_id, task_id, relative_path, filename,
+    kind, size_bytes, mime_type, metadata
+) VALUES (
+    $1, sqlc.narg('repository_id'), $2, $3, $4,
+    $5, sqlc.narg('size_bytes'), sqlc.narg('mime_type'), $6
+) RETURNING *;

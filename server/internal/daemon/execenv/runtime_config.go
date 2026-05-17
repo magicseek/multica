@@ -400,6 +400,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("This downloads the file to the current directory and prints the local path. Use `-o <dir>` to save elsewhere.\n")
 	b.WriteString("After downloading, you can read the file directly (e.g. view an image, read a document).\n\n")
 
+	b.WriteString("## Output Metadata Manifest\n\n")
+	b.WriteString("If you create local files the user should be able to discover from the Multica UI, write an explicit manifest at `.multica/outputs.json`. ")
+	b.WriteString("The daemon uploads metadata only from this file; it does not scan the worktree. ")
+	b.WriteString("Use repository-relative paths only. Do not include file contents, diffs, logs, screenshots, stack traces, absolute paths, or secrets.\n\n")
+	b.WriteString("```json\n")
+	b.WriteString("{\"outputs\":[{\"relative_path\":\"docs/design.md\",\"kind\":\"doc\",\"size_bytes\":18342,\"mime_type\":\"text/markdown\"}]}\n")
+	b.WriteString("```\n\n")
+
 	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
 	b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
 	b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")

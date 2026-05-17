@@ -7,6 +7,16 @@ import type {
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
+  ListProjectRepositoriesResponse,
+  ListRepositoriesResponse,
+  ListRepositoryBindingsResponse,
+  ListRepositoryOperationsResponse,
+  ListTaskOutputMetadataResponse,
+  ProjectRepository,
+  Repository,
+  RepositoryBinding,
+  RepositoryOperation,
+  TaskOutputMetadata,
   TimelineEntry,
 } from "../types";
 
@@ -331,4 +341,220 @@ export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateR
   agent: { id: "" } as Agent,
   imported_skill_ids: [],
   reused_skill_ids: [],
+};
+
+// ---------------------------------------------------------------------------
+// Repository workspace resources
+//
+// Repository responses are consumed by installed desktop builds and workspace
+// settings. Keep the parser lenient: source/status strings may gain new
+// server-side values, and unknown metadata must survive schema parsing.
+// ---------------------------------------------------------------------------
+
+const JsonObjectSchema = z.record(z.string(), z.unknown()).default({});
+
+export const RepositorySchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  name: z.string().default(""),
+  source_state: z.string().default("remote_git"),
+  remote_url: z.string().nullable().default(null),
+  remote_key: z.string().nullable().default(null),
+  default_branch: z.string().nullable().default(null),
+  lead_agent_id: z.string().nullable().default(null),
+  created_by: z.string().nullable().default(null),
+  created_by_agent_id: z.string().nullable().default(null),
+  status: z.string().default("ready"),
+  metadata: JsonObjectSchema,
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  compatibility: z.boolean().optional(),
+  compatibility_source: z.string().optional(),
+}).loose();
+
+export const EMPTY_REPOSITORY: Repository = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  source_state: "remote_git",
+  remote_url: null,
+  remote_key: null,
+  default_branch: null,
+  lead_agent_id: null,
+  created_by: null,
+  created_by_agent_id: null,
+  status: "ready",
+  metadata: {},
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListRepositoriesResponseSchema = z.object({
+  repositories: z.array(RepositorySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_REPOSITORIES_RESPONSE: ListRepositoriesResponse = {
+  repositories: [],
+  total: 0,
+};
+
+export const RepositoryBindingSchema = z.object({
+  id: z.string(),
+  repository_id: z.string(),
+  workspace_id: z.string(),
+  owner_user_id: z.string().nullable().default(null),
+  daemon_id: z.string().default(""),
+  runtime_id: z.string().nullable().default(null),
+  machine_label: z.string().default(""),
+  binding_kind: z.string().default("local_dir"),
+  local_path: z.string().nullable().optional(),
+  state: z.string().default("initializing"),
+  last_seen_at: z.string().nullable().default(null),
+  metadata: JsonObjectSchema,
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  local_path_visible: z.boolean().default(false),
+}).loose();
+
+export const EMPTY_REPOSITORY_BINDING: RepositoryBinding = {
+  id: "",
+  repository_id: "",
+  workspace_id: "",
+  owner_user_id: null,
+  daemon_id: "",
+  runtime_id: null,
+  machine_label: "",
+  binding_kind: "local_dir",
+  local_path: null,
+  state: "initializing",
+  last_seen_at: null,
+  metadata: {},
+  created_at: "",
+  updated_at: "",
+  local_path_visible: false,
+};
+
+export const ListRepositoryBindingsResponseSchema = z.object({
+  bindings: z.array(RepositoryBindingSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_REPOSITORY_BINDINGS_RESPONSE: ListRepositoryBindingsResponse = {
+  bindings: [],
+  total: 0,
+};
+
+export const ProjectRepositorySchema = z.object({
+  project_id: z.string(),
+  repository_id: z.string(),
+  role: z.string().default("secondary"),
+  position: z.number().default(0),
+  created_at: z.string().default(""),
+  repository: RepositorySchema,
+}).loose();
+
+export const EMPTY_PROJECT_REPOSITORY: ProjectRepository = {
+  project_id: "",
+  repository_id: "",
+  role: "secondary",
+  position: 0,
+  created_at: "",
+  repository: EMPTY_REPOSITORY,
+};
+
+export const ListProjectRepositoriesResponseSchema = z.object({
+  repositories: z.array(ProjectRepositorySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_PROJECT_REPOSITORIES_RESPONSE: ListProjectRepositoriesResponse = {
+  repositories: [],
+  total: 0,
+};
+
+export const RepositoryOperationSchema = z.object({
+  id: z.string(),
+  repository_id: z.string(),
+  workspace_id: z.string(),
+  operation_type: z.string().default("create_binding"),
+  status: z.string().default("queued"),
+  requested_by_type: z.string().default("member"),
+  requested_by_id: z.string().nullable().default(null),
+  target_daemon_id: z.string().nullable().default(null),
+  target_runtime_id: z.string().nullable().default(null),
+  binding_id: z.string().nullable().default(null),
+  request: JsonObjectSchema,
+  result: JsonObjectSchema,
+  error: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  completed_at: z.string().nullable().default(null),
+}).loose();
+
+export const EMPTY_REPOSITORY_OPERATION: RepositoryOperation = {
+  id: "",
+  repository_id: "",
+  workspace_id: "",
+  operation_type: "create_binding",
+  status: "queued",
+  requested_by_type: "member",
+  requested_by_id: null,
+  target_daemon_id: null,
+  target_runtime_id: null,
+  binding_id: null,
+  request: {},
+  result: {},
+  error: null,
+  created_at: "",
+  updated_at: "",
+  completed_at: null,
+};
+
+export const ListRepositoryOperationsResponseSchema = z.object({
+  operations: z.array(RepositoryOperationSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_REPOSITORY_OPERATIONS_RESPONSE: ListRepositoryOperationsResponse = {
+  operations: [],
+  total: 0,
+};
+
+export const TaskOutputMetadataSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  repository_id: z.string().nullable().default(null),
+  task_id: z.string(),
+  relative_path: z.string().default(""),
+  filename: z.string().default(""),
+  kind: z.string().default("unknown"),
+  size_bytes: z.number().nullable().default(null),
+  mime_type: z.string().nullable().default(null),
+  metadata: JsonObjectSchema,
+  created_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_TASK_OUTPUT_METADATA: TaskOutputMetadata = {
+  id: "",
+  workspace_id: "",
+  repository_id: null,
+  task_id: "",
+  relative_path: "",
+  filename: "",
+  kind: "unknown",
+  size_bytes: null,
+  mime_type: null,
+  metadata: {},
+  created_at: "",
+};
+
+export const ListTaskOutputMetadataResponseSchema = z.object({
+  outputs: z.array(TaskOutputMetadataSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE: ListTaskOutputMetadataResponse = {
+  outputs: [],
+  total: 0,
 };

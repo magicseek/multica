@@ -69,6 +69,19 @@ import type {
   ProjectResource,
   CreateProjectResourceRequest,
   ListProjectResourcesResponse,
+  Repository,
+  RepositoryBinding,
+  RepositoryOperation,
+  CreateRepositoryRequest,
+  UpdateRepositoryRequest,
+  CreateRepositoryBindingRequest,
+  CreateRepositoryOperationRequest,
+  ListRepositoriesResponse,
+  ListRepositoryBindingsResponse,
+  ListProjectRepositoriesResponse,
+  ListRepositoryOperationsResponse,
+  ListTaskOutputMetadataResponse,
+  SetProjectRepositoriesRequest,
   Label,
   CreateLabelRequest,
   UpdateLabelRequest,
@@ -118,10 +131,26 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
+  EMPTY_LIST_PROJECT_REPOSITORIES_RESPONSE,
+  EMPTY_LIST_REPOSITORIES_RESPONSE,
+  EMPTY_LIST_REPOSITORY_BINDINGS_RESPONSE,
+  EMPTY_LIST_REPOSITORY_OPERATIONS_RESPONSE,
+  EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_REPOSITORY,
+  EMPTY_REPOSITORY_BINDING,
+  EMPTY_REPOSITORY_OPERATION,
   EMPTY_TIMELINE_ENTRIES,
   GroupedIssuesResponseSchema,
   ListIssuesResponseSchema,
+  ListProjectRepositoriesResponseSchema,
+  ListRepositoriesResponseSchema,
+  ListRepositoryBindingsResponseSchema,
+  ListRepositoryOperationsResponseSchema,
+  ListTaskOutputMetadataResponseSchema,
+  RepositoryBindingSchema,
+  RepositoryOperationSchema,
+  RepositorySchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
 } from "./schemas";
@@ -1000,6 +1029,16 @@ export class ApiClient {
     return this.fetch(`/api/tasks/${taskId}/messages`);
   }
 
+  async listTaskOutputMetadata(taskId: string): Promise<ListTaskOutputMetadataResponse> {
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/outputs`);
+    return parseWithFallback(
+      raw,
+      ListTaskOutputMetadataResponseSchema,
+      EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE,
+      { endpoint: "GET /api/tasks/:taskId/outputs" },
+    );
+  }
+
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/issues/${issueId}/task-runs`);
   }
@@ -1275,7 +1314,11 @@ export class ApiClient {
     return this.fetch(`/api/chat/sessions/${id}`);
   }
 
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+  async createChatSession(data: {
+    agent_id: string;
+    title?: string;
+    default_repository_id?: string | null;
+  }): Promise<ChatSession> {
     return this.fetch("/api/chat/sessions", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1286,7 +1329,10 @@ export class ApiClient {
     await this.fetch(`/api/chat/sessions/${id}`, { method: "DELETE" });
   }
 
-  async updateChatSession(id: string, data: { title: string }): Promise<ChatSession> {
+  async updateChatSession(id: string, data: {
+    title?: string;
+    default_repository_id?: string | null;
+  }): Promise<ChatSession> {
     return this.fetch(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -1432,6 +1478,153 @@ export class ApiClient {
     await this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "DELETE",
     });
+  }
+
+  // Repositories
+  async listRepositories(): Promise<ListRepositoriesResponse> {
+    const raw = await this.fetch<unknown>("/api/repositories");
+    return parseWithFallback(
+      raw,
+      ListRepositoriesResponseSchema,
+      EMPTY_LIST_REPOSITORIES_RESPONSE,
+      { endpoint: "GET /api/repositories" },
+    );
+  }
+
+  async getRepository(id: string): Promise<Repository> {
+    const raw = await this.fetch<unknown>(`/api/repositories/${id}`);
+    return parseWithFallback(raw, RepositorySchema, EMPTY_REPOSITORY, {
+      endpoint: "GET /api/repositories/{id}",
+    });
+  }
+
+  async createRepository(data: CreateRepositoryRequest): Promise<Repository> {
+    const raw = await this.fetch<unknown>("/api/repositories", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RepositorySchema, EMPTY_REPOSITORY, {
+      endpoint: "POST /api/repositories",
+    });
+  }
+
+  async updateRepository(id: string, data: UpdateRepositoryRequest): Promise<Repository> {
+    const raw = await this.fetch<unknown>(`/api/repositories/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RepositorySchema, EMPTY_REPOSITORY, {
+      endpoint: "PATCH /api/repositories/{id}",
+    });
+  }
+
+  async deleteRepository(id: string): Promise<void> {
+    await this.fetch(`/api/repositories/${id}`, { method: "DELETE" });
+  }
+
+  async listRepositoryBindings(
+    repositoryId: string,
+  ): Promise<ListRepositoryBindingsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/repositories/${repositoryId}/bindings`,
+    );
+    return parseWithFallback(
+      raw,
+      ListRepositoryBindingsResponseSchema,
+      EMPTY_LIST_REPOSITORY_BINDINGS_RESPONSE,
+      { endpoint: "GET /api/repositories/{id}/bindings" },
+    );
+  }
+
+  async createRepositoryBinding(
+    repositoryId: string,
+    data: CreateRepositoryBindingRequest,
+  ): Promise<RepositoryBinding> {
+    const raw = await this.fetch<unknown>(
+      `/api/repositories/${repositoryId}/bindings`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      RepositoryBindingSchema,
+      EMPTY_REPOSITORY_BINDING,
+      { endpoint: "POST /api/repositories/{id}/bindings" },
+    );
+  }
+
+  async deleteRepositoryBinding(
+    repositoryId: string,
+    bindingId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/repositories/${repositoryId}/bindings/${bindingId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async listRepositoryOperations(
+    repositoryId: string,
+  ): Promise<ListRepositoryOperationsResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/repositories/${repositoryId}/operations`,
+    );
+    return parseWithFallback(
+      raw,
+      ListRepositoryOperationsResponseSchema,
+      EMPTY_LIST_REPOSITORY_OPERATIONS_RESPONSE,
+      { endpoint: "GET /api/repositories/{id}/operations" },
+    );
+  }
+
+  async createRepositoryOperation(
+    repositoryId: string,
+    data: CreateRepositoryOperationRequest,
+  ): Promise<RepositoryOperation> {
+    const suffix = data.operation_type ? `/${data.operation_type}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/repositories/${repositoryId}/operations${suffix}`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      RepositoryOperationSchema,
+      EMPTY_REPOSITORY_OPERATION,
+      { endpoint: "POST /api/repositories/{id}/operations" },
+    );
+  }
+
+  async listProjectRepositories(
+    projectId: string,
+  ): Promise<ListProjectRepositoriesResponse> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/repositories`);
+    return parseWithFallback(
+      raw,
+      ListProjectRepositoriesResponseSchema,
+      EMPTY_LIST_PROJECT_REPOSITORIES_RESPONSE,
+      { endpoint: "GET /api/projects/{id}/repositories" },
+    );
+  }
+
+  async setProjectRepositories(
+    projectId: string,
+    data: SetProjectRepositoriesRequest,
+  ): Promise<ListProjectRepositoriesResponse> {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/repositories`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(
+      raw,
+      ListProjectRepositoriesResponseSchema,
+      EMPTY_LIST_PROJECT_REPOSITORIES_RESPONSE,
+      { endpoint: "PUT /api/projects/{id}/repositories" },
+    );
   }
 
   // Labels
