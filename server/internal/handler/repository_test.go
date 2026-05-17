@@ -225,6 +225,71 @@ func TestCreateAgentManagedRepositoryQueuesBindingOperation(t *testing.T) {
 	}
 }
 
+func TestCreateLocalDirRepositoryCreatesBindingAtomically(t *testing.T) {
+	var runtimeID, daemonID, runtimeName string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text, daemon_id, name
+		FROM agent_runtime
+		WHERE workspace_id = $1 AND owner_id = $2 AND daemon_id IS NOT NULL AND daemon_id <> ''
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, testWorkspaceID, testUserID).Scan(&runtimeID, &daemonID, &runtimeName); err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+
+	localPath := "/Users/tester/workspace/local-dir-binding"
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/repositories?workspace_id="+testWorkspaceID, map[string]any{
+		"name":         "Local dir binding",
+		"source_state": "local_dir",
+		"binding": map[string]any{
+			"daemon_id":     daemonID,
+			"runtime_id":    runtimeID,
+			"machine_label": runtimeName,
+			"binding_kind":  "local_dir",
+			"local_path":    localPath,
+			"state":         "ready",
+		},
+	})
+	testHandler.CreateRepository(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateRepository(local_dir binding): expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var repo RepositoryResponse
+	if err := json.NewDecoder(w.Body).Decode(&repo); err != nil {
+		t.Fatalf("decode CreateRepository: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM repository WHERE id = $1`, repo.ID)
+	})
+	if repo.SourceState != "local_dir" || repo.Status != "ready" {
+		t.Fatalf("repository = (%s, %s), want (local_dir, ready)", repo.SourceState, repo.Status)
+	}
+
+	var bindingDaemonID, bindingRuntimeID, bindingPath, bindingState string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT daemon_id, runtime_id::text, local_path, state
+		FROM repository_binding
+		WHERE repository_id = $1
+	`, repo.ID).Scan(&bindingDaemonID, &bindingRuntimeID, &bindingPath, &bindingState); err != nil {
+		t.Fatalf("read repository binding: %v", err)
+	}
+	if bindingDaemonID != daemonID || bindingRuntimeID != runtimeID || bindingPath != localPath || bindingState != "ready" {
+		t.Fatalf("binding = (%s, %s, %s, %s), want (%s, %s, %s, ready)", bindingDaemonID, bindingRuntimeID, bindingPath, bindingState, daemonID, runtimeID, localPath)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/repositories/"+repo.ID+"/bindings?workspace_id="+testWorkspaceID, map[string]any{
+		"daemon_id":  "wrong-daemon",
+		"runtime_id": runtimeID,
+		"local_path": "/Users/tester/other",
+	})
+	testHandler.CreateRepositoryBinding(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateRepositoryBinding daemon mismatch: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestRepositoryCompatibilityReadsLegacyWorkspaceAndProjectRepos(t *testing.T) {
 	workspaceURL := "https://github.com/multica-ai/legacy-workspace-read-model.git"
 	projectURL := "git@github.com:multica-ai/legacy-project-read-model.git"

@@ -152,6 +152,7 @@ export interface CreateRepositoryRequest {
   lead_agent_id?: string | null;
   status?: RepositoryStatus;
   metadata?: Record<string, unknown>;
+  binding?: CreateRepositoryBindingRequest | null;
 }
 
 export interface UpdateRepositoryRequest {

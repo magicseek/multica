@@ -11,18 +11,21 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import { runtimeListOptions } from "@multica/core/runtimes";
 import {
   repositoryListOptions,
   useArchiveRepository,
   useCreateRepository,
   useUpdateRepository,
 } from "@multica/core/repositories";
-import type { Repository, RepositorySourceState } from "@multica/core/types";
+import type { Repository, RepositorySourceState, RuntimeDevice } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 type Draft = {
   name: string;
   remoteUrl: string;
+  localPath: string;
+  runtimeId: string;
 };
 
 type NewRepositoryDraft = Draft & {
@@ -55,11 +58,16 @@ function rowRemoteURL(row: RepositoryRow): string {
 }
 
 function draftFromRow(row: RepositoryRow): Draft {
-  return { name: rowName(row), remoteUrl: rowRemoteURL(row) };
+  return {
+    name: rowName(row),
+    remoteUrl: rowRemoteURL(row),
+    localPath: row.kind === "new" ? row.draft.localPath : "",
+    runtimeId: row.kind === "new" ? row.draft.runtimeId : "",
+  };
 }
 
 function isRemoteEditable(row: RepositoryRow): boolean {
-  return row.kind === "new" || row.repository.source_state === "remote_git";
+  return rowSourceState(row) === "remote_git";
 }
 
 export function RepositoriesTab() {
@@ -67,6 +75,7 @@ export function RepositoriesTab() {
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   const { data: repositories = [], isLoading } = useQuery(repositoryListOptions(wsId));
   const createRepository = useCreateRepository(wsId);
   const updateRepository = useUpdateRepository(wsId);
@@ -79,6 +88,17 @@ export function RepositoriesTab() {
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
   const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
+  const localRuntimes = useMemo(
+    () =>
+      runtimes.filter(
+        (runtime) =>
+          runtime.runtime_mode === "local" &&
+          runtime.status === "online" &&
+          runtime.owner_id === user?.id &&
+          Boolean(runtime.daemon_id),
+      ),
+    [runtimes, user?.id],
+  );
 
   const rows = useMemo<RepositoryRow[]>(() => {
     const activeRepositories = repositories.filter((repo) => repo.status !== "archived");
@@ -102,6 +122,9 @@ export function RepositoriesTab() {
     }
   };
 
+  const runtimeLabel = (runtime: RuntimeDevice) =>
+    runtime.device_info ? `${runtime.name} · ${runtime.device_info}` : runtime.name;
+
   const handleAddRemote = () => {
     const id = `new-${Date.now()}`;
     const draft: NewRepositoryDraft = {
@@ -109,6 +132,23 @@ export function RepositoriesTab() {
       source_state: "remote_git",
       name: "",
       remoteUrl: "",
+      localPath: "",
+      runtimeId: "",
+    };
+    setNewDrafts((prev) => [...prev, draft]);
+    setDrafts((prev) => ({ ...prev, [id]: draft }));
+    setEditingIDs((prev) => new Set(prev).add(id));
+  };
+
+  const handleAddLocalDir = () => {
+    const id = `new-${Date.now()}`;
+    const draft: NewRepositoryDraft = {
+      id,
+      source_state: "local_dir",
+      name: "",
+      remoteUrl: "",
+      localPath: "",
+      runtimeId: localRuntimes[0]?.id ?? "",
     };
     setNewDrafts((prev) => [...prev, draft]);
     setDrafts((prev) => ({ ...prev, [id]: draft }));
@@ -124,7 +164,7 @@ export function RepositoriesTab() {
   const handleDraftChange = (id: string, patch: Partial<Draft>) => {
     setDrafts((prev) => ({
       ...prev,
-      [id]: { ...(prev[id] ?? { name: "", remoteUrl: "" }), ...patch },
+      [id]: { ...(prev[id] ?? { name: "", remoteUrl: "", localPath: "", runtimeId: "" }), ...patch },
     }));
   };
 
@@ -154,18 +194,45 @@ export function RepositoriesTab() {
     const draft = drafts[id] ?? draftFromRow(row);
     const name = draft.name.trim();
     const remoteUrl = draft.remoteUrl.trim();
+    const localPath = draft.localPath.trim();
+    const selectedRuntime = localRuntimes.find((runtime) => runtime.id === draft.runtimeId) ?? null;
     if (isRemoteEditable(row) && !remoteUrl) {
       toast.error(t(($) => $.repositories.toast_url_required));
       return;
     }
+    if (rowSourceState(row) === "local_dir" && row.kind === "new") {
+      if (!localPath) {
+        toast.error(t(($) => $.repositories.toast_local_path_required));
+        return;
+      }
+      if (!selectedRuntime?.daemon_id) {
+        toast.error(t(($) => $.repositories.toast_runtime_required));
+        return;
+      }
+    }
     setSavingID(id);
     try {
       if (row.kind === "new") {
-        await createRepository.mutateAsync({
-          name: name || undefined,
-          source_state: "remote_git",
-          remote_url: remoteUrl,
-        });
+        if (row.draft.source_state === "local_dir") {
+          await createRepository.mutateAsync({
+            name: name || localPath.split("/").filter(Boolean).at(-1) || undefined,
+            source_state: "local_dir",
+            binding: {
+              daemon_id: selectedRuntime?.daemon_id ?? "",
+              runtime_id: selectedRuntime?.id ?? null,
+              machine_label: selectedRuntime ? runtimeLabel(selectedRuntime) : undefined,
+              binding_kind: "local_dir",
+              local_path: localPath,
+              state: "ready",
+            },
+          });
+        } else {
+          await createRepository.mutateAsync({
+            name: name || undefined,
+            source_state: "remote_git",
+            remote_url: remoteUrl,
+          });
+        }
         setNewDrafts((prev) => prev.filter((draft) => draft.id !== id));
       } else {
         await updateRepository.mutateAsync({
@@ -263,6 +330,39 @@ export function RepositoriesTab() {
                             className="min-w-0 font-mono text-xs"
                           />
                         )}
+                        {row.kind === "new" && row.draft.source_state === "local_dir" && (
+                          <>
+                            <Input
+                              type="text"
+                              value={draft.localPath}
+                              onChange={(e) =>
+                                handleDraftChange(id, { localPath: e.target.value })
+                              }
+                              disabled={!canEditRow || saving}
+                              placeholder={t(($) => $.repositories.local_path_placeholder)}
+                              className="min-w-0 font-mono text-xs"
+                            />
+                            <select
+                              aria-label={t(($) => $.repositories.runtime_select_aria)}
+                              value={draft.runtimeId}
+                              onChange={(e) => handleDraftChange(id, { runtimeId: e.target.value })}
+                              disabled={!canEditRow || saving || localRuntimes.length === 0}
+                              className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground"
+                            >
+                              {localRuntimes.length === 0 ? (
+                                <option value="">
+                                  {t(($) => $.repositories.runtime_select_empty)}
+                                </option>
+                              ) : (
+                                localRuntimes.map((runtime) => (
+                                  <option key={runtime.id} value={runtime.id}>
+                                    {runtimeLabel(runtime)}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <div className="min-w-0 space-y-1">
@@ -352,10 +452,19 @@ export function RepositoriesTab() {
             })}
 
             {canManageWorkspace ? (
-              <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <Button variant="outline" size="sm" onClick={handleAddRemote}>
                   <Plus className="h-3 w-3" />
                   {t(($) => $.repositories.add_remote_git)}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddLocalDir}
+                  disabled={localRuntimes.length === 0}
+                >
+                  <Plus className="h-3 w-3" />
+                  {t(($) => $.repositories.add_local_dir)}
                 </Button>
               </div>
             ) : (

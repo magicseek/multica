@@ -120,13 +120,14 @@ type RepositoryOperationBindingResponse struct {
 }
 
 type CreateRepositoryRequest struct {
-	Name          string           `json:"name"`
-	SourceState   string           `json:"source_state"`
-	RemoteURL     *string          `json:"remote_url"`
-	DefaultBranch *string          `json:"default_branch"`
-	LeadAgentID   *string          `json:"lead_agent_id"`
-	Status        string           `json:"status"`
-	Metadata      *json.RawMessage `json:"metadata"`
+	Name          string                          `json:"name"`
+	SourceState   string                          `json:"source_state"`
+	RemoteURL     *string                         `json:"remote_url"`
+	DefaultBranch *string                         `json:"default_branch"`
+	LeadAgentID   *string                         `json:"lead_agent_id"`
+	Status        string                          `json:"status"`
+	Metadata      *json.RawMessage                `json:"metadata"`
+	Binding       *CreateRepositoryBindingRequest `json:"binding"`
 }
 
 type UpdateRepositoryRequest struct {
@@ -146,6 +147,16 @@ type CreateRepositoryBindingRequest struct {
 	LocalPath    string           `json:"local_path"`
 	State        string           `json:"state"`
 	Metadata     *json.RawMessage `json:"metadata"`
+}
+
+type preparedRepositoryBindingRequest struct {
+	DaemonID     string
+	RuntimeID    pgtype.UUID
+	MachineLabel string
+	BindingKind  string
+	LocalPath    string
+	State        string
+	Metadata     []byte
 }
 
 type SetProjectRepositoriesRequest struct {
@@ -521,6 +532,78 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "repository not found")
 }
 
+func (h *Handler) prepareRepositoryBindingRequest(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, userID string, req CreateRepositoryBindingRequest) (preparedRepositoryBindingRequest, bool) {
+	req.DaemonID = strings.TrimSpace(req.DaemonID)
+	req.MachineLabel = strings.TrimSpace(req.MachineLabel)
+	req.BindingKind = strings.TrimSpace(req.BindingKind)
+	req.LocalPath = strings.TrimSpace(req.LocalPath)
+	req.State = strings.TrimSpace(req.State)
+	if req.DaemonID == "" {
+		writeError(w, http.StatusBadRequest, "daemon_id is required")
+		return preparedRepositoryBindingRequest{}, false
+	}
+	if req.MachineLabel == "" {
+		req.MachineLabel = req.DaemonID
+	}
+	if req.BindingKind == "" {
+		req.BindingKind = "local_dir"
+	}
+	if !validRepositoryBindingKinds[req.BindingKind] {
+		writeError(w, http.StatusBadRequest, "invalid binding_kind")
+		return preparedRepositoryBindingRequest{}, false
+	}
+	if req.LocalPath == "" {
+		writeError(w, http.StatusBadRequest, "local_path is required")
+		return preparedRepositoryBindingRequest{}, false
+	}
+	if req.State == "" {
+		req.State = "initializing"
+	}
+	if !validRepositoryBindingStates[req.State] {
+		writeError(w, http.StatusBadRequest, "invalid state")
+		return preparedRepositoryBindingRequest{}, false
+	}
+	var runtimeID pgtype.UUID
+	if req.RuntimeID != nil && strings.TrimSpace(*req.RuntimeID) != "" {
+		rtUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.RuntimeID), "runtime_id")
+		if !ok {
+			return preparedRepositoryBindingRequest{}, false
+		}
+		rt, err := h.Queries.GetAgentRuntime(r.Context(), rtUUID)
+		if err != nil || uuidToString(rt.WorkspaceID) != uuidToString(workspaceID) {
+			writeError(w, http.StatusNotFound, "runtime not found")
+			return preparedRepositoryBindingRequest{}, false
+		}
+		if uuidToString(rt.OwnerID) != userID {
+			writeError(w, http.StatusForbidden, "runtime is not owned by the current user")
+			return preparedRepositoryBindingRequest{}, false
+		}
+		if !rt.DaemonID.Valid || strings.TrimSpace(rt.DaemonID.String) == "" {
+			writeError(w, http.StatusBadRequest, "runtime has no daemon_id")
+			return preparedRepositoryBindingRequest{}, false
+		}
+		if strings.TrimSpace(rt.DaemonID.String) != req.DaemonID {
+			writeError(w, http.StatusBadRequest, "daemon_id must match runtime daemon_id")
+			return preparedRepositoryBindingRequest{}, false
+		}
+		runtimeID = rtUUID
+	}
+	metadata, err := jsonObjectBytes(req.Metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
+		return preparedRepositoryBindingRequest{}, false
+	}
+	return preparedRepositoryBindingRequest{
+		DaemonID:     req.DaemonID,
+		RuntimeID:    runtimeID,
+		MachineLabel: req.MachineLabel,
+		BindingKind:  req.BindingKind,
+		LocalPath:    req.LocalPath,
+		State:        req.State,
+		Metadata:     metadata,
+	}, true
+}
+
 func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -590,6 +673,18 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
 		return
+	}
+	var localBinding *preparedRepositoryBindingRequest
+	if req.Binding != nil {
+		if req.SourceState != "local_dir" {
+			writeError(w, http.StatusBadRequest, "binding is only valid for local_dir repositories")
+			return
+		}
+		prepared, ok := h.prepareRepositoryBindingRequest(w, r, member.WorkspaceID, userID, *req.Binding)
+		if !ok {
+			return
+		}
+		localBinding = &prepared
 	}
 
 	var leadAgentID pgtype.UUID
@@ -680,12 +775,56 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var createdLocalBinding db.RepositoryBinding
+	var hasCreatedLocalBinding bool
+	if localBinding != nil {
+		binding, err := qtx.CreateRepositoryBinding(r.Context(), db.CreateRepositoryBindingParams{
+			RepositoryID: repo.ID,
+			WorkspaceID:  member.WorkspaceID,
+			DaemonID:     localBinding.DaemonID,
+			MachineLabel: localBinding.MachineLabel,
+			BindingKind:  localBinding.BindingKind,
+			LocalPath:    localBinding.LocalPath,
+			State:        localBinding.State,
+			Metadata:     localBinding.Metadata,
+			OwnerUserID:  parseUUID(userID),
+			RuntimeID:    localBinding.RuntimeID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create repository binding")
+			return
+		}
+		createdLocalBinding = binding
+		hasCreatedLocalBinding = true
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit repository")
 		return
 	}
 	resp := repositoryToResponse(repo)
 	h.publish(protocol.EventRepositoryCreated, uuidToString(member.WorkspaceID), "member", userID, map[string]any{"repository": resp})
+	if hasCreatedLocalBinding {
+		bindingResp := repositoryBindingToResponse(createdLocalBinding, userID, "")
+		h.publish(protocol.EventRepositoryBindingUpdated, uuidToString(member.WorkspaceID), "member", userID, map[string]any{
+			"repository_id": uuidToString(repo.ID),
+			"binding": map[string]any{
+				"id":                 bindingResp.ID,
+				"repository_id":      bindingResp.RepositoryID,
+				"workspace_id":       bindingResp.WorkspaceID,
+				"owner_user_id":      bindingResp.OwnerUserID,
+				"daemon_id":          bindingResp.DaemonID,
+				"runtime_id":         bindingResp.RuntimeID,
+				"machine_label":      bindingResp.MachineLabel,
+				"binding_kind":       bindingResp.BindingKind,
+				"state":              bindingResp.State,
+				"last_seen_at":       bindingResp.LastSeenAt,
+				"metadata":           json.RawMessage("{}"),
+				"created_at":         bindingResp.CreatedAt,
+				"updated_at":         bindingResp.UpdatedAt,
+				"local_path_visible": false,
+			},
+		})
+	}
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -871,66 +1010,22 @@ func (h *Handler) CreateRepositoryBinding(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req.DaemonID = strings.TrimSpace(req.DaemonID)
-	req.MachineLabel = strings.TrimSpace(req.MachineLabel)
-	req.BindingKind = strings.TrimSpace(req.BindingKind)
-	req.LocalPath = strings.TrimSpace(req.LocalPath)
-	req.State = strings.TrimSpace(req.State)
-	if req.DaemonID == "" {
-		writeError(w, http.StatusBadRequest, "daemon_id is required")
-		return
-	}
-	if req.MachineLabel == "" {
-		req.MachineLabel = req.DaemonID
-	}
-	if req.BindingKind == "" {
-		req.BindingKind = "local_dir"
-	}
-	if !validRepositoryBindingKinds[req.BindingKind] {
-		writeError(w, http.StatusBadRequest, "invalid binding_kind")
-		return
-	}
-	if req.LocalPath == "" {
-		writeError(w, http.StatusBadRequest, "local_path is required")
-		return
-	}
-	if req.State == "" {
-		req.State = "initializing"
-	}
-	if !validRepositoryBindingStates[req.State] {
-		writeError(w, http.StatusBadRequest, "invalid state")
-		return
-	}
-	var runtimeID pgtype.UUID
-	if req.RuntimeID != nil && strings.TrimSpace(*req.RuntimeID) != "" {
-		rtUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.RuntimeID), "runtime_id")
-		if !ok {
-			return
-		}
-		rt, err := h.Queries.GetAgentRuntime(r.Context(), rtUUID)
-		if err != nil || uuidToString(rt.WorkspaceID) != uuidToString(member.WorkspaceID) {
-			writeError(w, http.StatusNotFound, "runtime not found")
-			return
-		}
-		runtimeID = rtUUID
-	}
-	metadata, err := jsonObjectBytes(req.Metadata)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "metadata must be a JSON object")
+	prepared, ok := h.prepareRepositoryBindingRequest(w, r, member.WorkspaceID, userID, req)
+	if !ok {
 		return
 	}
 
 	binding, err := h.Queries.CreateRepositoryBinding(r.Context(), db.CreateRepositoryBindingParams{
 		RepositoryID: repo.ID,
 		WorkspaceID:  member.WorkspaceID,
-		DaemonID:     req.DaemonID,
-		MachineLabel: req.MachineLabel,
-		BindingKind:  req.BindingKind,
-		LocalPath:    req.LocalPath,
-		State:        req.State,
-		Metadata:     metadata,
+		DaemonID:     prepared.DaemonID,
+		MachineLabel: prepared.MachineLabel,
+		BindingKind:  prepared.BindingKind,
+		LocalPath:    prepared.LocalPath,
+		State:        prepared.State,
+		Metadata:     prepared.Metadata,
 		OwnerUserID:  parseUUID(userID),
-		RuntimeID:    runtimeID,
+		RuntimeID:    prepared.RuntimeID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create repository binding")

@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSettings from "../../locales/en/settings.json";
-import type { Repository } from "@multica/core/types";
+import type { Repository, RuntimeDevice } from "@multica/core/types";
 
 const createRepositoryMock = vi.hoisted(() => vi.fn());
 const updateRepositoryMock = vi.hoisted(() => vi.fn());
@@ -15,6 +15,9 @@ const repositoriesRef = vi.hoisted(() => ({
 }));
 const membersRef = vi.hoisted(() => ({
   current: [{ user_id: "user-1", role: "owner" as const }],
+}));
+const runtimesRef = vi.hoisted(() => ({
+  current: [] as RuntimeDevice[],
 }));
 
 function makeRepository(overrides: Partial<Repository> = {}): Repository {
@@ -37,10 +40,33 @@ function makeRepository(overrides: Partial<Repository> = {}): Repository {
   };
 }
 
+function makeRuntime(overrides: Partial<RuntimeDevice> = {}): RuntimeDevice {
+  return {
+    id: "runtime-1",
+    workspace_id: "workspace-1",
+    daemon_id: "daemon-1",
+    name: "Troy Mac",
+    runtime_mode: "local",
+    provider: "codex",
+    launch_header: "",
+    status: "online",
+    device_info: "macOS",
+    metadata: {},
+    owner_id: "user-1",
+    visibility: "private",
+    timezone: "Asia/Shanghai",
+    last_seen_at: "2026-05-17T00:00:00Z",
+    created_at: "2026-05-17T00:00:00Z",
+    updated_at: "2026-05-17T00:00:00Z",
+    ...overrides,
+  };
+}
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey ?? [];
     if (key.includes("members")) return { data: membersRef.current };
+    if (key.includes("runtimes")) return { data: runtimesRef.current };
     if (key.includes("repositories")) return { data: repositoriesRef.current, isLoading: false };
     return { data: undefined, isLoading: false };
   },
@@ -52,6 +78,10 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({ queryKey: ["workspaces", "workspace-1", "members"] }),
+}));
+
+vi.mock("@multica/core/runtimes", () => ({
+  runtimeListOptions: () => ({ queryKey: ["runtimes", "workspace-1", "list"] }),
 }));
 
 vi.mock("@multica/core/repositories", () => ({
@@ -93,6 +123,7 @@ describe("RepositoriesTab", () => {
     vi.clearAllMocks();
     repositoriesRef.current = [makeRepository()];
     membersRef.current = [{ user_id: "user-1", role: "owner" }];
+    runtimesRef.current = [makeRuntime()];
     createRepositoryMock.mockResolvedValue(makeRepository({ id: "repo-new" }));
     updateRepositoryMock.mockResolvedValue(makeRepository());
     archiveRepositoryMock.mockResolvedValue(undefined);
@@ -122,6 +153,32 @@ describe("RepositoriesTab", () => {
         name: "API",
         source_state: "remote_git",
         remote_url: "git@github.com:multica-ai/api.git",
+      });
+    });
+  });
+
+  it("creates a local directory repository with a runtime binding", async () => {
+    const user = userEvent.setup();
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: /Add local dir/ }));
+    const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
+    await user.type(inputs[0]!, "Local checkout");
+    await user.type(inputs[1]!, "/Users/troy/workspace/local-checkout");
+    await user.click(screen.getByRole("button", { name: "Save repository" }));
+
+    await waitFor(() => {
+      expect(createRepositoryMock).toHaveBeenCalledWith({
+        name: "Local checkout",
+        source_state: "local_dir",
+        binding: {
+          daemon_id: "daemon-1",
+          runtime_id: "runtime-1",
+          machine_label: "Troy Mac · macOS",
+          binding_kind: "local_dir",
+          local_path: "/Users/troy/workspace/local-checkout",
+          state: "ready",
+        },
       });
     });
   });
