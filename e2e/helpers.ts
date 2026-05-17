@@ -21,9 +21,13 @@ export async function loginAsDefault(page: Page): Promise<string> {
   );
 
   const token = api.getToken();
-  await page.goto("/login");
-  await page.evaluate((t) => {
+  await page.addInitScript((t) => {
     localStorage.setItem("multica_token", t);
+    localStorage.setItem(
+      "multica_create_mode",
+      JSON.stringify({ state: { lastMode: "manual" }, version: 0 }),
+    );
+    localStorage.setItem("multica:chat:isOpen", "false");
   }, token);
   await page.goto(`/${workspace.slug}/issues`);
   await page.waitForURL("**/issues", { timeout: 10000 });
@@ -42,8 +46,9 @@ export async function createTestApi(): Promise<TestApiClient> {
 }
 
 export async function openWorkspaceMenu(page: Page) {
-  // Click the workspace switcher button (has ChevronDown icon)
-  await page.locator("aside button").first().click();
-  // Wait for dropdown to appear
-  await page.locator('[class*="popover"]').waitFor({ state: "visible" });
+  const workspaceButton = page
+    .getByRole("button", { name: /Workspace|Renamed WS/ })
+    .first();
+  await workspaceButton.click();
+  await page.getByText("Log out").waitFor({ state: "visible" });
 }

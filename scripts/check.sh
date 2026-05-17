@@ -23,6 +23,7 @@ POSTGRES_USER="${POSTGRES_USER:-multica}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 PORT="${PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+GO_TEST_PARALLEL="${GO_TEST_PARALLEL:-4}"
 PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://localhost:${FRONTEND_PORT}}"
 export PLAYWRIGHT_BASE_URL
 
@@ -32,17 +33,35 @@ STARTED_BACKEND=false
 STARTED_FRONTEND=false
 EXIT_CODE=0
 
+kill_process_tree() {
+  local pid=$1
+  local child
+
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    kill_process_tree "$child"
+  done
+
+  kill "$pid" 2>/dev/null || true
+}
+
 # --------------------------------------------------------------------------
 # Cleanup: kill only services this script started
 # --------------------------------------------------------------------------
 cleanup() {
+  local status=$?
+  if [ "$EXIT_CODE" -eq 0 ] && [ "$status" -ne 0 ]; then
+    EXIT_CODE="$status"
+  fi
+
   echo ""
   if [ "$STARTED_BACKEND" = true ] && [ -n "$BACKEND_PID" ]; then
-    kill "$BACKEND_PID" 2>/dev/null && wait "$BACKEND_PID" 2>/dev/null || true
+    kill_process_tree "$BACKEND_PID"
+    wait "$BACKEND_PID" 2>/dev/null || true
     echo "    Stopped backend (PID $BACKEND_PID)"
   fi
   if [ "$STARTED_FRONTEND" = true ] && [ -n "$FRONTEND_PID" ]; then
-    kill "$FRONTEND_PID" 2>/dev/null && wait "$FRONTEND_PID" 2>/dev/null || true
+    kill_process_tree "$FRONTEND_PID"
+    wait "$FRONTEND_PID" 2>/dev/null || true
     echo "    Stopped frontend (PID $FRONTEND_PID)"
   fi
   echo ""
@@ -79,7 +98,7 @@ wait_for_port() {
 # --------------------------------------------------------------------------
 echo "==> Using env file: $ENV_FILE"
 echo "==> Checking PostgreSQL..."
-bash scripts/ensure-postgres.sh "$ENV_FILE"
+bash scripts/ensure-postgres.sh "$ENV_FILE" || { EXIT_CODE=1; exit 1; }
 
 # --------------------------------------------------------------------------
 # Step 1: TypeScript typecheck
@@ -102,7 +121,7 @@ echo ""
 echo "==> [3/5] Go tests..."
 echo "==> Running database migrations..."
 (cd server && go run ./cmd/migrate up) || { EXIT_CODE=1; exit 1; }
-(cd server && go test ./...) || { EXIT_CODE=1; exit 1; }
+(cd server && go test -parallel "$GO_TEST_PARALLEL" ./...) || { EXIT_CODE=1; exit 1; }
 
 # --------------------------------------------------------------------------
 # Step 4: Start services for E2E (only if not already running)
@@ -120,14 +139,19 @@ else
   wait_for_port "$PORT" "Backend" 90 "/health"
 fi
 
-if curl -sf "http://localhost:${FRONTEND_PORT}" > /dev/null 2>&1; then
+if curl --max-time 10 -sf "http://localhost:${FRONTEND_PORT}/login" > /dev/null 2>&1; then
   echo "    Frontend already running on :$FRONTEND_PORT"
+elif lsof -nP -iTCP:"${FRONTEND_PORT}" -sTCP:LISTEN > /dev/null 2>&1; then
+  echo "    ERROR: Frontend port :$FRONTEND_PORT is occupied but /login did not respond within 10s"
+  echo "    Stop the stale process or choose another FRONTEND_PORT, then rerun the check."
+  EXIT_CODE=1
+  exit 1
 else
   echo "    Starting frontend..."
   pnpm dev:web > /tmp/multica-check-frontend.log 2>&1 &
   FRONTEND_PID=$!
   STARTED_FRONTEND=true
-  wait_for_port "$FRONTEND_PORT" "Frontend" 120 "/"
+  wait_for_port "$FRONTEND_PORT" "Frontend" 180 "/login"
 fi
 
 # --------------------------------------------------------------------------

@@ -167,19 +167,30 @@ func TestRepositoryLifecycle(t *testing.T) {
 
 func TestCreateAgentManagedRepositoryQueuesBindingOperation(t *testing.T) {
 	var agentID, runtimeID, daemonID string
+	runtimeID = createRuntimeLocalSkillTestRuntime(t, testUserID)
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT a.id::text, a.runtime_id::text, rt.daemon_id
-		FROM agent a
-		JOIN agent_runtime rt ON rt.id = a.runtime_id
-		WHERE a.workspace_id = $1 AND a.archived_at IS NULL
-		ORDER BY a.created_at ASC
-		LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID, &daemonID); err != nil {
-		t.Fatalf("load lead agent/runtime: %v", err)
+		SELECT daemon_id
+		FROM agent_runtime
+		WHERE id = $1
+	`, runtimeID).Scan(&daemonID); err != nil {
+		t.Fatalf("load lead runtime daemon: %v", err)
 	}
 	if strings.TrimSpace(daemonID) == "" {
 		t.Fatal("test lead agent runtime has no daemon_id")
 	}
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'workspace', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, fmt.Sprintf("Agent managed bootstrap lead %s", runtimeID[:8]), runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("create lead agent: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/repositories?workspace_id="+testWorkspaceID, map[string]any{
@@ -227,13 +238,12 @@ func TestCreateAgentManagedRepositoryQueuesBindingOperation(t *testing.T) {
 
 func TestCreateLocalDirRepositoryCreatesBindingAtomically(t *testing.T) {
 	var runtimeID, daemonID, runtimeName string
+	runtimeID = createRuntimeLocalSkillTestRuntime(t, testUserID)
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT id::text, daemon_id, name
+		SELECT daemon_id, name
 		FROM agent_runtime
-		WHERE workspace_id = $1 AND owner_id = $2 AND daemon_id IS NOT NULL AND daemon_id <> ''
-		ORDER BY created_at ASC
-		LIMIT 1
-	`, testWorkspaceID, testUserID).Scan(&runtimeID, &daemonID, &runtimeName); err != nil {
+		WHERE id = $1
+	`, runtimeID).Scan(&daemonID, &runtimeName); err != nil {
 		t.Fatalf("load runtime: %v", err)
 	}
 

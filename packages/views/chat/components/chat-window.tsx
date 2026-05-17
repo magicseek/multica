@@ -477,6 +477,7 @@ export function ChatWindow() {
     ...(!isExpanded ? { width: renderWidth, height: renderHeight } : {}),
     transformOrigin: "bottom right",
     pointerEvents: isOpen ? "auto" : "none",
+    visibility: isVisible ? "visible" : "hidden",
   };
 
   return (
@@ -484,6 +485,8 @@ export function ChatWindow() {
       ref={windowRef}
       className={containerClass}
       style={containerStyle}
+      aria-hidden={!isOpen}
+      inert={!isOpen}
       layout="position"
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{

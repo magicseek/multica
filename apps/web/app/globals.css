@@ -10,3 +10,16 @@
 @source "../../../packages/ui/**/*.{ts,tsx}";
 @source "../../../packages/core/**/*.{ts,tsx}";
 @source "../../../packages/views/**/*.{ts,tsx}";
+
+/* Keep this stack in sync with apps/desktop/src/renderer/src/globals.css.
+   It must not depend on next/font/google: local E2E and desktop verification
+   need the app to boot without reaching fonts.gstatic.com. */
+:root {
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+               "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+               sans-serif;
+  --font-serif: "Source Serif 4 Variable", "Source Serif 4", "Iowan Old Style",
+                "Apple Garamond", Baskerville, "Times New Roman", serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+               monospace;
+}

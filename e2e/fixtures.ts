@@ -28,19 +28,32 @@ export class TestApiClient {
   async login(email: string, name: string) {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
+    let lockAcquired = false;
     try {
+      const devCode = process.env.MULTICA_DEV_VERIFICATION_CODE;
+
+      await client.query("SELECT pg_advisory_lock(hashtext($1)::bigint)", [email]);
+      lockAcquired = true;
+
       // Keep each E2E login isolated so previous test runs do not trip the
       // per-email send-code rate limit.
       await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
 
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
+      if (devCode && /^\d{6}$/.test(devCode)) {
+        await client.query(
+          "INSERT INTO verification_code (email, code, expires_at) VALUES ($1, $2, now() + interval '10 minutes')",
+          [email, devCode],
+        );
+      } else {
+        // Step 1: Send verification code
+        const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        if (!sendRes.ok) {
+          throw new Error(`send-code failed: ${sendRes.status}`);
+        }
       }
 
       // Step 2: Read code from database
@@ -73,10 +86,24 @@ export class TestApiClient {
         });
       }
 
+      await client.query(
+        `UPDATE "user"
+            SET onboarded_at = COALESCE(onboarded_at, now()),
+                starter_content_state = COALESCE(starter_content_state, 'dismissed'),
+                updated_at = now()
+          WHERE email = $1`,
+        [email],
+      );
+
       await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
 
       return data;
     } finally {
+      if (lockAcquired) {
+        await client
+          .query("SELECT pg_advisory_unlock(hashtext($1)::bigint)", [email])
+          .catch(() => {});
+      }
       await client.end();
     }
   }

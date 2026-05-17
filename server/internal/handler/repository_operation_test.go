@@ -412,7 +412,7 @@ func TestRepositoryOperationRuntimeScopedMutationsRejectSiblingRuntime(t *testin
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
 			device_info, metadata, owner_id, last_seen_at
 		)
-		VALUES ($1, $2, 'Repository Operation Sibling Runtime', 'local', 'claude',
+		VALUES ($1, $2, 'Repository Operation Sibling Runtime', 'local', 'codex',
 			'online', 'Repository operation sibling runtime', '{}'::jsonb, $3, now())
 		RETURNING id
 	`, testWorkspaceID, daemonID, testUserID).Scan(&siblingRuntimeID); err != nil {
