@@ -103,6 +103,8 @@ Realtime events:
 - Project settings store `repository_id` references only; do not copy remote URLs into project settings.
 - Agent-led project creation with no selected repository creates an `agent_managed` repository named after the project and attaches it as the primary project repository.
 - Workspace Settings may create a `local_dir` repository with an inline `binding` object; the server must create the repository and binding in one transaction.
+- Web clients must not create a `local_dir` binding from a browser-only folder handle, selected folder name, or browser-relative path. A binding path must come from desktop native IPC, an authenticated local daemon/native helper, a server-mediated target-daemon picker/confirmation flow, or explicit manual path entry.
+- A `local_dir` binding path is scoped to the selected daemon/runtime's machine. If the browser is running on a different machine than the selected runtime, the picker must run on the target runtime machine or the UI must disable the path-pick flow and require an explicit runtime-visible path.
 - Chat sessions expose `default_repository_id` as a nullable field. Clearing it is done by sending JSON `null`.
 - Compatibility reads may synthesize read-only repository responses from old `workspace.repos` and `project_resource(github_repo)` storage. New writes must target first-class repository storage.
 - `repository_binding.local_path` is private. Return it only to the binding owner or the corresponding daemon/runtime context.
@@ -194,6 +196,7 @@ Realtime events:
 - Compatibility read model: old workspace repos and project `github_repo` resources appear as compatibility repository responses.
 - Binding privacy: owner sees `local_path` and metadata; other workspace member does not.
 - Local directory binding UI/API: Workspace Settings can create a `local_dir` repository with a current-user local runtime binding in one request; daemon/runtime mismatches are rejected.
+- Local directory picker contract: a browser-only directory handle does not submit a repository create request; daemon/native-assisted and manual runtime-visible paths do submit the expected inline binding.
 - Project repository references: setting primary/secondary rows validates workspace membership and primary uniqueness.
 - Project creation: agent-led project with no selected repository creates and attaches an `agent_managed` repository; member-led or planning-only project creation remains repository-optional.
 - Repository create: `agent_managed` with lead agent queues a daemon-targeted `create_binding` operation and validates the lead agent runtime/daemon.

@@ -215,12 +215,50 @@ Current behavior, moved to the new model.
 
 ### Create From Local Directory
 
-1. User selects a local folder through desktop folder picker or local bridge.
+1. User selects a local folder through desktop folder picker, local daemon
+   bridge, or explicit manual path entry.
 2. Server creates `repository(source_state=local_dir)`.
 3. Server creates `repository_binding(binding_kind=local_dir, local_path=..., daemon_id=..., owner_user_id=...)`.
 4. The repository is available only to runtimes on that daemon until it becomes remote Git or another binding is added.
 
 If the selected directory already has `.git`, the create flow may set `source_state=local_git` after daemon verification.
+
+### Folder Selection Boundary
+
+Browser folder APIs are not enough for `local_dir` binding. `showDirectoryPicker()`
+returns a directory handle and display name, and `webkitdirectory` exposes file
+paths relative to the chosen root. Neither API returns a daemon-readable absolute
+path. A selected folder named `codex-mobile` cannot be stored as a repository
+binding because the daemon needs a concrete path such as
+`/Users/troy/workspace/codex-mobile` on the selected runtime's machine.
+
+The accepted pattern is daemon-assisted selection:
+
+1. The UI identifies the target local runtime/daemon.
+2. A trusted native component on that same machine opens the OS folder picker.
+3. That component returns the absolute path through a private owner/daemon-only
+   channel.
+4. The server stores it as `repository_binding.local_path` and continues to
+   redact it from workspace-wide events and non-owner reads.
+
+ai-desk follows this shape: its web `folderPicker` service first calls
+`daemonService.browseFolder()`, which hits a local daemon `/api/v1/browse-folder`
+endpoint. The daemon opens the OS picker with platform-native mechanisms
+(`osascript` on macOS, `zenity`/`kdialog` on Linux, and Windows Shell APIs) and
+returns the selected absolute path. Its browser `showDirectoryPicker()` fallback
+only asks the user to manually confirm the absolute path because the browser
+handle itself is insufficient.
+
+For Multica:
+
+- Desktop can use Electron `dialog.showOpenDialog({ properties: ["openDirectory"] })`
+  because the Electron main process is the trusted local component.
+- Web must use a daemon/native bridge or a server-mediated target-daemon
+  operation. If that capability is unavailable for the selected runtime, the UI
+  must not pretend the browser folder picker produced a usable binding path.
+- Manual path entry remains valid when the label makes clear that the path must
+  be visible to the selected runtime/daemon, not merely to the current browser
+  device.
 
 ### Create From No Directory
 

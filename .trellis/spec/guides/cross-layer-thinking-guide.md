@@ -85,6 +85,49 @@ After implementation:
 
 ---
 
+## Browser-To-Daemon Local Path Boundary
+
+Local directory binding crosses a browser security boundary and a machine
+boundary. A browser folder picker is not a daemon-readable path picker.
+
+### Contract
+
+- Browser APIs such as `showDirectoryPicker()` and `<input webkitdirectory>`
+  may let the page read selected file handles or relative paths, but they do
+  not expose a trustworthy absolute filesystem path.
+- A `local_dir` repository binding requires an absolute path that the selected
+  daemon/runtime can read. The path must be produced or confirmed by a trusted
+  component on that same machine.
+- Valid sources for a binding path:
+  - desktop native picker through Electron main/preload IPC;
+  - local daemon/native helper on `127.0.0.1` that opens an OS picker and
+    returns the selected path to an authenticated caller;
+  - server-mediated daemon operation that asks the target daemon to pick or
+    confirm the path;
+  - explicit manual path entry, with the UI making clear that the path is from
+    the selected runtime's machine.
+- Invalid source: a pure browser `FileSystemDirectoryHandle`, selected folder
+  name, or `webkitRelativePath` root.
+
+### Checklist: Before Implementing Local Folder Selection
+
+- [ ] Identify which machine owns the selected runtime/daemon.
+- [ ] Confirm the folder picker runs on that machine, not merely in the user's
+  current browser tab.
+- [ ] Treat the local path as private binding data; never include it in
+  workspace-wide realtime events or non-owner responses.
+- [ ] Disable or redirect the picker when the selected runtime has no reachable
+  path-picking capability.
+- [ ] Add a regression proving a browser-only directory handle does not create
+  a `local_dir` binding.
+
+**Reference pattern**: ai-desk uses a daemon-assisted picker. The web service
+first calls its daemon `browseFolder()` endpoint; only when that local daemon
+path fails does it fall back to browser/manual handling. The browser picker is
+not treated as the source of the absolute repository path.
+
+---
+
 ## Cross-Platform Template Consistency
 
 In Trellis, command templates (e.g., `record-session.md`) exist in **multiple platforms** with identical or near-identical content. This is a cross-layer boundary.
