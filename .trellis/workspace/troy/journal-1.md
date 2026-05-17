@@ -45,3 +45,39 @@ Merged agent execution workflows into repository start modes, validated reposito
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Improve project and issue start UX
+
+**Date**: 2026-05-18
+**Task**: Improve project and issue start UX
+**Branch**: `trellis/repository-start-modes`
+
+### Summary
+
+Implemented local-folder and repository start UX follow-ups: daemon/native folder selection, New Project local-dir and workflow binding, Agent-mode issue workflow selection and visible seed issue execution path, dev daemon CLI gate support, and daemon runtime bridge specs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6569b30` | (see git log) |
+| `ed92f5c3` | (see git log) |
+| `70f54e80` | (see git log) |
+| `f519af72` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
