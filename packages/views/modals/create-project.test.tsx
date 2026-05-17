@@ -6,7 +6,31 @@ const longRepoUrl =
   "https://github.com/multica-ai/a-very-long-repository-name-that-needs-a-tooltip";
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: [] }),
+  useQuery: (options: { queryKey?: readonly unknown[] }) => {
+    if (options.queryKey?.includes("repositories")) {
+      return {
+        data: [
+          {
+            id: "repo-1",
+            workspace_id: "workspace-1",
+            name: "",
+            source_state: "remote_git",
+            remote_url: longRepoUrl,
+            remote_key: "github.com/multica-ai/a-very-long-repository-name-that-needs-a-tooltip",
+            default_branch: null,
+            lead_agent_id: null,
+            created_by: "user-1",
+            created_by_agent_id: null,
+            status: "ready",
+            metadata: {},
+            created_at: "2026-05-17T00:00:00Z",
+            updated_at: "2026-05-17T00:00:00Z",
+          },
+        ],
+      };
+    }
+    return { data: [] };
+  },
 }));
 
 vi.mock("@multica/core/projects/mutations", () => ({
@@ -30,6 +54,11 @@ vi.mock("@multica/core/projects", () => ({
     }),
 }));
 
+vi.mock("@multica/core/repositories", () => ({
+  repositoryListOptions: () => ({ queryKey: ["repositories", "workspace-1", "list"] }),
+  useCreateRepository: () => ({ mutateAsync: vi.fn() }),
+}));
+
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
@@ -39,7 +68,6 @@ vi.mock("@multica/core/paths", () => ({
     id: "workspace-1",
     name: "Test Workspace",
     slug: "test-workspace",
-    repos: [{ url: longRepoUrl }],
   }),
   useWorkspacePaths: () => ({
     projectDetail: (id: string) => `/test-workspace/projects/${id}`,
@@ -162,7 +190,8 @@ describe("CreateProjectModal", () => {
   it("exposes full repository URLs in the repository picker", () => {
     render(<CreateProjectModal onClose={vi.fn()} />);
 
-    expect(screen.getByTitle(longRepoUrl)).toHaveTextContent(longRepoUrl);
-    expect(screen.getByRole("tooltip", { name: longRepoUrl })).toBeInTheDocument();
+    const tooltipText = `${longRepoUrl} · ${longRepoUrl}`;
+    expect(screen.getByTitle(tooltipText)).toHaveTextContent(longRepoUrl);
+    expect(screen.getByRole("tooltip", { name: tooltipText })).toBeInTheDocument();
   });
 });

@@ -6,14 +6,20 @@ import { ChevronRight, FolderGit, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   projectResourcesOptions,
-  useCreateProjectResource,
   useDeleteProjectResource,
 } from "@multica/core/projects";
+import {
+  projectRepositoriesOptions,
+  repositoryListOptions,
+  useCreateRepository,
+  useSetProjectRepositories,
+} from "@multica/core/repositories";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GithubRepoResourceRef,
+  ProjectRepository,
   ProjectResource,
+  Repository,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -36,32 +42,85 @@ import { useT } from "../../i18n";
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
-  const workspace = useCurrentWorkspace();
   const [open, setOpen] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
 
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
   );
-  const createResource = useCreateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
-
-  const attachedUrls = new Set(
-    resources
-      .filter((r) => r.resource_type === "github_repo")
-      .map((r) => (r.resource_ref as GithubRepoResourceRef).url),
+  const { data: projectRepositories = [] } = useQuery(
+    projectRepositoriesOptions(wsId, projectId),
   );
+  const { data: workspaceRepositories = [] } = useQuery(repositoryListOptions(wsId));
+  const createRepository = useCreateRepository(wsId);
+  const setProjectRepositories = useSetProjectRepositories(wsId, projectId);
 
-  const handleAttach = async (url: string) => {
+  const attachedRepositoryIds = new Set(
+    projectRepositories.map((repo) => repo.repository_id),
+  );
+  const selectableRepositories = workspaceRepositories.filter(
+    (repo) => repo.status !== "archived" && repo.compatibility !== true,
+  );
+  const hasResources = projectRepositories.length > 0 || resources.length > 0;
+
+  const setRepositories = async (repositories: ProjectRepository[]) => {
+    await setProjectRepositories.mutateAsync({
+      repositories: repositories.map((repo, index) => ({
+        repository_id: repo.repository_id,
+        role: index === 0 ? "primary" : repo.role,
+        position: index,
+      })),
+    });
+  };
+
+  const handleAttachRepository = async (repository: Repository) => {
     try {
-      await createResource.mutateAsync({
-        resource_type: "github_repo",
-        resource_ref: { url },
-      });
+      if (attachedRepositoryIds.has(repository.id)) return;
+      await setRepositories([
+        ...projectRepositories,
+        {
+          project_id: projectId,
+          repository_id: repository.id,
+          role: projectRepositories.length === 0 ? "primary" : "secondary",
+          position: projectRepositories.length,
+          created_at: "",
+          repository,
+        },
+      ]);
       toast.success(t(($) => $.resources.toast_attached));
     } catch (err) {
       const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
       toast.error(msg);
+    }
+  };
+
+  const handleCreateAndAttachRepository = async (url: string) => {
+    try {
+      const existing = selectableRepositories.find((repo) => repo.remote_url === url);
+      if (existing) {
+        await handleAttachRepository(existing);
+        return;
+      }
+      const repository = await createRepository.mutateAsync({
+        source_state: "remote_git",
+        remote_url: url,
+      });
+      await handleAttachRepository(repository);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
+      toast.error(msg);
+    }
+  };
+
+  const handleRemoveRepository = async (repositoryID: string) => {
+    try {
+      await setRepositories(
+        projectRepositories.filter((repo) => repo.repository_id !== repositoryID),
+      );
+      toast.success(t(($) => $.resources.toast_removed));
+    } catch {
+      toast.error(t(($) => $.resources.toast_remove_failed));
     }
   };
 
@@ -87,11 +146,18 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       </button>
       {open && (
         <div className="pl-2 space-y-1.5">
-          {resources.length === 0 && (
+          {!hasResources && (
             <p className="text-xs text-muted-foreground">
               {t(($) => $.resources.empty)}
             </p>
           )}
+          {projectRepositories.map((projectRepository) => (
+            <ProjectRepositoryRow
+              key={projectRepository.repository_id}
+              projectRepository={projectRepository}
+              onRemove={() => handleRemoveRepository(projectRepository.repository_id)}
+            />
+          ))}
           {resources.map((resource) => (
             <ResourceRow
               key={resource.id}
@@ -116,22 +182,22 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               <div className="text-xs font-medium text-muted-foreground">
                 {t(($) => $.resources.popover_title)}
               </div>
-              {workspace?.repos && workspace.repos.length > 0 && (
+              {selectableRepositories.length > 0 && (
                 <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {workspace.repos.map((repo) => {
-                    const isAttached = attachedUrls.has(repo.url);
-                    const isDisabled = isAttached || createResource.isPending;
+                  {selectableRepositories.map((repo) => {
+                    const isAttached = attachedRepositoryIds.has(repo.id);
+                    const isDisabled = isAttached || setProjectRepositories.isPending;
                     return (
                       // Use aria-disabled instead of the native `disabled` attribute so
                       // hover events still reach the tooltip trigger on attached rows
                       // (browsers suppress pointer events on disabled form controls).
                       <button
-                        key={repo.url}
+                        key={repo.id}
                         type="button"
                         aria-disabled={isDisabled}
                         onClick={async () => {
                           if (isDisabled) return;
-                          await handleAttach(repo.url);
+                          await handleAttachRepository(repo);
                           setAddOpen(false);
                         }}
                         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
@@ -140,10 +206,14 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                         <Tooltip>
                           <TooltipTrigger
                             render={
-                              <span className="truncate flex-1">{repo.url}</span>
+                              <span className="truncate flex-1">
+                                {repositoryLabel(repo)}
+                              </span>
                             }
                           />
-                          <TooltipContent side="top">{repo.url}</TooltipContent>
+                          <TooltipContent side="top">
+                            {repositoryTooltip(repo)}
+                          </TooltipContent>
                         </Tooltip>
                         {isAttached && (
                           <span className="text-[10px] text-muted-foreground">
@@ -157,7 +227,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               )}
               <CustomRepoForm
                 onSubmit={async (url) => {
-                  await handleAttach(url);
+                  await handleCreateAndAttachRepository(url);
                   setAddOpen(false);
                 }}
               />
@@ -165,6 +235,55 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
           </Popover>
         </div>
       )}
+    </div>
+  );
+}
+
+function repositoryLabel(repo: Repository): string {
+  return repo.name || repo.remote_url || repo.remote_key || repo.id;
+}
+
+function repositoryTooltip(repo: Repository): string {
+  return repo.remote_url ?? repo.remote_key ?? repo.source_state;
+}
+
+function ProjectRepositoryRow({
+  projectRepository,
+  onRemove,
+}: {
+  projectRepository: ProjectRepository;
+  onRemove: () => void;
+}) {
+  const { t } = useT("projects");
+  const repo = projectRepository.repository;
+  return (
+    <div className="flex items-center gap-2 text-xs group">
+      <FolderGit className="size-3.5 text-muted-foreground shrink-0" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="truncate flex-1">
+              {repositoryLabel(repo)}
+            </span>
+          }
+        />
+        <TooltipContent side="top">
+          {repositoryTooltip(repo)}
+        </TooltipContent>
+      </Tooltip>
+      {projectRepository.role === "primary" && (
+        <span className="text-[10px] text-muted-foreground">
+          {t(($) => $.resources.primary_badge)}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+        title={t(($) => $.resources.remove_tooltip)}
+      >
+        <Trash2 className="size-3 text-muted-foreground" />
+      </button>
     </div>
   );
 }

@@ -47,6 +47,10 @@
       "confirming": "Deleting..."
     }
   },
+  "repository": {
+    "label": "Repository",
+    "none": "No repository"
+  },
   "window": {
     "new_chat_tooltip": "New chat",
     "restore_tooltip": "Restore",

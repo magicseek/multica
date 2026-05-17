@@ -79,20 +79,34 @@ export function useUpdateChatSession() {
   const wsId = useWorkspaceId();
 
   return useMutation({
-    mutationFn: (data: { sessionId: string; title: string }) => {
+    mutationFn: (data: {
+      sessionId: string;
+      title?: string;
+      default_repository_id?: string | null;
+    }) => {
       logger.info("updateChatSession.start", {
         sessionId: data.sessionId,
-        titleLength: data.title.length,
+        titleLength: data.title?.length ?? 0,
+        updatesRepository: "default_repository_id" in data,
       });
-      return api.updateChatSession(data.sessionId, { title: data.title });
+      const { sessionId, ...patch } = data;
+      return api.updateChatSession(sessionId, patch);
     },
-    onMutate: async ({ sessionId, title }) => {
+    onMutate: async ({ sessionId, title, default_repository_id }) => {
       await qc.cancelQueries({ queryKey: chatKeys.sessions(wsId) });
 
       const prevSessions = qc.getQueryData<ChatSession[]>(chatKeys.sessions(wsId));
 
       const patch = (old?: ChatSession[]) =>
-        old?.map((s) => (s.id === sessionId ? { ...s, title } : s));
+        old?.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                ...(title !== undefined ? { title } : {}),
+                ...(default_repository_id !== undefined ? { default_repository_id } : {}),
+              }
+            : s,
+        );
       qc.setQueryData<ChatSession[]>(chatKeys.sessions(wsId), patch);
 
       return { prevSessions };

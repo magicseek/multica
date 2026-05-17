@@ -103,11 +103,12 @@
     "repos_pill": "代码仓库",
     "repos_pill_count_one": "{{count}} 个仓库",
     "repos_pill_count_other": "{{count}} 个仓库",
-    "repos_heading": "为此项目关联 GitHub 仓库",
-    "repos_empty": "还没有工作区级别的仓库。可以在下方粘贴 URL 临时关联一个。",
+    "repos_heading": "为此项目关联代码仓库",
+    "repos_empty": "还没有工作区代码仓库。可以在下方粘贴远程 Git URL 创建一个。",
     "repos_url_placeholder": "https://github.com/owner/repo 或 git@github.com:owner/repo.git",
     "repos_add": "添加",
-    "repos_selected": "已选"
+    "repos_selected": "已选",
+    "repos_new_remote": "新的远程 Git 仓库"
   },
   "create_issue": {
     "sr_manual": "新建 issue",

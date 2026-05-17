@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Minus, Maximize2, Minimize2, ChevronDown, ChevronRight, Plus, Check, Trash2, Pencil } from "lucide-react";
+import { Minus, Maximize2, Minimize2, ChevronDown, ChevronRight, Plus, Check, Trash2, Pencil, FolderGit2 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import {
@@ -48,6 +48,7 @@ import {
   useMarkChatSessionRead,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
+import { repositoryListOptions } from "@multica/core/repositories";
 import { useChatStore } from "@multica/core/chat";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
@@ -60,7 +61,7 @@ import {
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatResize } from "./use-chat-resize";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, ChatMessage, ChatPendingTask, ChatSession } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatPendingTask, ChatSession, Repository } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
@@ -78,6 +79,7 @@ export function ChatWindow() {
   const user = useAuthStore((s) => s.user);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: repositories = [] } = useQuery(repositoryListOptions(wsId));
   // Single sessions cache. The dropdown groups locally into "active" /
   // "archived" — eliminating the separate active/all queries that used
   // to drift during the WS-invalidate window.
@@ -113,12 +115,18 @@ export function ChatWindow() {
 
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
+  const updateSession = useUpdateChatSession();
   const markRead = useMarkChatSessionRead();
+  const [draftRepositoryId, setDraftRepositoryId] = useState<string | null>(null);
 
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
   const availableAgents = agents.filter(
     (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
+  );
+  const selectableRepositories = useMemo(
+    () => repositories.filter((repo) => repo.status !== "archived" && repo.compatibility !== true),
+    [repositories],
   );
 
   // Resolve selected agent: stored preference → first available
@@ -126,6 +134,11 @@ export function ChatWindow() {
     availableAgents.find((a) => a.id === selectedAgentId) ??
     availableAgents[0] ??
     null;
+  const activeRepositoryId = activeSessionId
+    ? currentSession?.default_repository_id ?? null
+    : draftRepositoryId;
+  const activeRepository =
+    selectableRepositories.find((repo) => repo.id === activeRepositoryId) ?? null;
 
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the
@@ -229,6 +242,7 @@ export function ChatWindow() {
           const session = await createSession.mutateAsync({
             agent_id: activeAgent.id,
             title: titleSeed.slice(0, 50),
+            default_repository_id: draftRepositoryId,
           });
           return session.id;
         } finally {
@@ -238,7 +252,7 @@ export function ChatWindow() {
       sessionPromiseRef.current = promise;
       return promise;
     },
-    [activeSessionId, activeAgent, createSession],
+    [activeSessionId, activeAgent, createSession, draftRepositoryId],
   );
 
   const handleUploadFile = useCallback(
@@ -423,6 +437,20 @@ export function ChatWindow() {
     [activeAgent, setSelectedAgentId, setActiveSession],
   );
 
+  const handleSelectRepository = useCallback(
+    (repositoryId: string | null) => {
+      if (activeSessionId) {
+        updateSession.mutate({
+          sessionId: activeSessionId,
+          default_repository_id: repositoryId,
+        });
+        return;
+      }
+      setDraftRepositoryId(repositoryId);
+    },
+    [activeSessionId, updateSession],
+  );
+
   const handleMinimize = useCallback(() => {
     uiLogger.info("minimize (close)", {
       activeSessionId,
@@ -496,6 +524,11 @@ export function ChatWindow() {
             agents={agents}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
+          />
+          <RepositoryDropdown
+            repositories={selectableRepositories}
+            activeRepository={activeRepository}
+            onSelectRepository={handleSelectRepository}
           />
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -694,6 +727,72 @@ function AgentMenuItem({
       <span className="truncate flex-1">{agent.name}</span>
       {isCurrent && <Check className="size-3.5 text-muted-foreground shrink-0" />}
     </DropdownMenuItem>
+  );
+}
+
+function repositoryLabel(repo: Repository): string {
+  return repo.name || repo.remote_url || repo.remote_key || repo.id;
+}
+
+function repositoryTooltip(repo: Repository): string {
+  return repo.remote_url ?? repo.remote_key ?? repo.source_state;
+}
+
+function RepositoryDropdown({
+  repositories,
+  activeRepository,
+  onSelectRepository,
+}: {
+  repositories: Repository[];
+  activeRepository: Repository | null;
+  onSelectRepository: (repositoryId: string | null) => void;
+}) {
+  const { t } = useT("chat");
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="flex min-w-0 max-w-40 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground aria-expanded:bg-accent">
+        <FolderGit2 className="size-3.5 shrink-0" />
+        <span className="truncate">
+          {activeRepository
+            ? repositoryLabel(activeRepository)
+            : t(($) => $.repository.none)}
+        </span>
+        <ChevronDown className="size-3 shrink-0" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className="max-h-80 w-64">
+        <DropdownMenuLabel>{t(($) => $.repository.label)}</DropdownMenuLabel>
+        <DropdownMenuItem
+          onClick={() => onSelectRepository(null)}
+          className="flex min-w-0 items-center gap-2"
+        >
+          <span className="flex size-4 items-center justify-center">
+            {!activeRepository && <Check className="size-3" />}
+          </span>
+          <span className="truncate text-muted-foreground">
+            {t(($) => $.repository.none)}
+          </span>
+        </DropdownMenuItem>
+        {repositories.length > 0 && <DropdownMenuSeparator />}
+        {repositories.map((repo) => {
+          const selected = activeRepository?.id === repo.id;
+          return (
+            <DropdownMenuItem
+              key={repo.id}
+              onClick={() => onSelectRepository(repo.id)}
+              className="flex min-w-0 items-center gap-2"
+            >
+              <span className="flex size-4 items-center justify-center">
+                {selected && <Check className="size-3" />}
+              </span>
+              <FolderGit2 className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate" title={repositoryTooltip(repo)}>
+                {repositoryLabel(repo)}
+              </span>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

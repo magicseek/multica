@@ -1,29 +1,12 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { ChevronRight, Maximize2, Minimize2, X as XIcon, UserMinus } from "lucide-react";
-
-/**
- * GitHub mark — lucide-react v1 dropped brand icons, so we inline the
- * Octicon-style mark here (24×24 viewBox, currentColor fill so it inherits
- * the parent's text color). Stays in this file because there's only one
- * caller; promote to packages/ui if a second use crops up.
- */
-function GithubIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M12 .5C5.73.5.66 5.57.66 11.84c0 5.01 3.25 9.26 7.76 10.76.57.1.78-.25.78-.55 0-.27-.01-1.17-.02-2.13-3.16.69-3.83-1.34-3.83-1.34-.52-1.31-1.27-1.66-1.27-1.66-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.52-.29-5.18-1.26-5.18-5.62 0-1.24.45-2.26 1.18-3.06-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.17a10.93 10.93 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.57.23 2.73.11 3.02.74.8 1.18 1.82 1.18 3.06 0 4.37-2.67 5.32-5.21 5.61.41.35.78 1.04.78 2.1 0 1.52-.01 2.74-.01 3.11 0 .3.21.66.79.55 4.51-1.5 7.76-5.75 7.76-10.76C23.34 5.57 18.27.5 12 .5Z" />
-    </svg>
-  );
-}
+import { ChevronRight, FolderGit2, Maximize2, Minimize2, X as XIcon, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
+import { repositoryListOptions, useCreateRepository } from "@multica/core/repositories";
+import { api } from "@multica/core/api";
 import {
   PROJECT_STATUS_CONFIG,
   PROJECT_STATUS_ORDER,
@@ -33,7 +16,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
+import type { ProjectStatus, ProjectPriority, Repository } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -78,30 +61,41 @@ function PillButton({
   );
 }
 
-function RepoUrlText({
-  url,
+function RepositoryText({
+  label,
+  detail,
   className,
 }: {
-  url: string;
+  label: string;
+  detail?: string | null;
   className?: string;
 }) {
+  const tooltip = detail ? `${label} · ${detail}` : label;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            title={url}
+            title={tooltip}
             className={cn("truncate flex-1 text-left", className)}
           >
-            {url}
+            {label}
           </span>
         }
       />
       <TooltipContent side="top" align="start" className="max-w-sm break-all">
-        {url}
+        {tooltip}
       </TooltipContent>
     </Tooltip>
   );
+}
+
+function repositoryLabel(repo: Repository): string {
+  return repo.name || repo.remote_url || repo.remote_key || repo.id;
+}
+
+function repositoryDetail(repo: Repository): string | null {
+  return repo.remote_url ?? repo.remote_key ?? repo.source_state;
 }
 
 export function CreateProjectModal({ onClose }: { onClose: () => void }) {
@@ -113,6 +107,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const wsId = useWorkspaceId();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: repositories = [] } = useQuery(repositoryListOptions(wsId));
   const { getActorName } = useActorName();
   const projectStatusLabels = useProjectStatusLabels();
   const projectPriorityLabels = useProjectPriorityLabels();
@@ -131,13 +126,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  // Repos selected to attach as github_repo resources after the project is
-  // created. Stored as URLs (not full ProjectResource rows) — they're not
-  // persisted until handleSubmit fires the createProjectResource calls.
-  const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
+  const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [customRepoUrl, setCustomRepoUrl] = useState("");
-  const workspaceRepos = workspace?.repos ?? [];
+  const [customRepoUrls, setCustomRepoUrls] = useState<string[]>([]);
+  const selectableRepositories = repositories.filter(
+    (repo) => repo.status !== "archived" && repo.compatibility !== true,
+  );
 
   // Sync field changes to draft store
   const updateTitle = (v: string) => { setTitle(v); setDraft({ title: v }); };
@@ -162,6 +157,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     leadType && leadId ? getActorName(leadType, leadId) : t(($) => $.create_project.lead);
 
   const createProject = useCreateProject();
+  const createRepository = useCreateRepository(wsId);
 
   const handleSubmit = async () => {
     if (!title.trim() || submitting) return;
@@ -175,15 +171,29 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
         priority,
         lead_type: leadType,
         lead_id: leadId,
-        // Server attaches these in the same transaction as the project.
-        resources:
-          selectedRepos.length > 0
-            ? selectedRepos.map((url) => ({
-                resource_type: "github_repo" as const,
-                resource_ref: { url },
-              }))
-            : undefined,
       });
+      const repositoryIds = [...selectedRepositoryIds];
+      for (const url of customRepoUrls) {
+        const existing = selectableRepositories.find((repo) => repo.remote_url === url);
+        if (existing) {
+          if (!repositoryIds.includes(existing.id)) repositoryIds.push(existing.id);
+          continue;
+        }
+        const repo = await createRepository.mutateAsync({
+          source_state: "remote_git",
+          remote_url: url,
+        });
+        repositoryIds.push(repo.id);
+      }
+      if (repositoryIds.length > 0) {
+        await api.setProjectRepositories(project.id, {
+          repositories: repositoryIds.map((repository_id, index) => ({
+            repository_id,
+            role: index === 0 ? "primary" : "secondary",
+            position: index,
+          })),
+        });
+      }
       clearDraft();
       onClose();
       toast.success(t(($) => $.create_project.toast_created));
@@ -195,18 +205,22 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const toggleRepo = (url: string) => {
-    setSelectedRepos((prev) =>
-      prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url],
+  const toggleRepository = (repositoryId: string) => {
+    setSelectedRepositoryIds((prev) =>
+      prev.includes(repositoryId)
+        ? prev.filter((id) => id !== repositoryId)
+        : [...prev, repositoryId],
     );
   };
 
   const addCustomRepo = () => {
     const url = customRepoUrl.trim();
     if (!url) return;
-    setSelectedRepos((prev) => (prev.includes(url) ? prev : [...prev, url]));
+    setCustomRepoUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
     setCustomRepoUrl("");
   };
+
+  const selectedCount = selectedRepositoryIds.length + customRepoUrls.length;
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -451,11 +465,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             <PopoverTrigger
               render={
                 <PillButton>
-                  <GithubIcon className="size-3" />
+                  <FolderGit2 className="size-3" />
                   <span>
-                    {selectedRepos.length === 0
+                    {selectedCount === 0
                       ? t(($) => $.create_project.repos_pill)
-                      : t(($) => $.create_project.repos_pill_count, { count: selectedRepos.length })}
+                      : t(($) => $.create_project.repos_pill_count, { count: selectedCount })}
                   </span>
                 </PillButton>
               }
@@ -464,15 +478,15 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
               <div className="text-xs font-medium text-muted-foreground">
                 {t(($) => $.create_project.repos_heading)}
               </div>
-              {workspaceRepos.length > 0 ? (
+              {selectableRepositories.length > 0 ? (
                 <div className="space-y-1 max-h-48 overflow-y-auto">
-                  {workspaceRepos.map((repo) => {
-                    const checked = selectedRepos.includes(repo.url);
+                  {selectableRepositories.map((repo) => {
+                    const checked = selectedRepositoryIds.includes(repo.id);
                     return (
                       <button
                         type="button"
-                        key={repo.url}
-                        onClick={() => toggleRepo(repo.url)}
+                        key={repo.id}
+                        onClick={() => toggleRepository(repo.id)}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent transition-colors",
                           checked && "bg-accent",
@@ -484,8 +498,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                           readOnly
                           className="size-3.5"
                         />
-                        <GithubIcon className="size-3.5" />
-                        <RepoUrlText url={repo.url} />
+                        <FolderGit2 className="size-3.5" />
+                        <RepositoryText
+                          label={repositoryLabel(repo)}
+                          detail={repositoryDetail(repo)}
+                        />
                       </button>
                     );
                   })}
@@ -519,21 +536,46 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                   {t(($) => $.create_project.repos_add)}
                 </Button>
               </form>
-              {selectedRepos.length > 0 && (
+              {selectedCount > 0 && (
                 <div className="space-y-1 pt-1 border-t">
                   <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                     {t(($) => $.create_project.repos_selected)}
                   </div>
-                  {selectedRepos.map((url) => (
+                  {selectedRepositoryIds.map((id) => {
+                    const repo = selectableRepositories.find((candidate) => candidate.id === id);
+                    if (!repo) return null;
+                    return (
+                      <div
+                        key={id}
+                        className="flex items-center gap-2 text-xs"
+                      >
+                        <FolderGit2 className="size-3 text-muted-foreground" />
+                        <RepositoryText
+                          label={repositoryLabel(repo)}
+                          detail={repositoryDetail(repo)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => toggleRepository(id)}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          <XIcon className="size-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {customRepoUrls.map((url) => (
                     <div
                       key={url}
                       className="flex items-center gap-2 text-xs"
                     >
-                      <GithubIcon className="size-3 text-muted-foreground" />
-                      <RepoUrlText url={url} />
+                      <FolderGit2 className="size-3 text-muted-foreground" />
+                      <RepositoryText label={url} detail={t(($) => $.create_project.repos_new_remote)} />
                       <button
                         type="button"
-                        onClick={() => toggleRepo(url)}
+                        onClick={() =>
+                          setCustomRepoUrls((prev) => prev.filter((item) => item !== url))
+                        }
                         className="text-muted-foreground hover:text-foreground"
                       >
                         <XIcon className="size-3" />
