@@ -1,0 +1,66 @@
+{"file": ".trellis/spec/workflows/execution-workflow-definitions.md", "reason": "Verification must enforce the workflow DB/API/daemon/frontend contracts and test matrix."}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Check backend changes against database/API/daemon prompt-wiring quality gates."}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Check legacy execution protocol compatibility during migration."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review all layer boundaries and data round-trips for this cross-layer feature."}
+{"file": "docs/agent-workflows-design.md", "reason": "Check implementation against the accepted design handoff and task breakdown."}
+{"file": "docs/adr/0001-workflow-definitions-bindings-and-overrides.md", "reason": "Check implementation does not drift from accepted ownership, override, and snapshot decisions."}
+{"file": "CONTEXT.md", "reason": "Check naming and user-facing concepts match the agreed domain language."}
+{"check":"pnpm typecheck","status":"passed","summary":"Turbo typecheck passed for core, views, web, desktop, docs, ui, and config packages."}
+{"check":"pnpm --filter @multica/core test","status":"passed","summary":"Core Vitest suite passed: 33 files, 266 tests."}
+{"check":"pnpm --filter @multica/views test","status":"passed","summary":"Views Vitest suite passed: 61 files, 551 tests."}
+{"check":"pnpm lint","status":"passed_with_warnings","summary":"Lint completed with existing warnings only; no errors in changed workflow files."}
+{"check":"cd server && go test $(go list ./... | grep -v '/pkg/agent$')","status":"passed","summary":"All server packages except pkg/agent passed."}
+{"check":"cd server && go test ./...","status":"failed_unrelated","summary":"Only server/pkg/agent failed in existing Codex semantic-inactivity deadline tests; workflow-related server packages passed."}
+{"check":"trellis task status","status":"completed","summary":"Task marked completed after implementation, targeted tests, lint, typecheck, and recorded known unrelated pkg/agent full-suite failure."}
+{"check":"trellis-check spec drift","status":"fixed","summary":"Fixed drift from execution-workflow-definitions spec: persisted schema now uses schema_version/source.format and the Workflows UI exposes Source/Steps/Preview tabs that round-trip one schema object."}
+{"check":"make sqlc","status":"passed","summary":"sqlc generation completed after workflow query/model changes."}
+{"check":"pnpm --filter @multica/core typecheck","status":"passed","summary":"Core package typecheck passed after schema/snapshot type updates."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after Workflows tabbed editor changes."}
+{"check":"cd server && go test ./internal/workflowdefs ./internal/service ./internal/handler ./internal/daemon/execenv ./cmd/server","status":"passed","summary":"Focused workflow, handler, service, daemon execenv, and router tests passed."}
+{"check":"pnpm lint","status":"passed_with_warnings","summary":"Repository lint passed with existing warnings only; no workflow editor or workflow type errors."}
+{"check":"pnpm test","status":"passed","summary":"Repository Vitest suites passed: core, views, web, desktop, and docs."}
+{"check":"pnpm typecheck","status":"passed","summary":"Turbo typecheck passed across all workspace packages after final schema/UI fixes."}
+{"check":"cd server && go test $(go list ./... | grep -v '/pkg/agent$')","status":"passed","summary":"All backend packages except pkg/agent passed after final schema/UI fixes."}
+{"check":"cd server && go test ./...","status":"failed_known_pkg_agent","summary":"Full server Go suite still fails only in server/pkg/agent Codex/Kimi semantic inactivity/model-init tests; workflow-related packages pass."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors in tracked diffs."}
+{"check":"workflowdefs regression tests","status":"added","summary":"Added Go tests for schema_version/source.format canonicalization, missing applicability, duplicate step IDs, unknown dependencies, and structured step rendering."}
+{"check":"daemon workflow snapshot regression tests","status":"added","summary":"Added execenv tests proving workflow_snapshot.rendered_markdown overrides legacy assignment protocols and comment fallback text."}
+{"check":"cd server && go test ./internal/workflowdefs ./internal/daemon/execenv ./internal/service ./internal/handler ./cmd/server","status":"passed","summary":"Focused Go tests passed after adding workflowdefs and daemon snapshot regression coverage."}
+{"check":"cd server && go test $(go list ./... | grep -v '/pkg/agent$')","status":"passed","summary":"All backend packages except known flaky/failing pkg/agent passed after final regression tests."}
+{"check":"break-loop root cause","status":"recorded","summary":"Classified as missing spec plus test coverage gap: ai-desk graph preview behavior was not enumerated in acceptance criteria, and no frontend/server seed test asserted graph nodes or dependency edges."}
+{"check":"template sync","status":"not_applicable","summary":"trellis-break-loop requested src/templates/markdown/spec sync, but this repository has no src/templates/markdown/spec path; updated live .trellis spec/guides instead."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts","status":"passed","summary":"Graph layout, localized graph rendering, and locale parity tests passed."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after graph preview and locale updates."}
+{"check":"pnpm --filter @multica/views lint","status":"passed_with_warnings","summary":"Views lint passed with existing warnings only; no graph/workflows lint errors."}
+{"check":"cd server && go test ./internal/workflowdefs ./internal/daemon/execenv ./internal/service ./internal/handler ./cmd/server","status":"passed","summary":"Focused backend workflow/daemon/handler/router tests passed after adding graph steps to system seeds."}
+{"check":"desktop manual smoke","status":"passed","summary":"Restarted backend on 18779 and desktop renderer on 5174, verified desktop GET /api/workflows returned 200 and Trellis/Comment workflow Preview exposes graph nodes plus rendered Markdown."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors in tracked diffs after graph preview changes."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts","status":"passed","summary":"Graph layout/rendering tests and locale parity passed after adding expand/collapse labels and action coverage."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after replacing raw preview with shared Markdown rendering and adding graph preview props."}
+{"check":"pnpm --filter @multica/views lint","status":"passed_with_warnings","summary":"Views lint passed with existing 13 warnings only; no new workflow UI lint errors."}
+{"check":"desktop manual smoke","status":"passed","summary":"Verified desktop Workflows UI shows consistent Source/Steps/Preview icons, rendered Markdown as formatted heading/list content, graph expand/collapse control, and numbered low-chrome step rows."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors after workflow preview UI polish changes."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts","status":"passed","summary":"Graph preview tests now cover viewport transform scaling for compact and expanded sizes, expand action, graph layout, graph rendering, and locale parity."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after adding ResizeObserver-based graph viewport scaling and centering."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts","status":"passed","summary":"Graph viewport transform tests passed after switching to scaled-coordinate rendering and a readable minimum graph scale."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after the scaled-coordinate graph rendering change."}
+{"check":"pnpm --filter @multica/views lint","status":"passed_with_warnings","summary":"Views lint passed with existing 13 warnings only; no new workflow graph lint warnings."}
+{"check":"desktop manual smoke","status":"passed","summary":"Restarted desktop dev app, verified collapsed graph is readable and centered in split Preview, expand fills the Preview pane, and collapse returns to centered split layout."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors after graph viewport centering changes."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts","status":"passed","summary":"Graph preview and locale parity tests passed after making Preview panes independently scrollable."}
+{"check":"pnpm --filter @multica/views typecheck","status":"passed","summary":"Views package typecheck passed after changing Preview tab overflow and pane sizing."}
+{"check":"pnpm --filter @multica/views lint","status":"passed_with_warnings","summary":"Views lint passed with existing 13 warnings only; no new workflow preview lint errors."}
+{"check":"desktop manual smoke","status":"passed","summary":"Verified Trellis Preview in desktop: scrolling long rendered Markdown moves only the Markdown pane while the graph pane remains visible and independently scrollable."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors after independent Preview pane scrolling changes."}
+{"check":"trellis-check 2026-05-17 spec review","status":"passed","summary":"Read CLAUDE.md, package spec indexes, shared guides, and execution-workflow-definitions; workflow graph/rendered Markdown/independent Preview panes match the updated spec."}
+{"check":"make sqlc","status":"passed","summary":"sqlc generation completed without producing a blocking drift error."}
+{"check":"cd server && go test ./internal/workflowdefs ./internal/daemon/execenv ./internal/service ./internal/handler ./cmd/server","status":"passed","summary":"Focused backend workflow definitions, daemon execenv, service, handler, and router tests passed."}
+{"check":"cd server && go test $(go list ./... | grep -v '/pkg/agent$')","status":"passed","summary":"Backend Go packages passed excluding the known historical server/pkg/agent package."}
+{"check":"pnpm --filter @multica/core exec vitest run paths/consistency.test.ts","status":"passed","summary":"Core route/path consistency tests passed for the Workflows route surface."}
+{"check":"pnpm --filter @multica/views exec vitest run workflows/components/workflow-graph-preview.test.ts locales/parity.test.ts layout/app-sidebar.test.tsx","status":"passed","summary":"Focused workflow graph preview, locale parity, and sidebar route tests passed."}
+{"check":"pnpm --filter @multica/core typecheck && pnpm --filter @multica/views typecheck && pnpm --filter @multica/desktop typecheck && pnpm --filter @multica/web typecheck","status":"passed","summary":"Focused package and app typechecks passed."}
+{"check":"pnpm typecheck","status":"passed","summary":"Repository Turbo typecheck passed across all workspace packages."}
+{"check":"pnpm lint","status":"passed_with_warnings","summary":"Repository lint passed with existing warnings only; no new workflow UI lint errors were introduced."}
+{"check":"pnpm test","status":"passed","summary":"Repository Turbo tests passed after rerunning without concurrent lint/typecheck/Go load; an earlier overloaded concurrent run only produced transient @multica/views interaction-test timeouts."}
+{"check":"pnpm --filter @multica/views exec vitest run --no-file-parallelism --maxWorkers=1 --testTimeout=10000","status":"passed","summary":"Full @multica/views suite passed reliably: 62 files and 557 tests."}
+{"check":"git diff --check","status":"passed","summary":"No whitespace errors in tracked diffs after the Trellis check run."}
