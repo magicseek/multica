@@ -269,6 +269,10 @@ Publishing a draft:
 - Steps editor presents steps as a numbered, low-chrome ordered editing list;
   avoid separate card boxes around every step unless the visual system changes.
 - Project and issue workflow selectors filter by applicability.
+- Project and issue workflow selectors submit workflow definition IDs, but their
+  collapsed trigger labels must resolve those IDs back to workflow names from
+  the loaded workflow metadata. Do not show raw UUIDs to users except as a
+  last-resort fallback for missing metadata.
 - Capability mismatch is warning-only in v1 and must not block assignment.
 
 ### 4. Validation & Error Matrix
@@ -295,6 +299,9 @@ Publishing a draft:
 - Good: A project binds to Trellis Task. Issue A is assigned to Agent 1 and snapshots Trellis revision 2. The workflow is then published to revision 3. Issue B assigned later snapshots revision 3. Issue A still runs revision 2.
 - Good: A small bug inside the same project sets issue override to Direct Task. Reassigning from Agent 1 to Agent 2 keeps Direct Task because workflow belongs to the issue, not the agent.
 - Good: A user forks the system Trellis Task, edits source/steps, publishes it, and binds the project to the fork.
+- Good: A project binding select stores the selected workflow definition ID
+  while the collapsed control displays the workflow name, for example
+  `Trellis Task`, not the UUID.
 - Good: A user opens Preview and sees the workflow step graph with dependency
   arrows plus the rendered Markdown generated from the same schema.
 - Good: The rendered Markdown preview shows headings, lists, code blocks, and
@@ -352,6 +359,8 @@ Frontend/core/views:
 - Graph preview tests or manual QA cover both collapsed and expanded viewport
   sizes so centering/scale regressions are caught.
 - Project and issue selectors filter by applicability and display capability warnings.
+- Project and issue selector tests or manual QA verify that selected workflow
+  IDs render as workflow names in the collapsed control after binding changes.
 
 Regression:
 
