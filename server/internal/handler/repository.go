@@ -91,22 +91,32 @@ type ProjectRepositoryResponse struct {
 }
 
 type RepositoryOperationResponse struct {
-	ID              string          `json:"id"`
-	RepositoryID    string          `json:"repository_id"`
-	WorkspaceID     string          `json:"workspace_id"`
-	OperationType   string          `json:"operation_type"`
-	Status          string          `json:"status"`
-	RequestedByType string          `json:"requested_by_type"`
-	RequestedByID   *string         `json:"requested_by_id"`
-	TargetDaemonID  *string         `json:"target_daemon_id"`
-	TargetRuntimeID *string         `json:"target_runtime_id"`
-	BindingID       *string         `json:"binding_id"`
-	Request         json.RawMessage `json:"request"`
-	Result          json.RawMessage `json:"result"`
-	Error           *string         `json:"error"`
-	CreatedAt       string          `json:"created_at"`
-	UpdatedAt       string          `json:"updated_at"`
-	CompletedAt     *string         `json:"completed_at"`
+	ID              string                              `json:"id"`
+	RepositoryID    string                              `json:"repository_id"`
+	WorkspaceID     string                              `json:"workspace_id"`
+	OperationType   string                              `json:"operation_type"`
+	Status          string                              `json:"status"`
+	RequestedByType string                              `json:"requested_by_type"`
+	RequestedByID   *string                             `json:"requested_by_id"`
+	TargetDaemonID  *string                             `json:"target_daemon_id"`
+	TargetRuntimeID *string                             `json:"target_runtime_id"`
+	BindingID       *string                             `json:"binding_id"`
+	Request         json.RawMessage                     `json:"request"`
+	Result          json.RawMessage                     `json:"result"`
+	Error           *string                             `json:"error"`
+	CreatedAt       string                              `json:"created_at"`
+	UpdatedAt       string                              `json:"updated_at"`
+	CompletedAt     *string                             `json:"completed_at"`
+	Binding         *RepositoryOperationBindingResponse `json:"binding,omitempty"`
+}
+
+type RepositoryOperationBindingResponse struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	State     string  `json:"state"`
+	DaemonID  string  `json:"daemon_id"`
+	RuntimeID *string `json:"runtime_id,omitempty"`
+	LocalPath string  `json:"local_path"`
 }
 
 type CreateRepositoryRequest struct {
@@ -219,6 +229,46 @@ func repositoryOperationToResponse(op db.RepositoryOperation) RepositoryOperatio
 		UpdatedAt:       timestampToString(op.UpdatedAt),
 		CompletedAt:     timestampToPtr(op.CompletedAt),
 	}
+}
+
+func repositoryOperationToDaemonResponse(ctx context.Context, q *db.Queries, op db.RepositoryOperation, daemonID string, runtimeID pgtype.UUID) RepositoryOperationResponse {
+	resp := repositoryOperationToResponse(op)
+	if !op.BindingID.Valid {
+		return resp
+	}
+	binding, err := q.GetRepositoryBindingInWorkspace(ctx, db.GetRepositoryBindingInWorkspaceParams{
+		ID:           op.BindingID,
+		RepositoryID: op.RepositoryID,
+		WorkspaceID:  op.WorkspaceID,
+	})
+	if err != nil || !repositoryOperationBindingPathVisible(op, binding, daemonID, runtimeID) {
+		return resp
+	}
+	resp.Binding = &RepositoryOperationBindingResponse{
+		ID:        uuidToString(binding.ID),
+		Kind:      binding.BindingKind,
+		State:     binding.State,
+		DaemonID:  binding.DaemonID,
+		RuntimeID: uuidToPtr(binding.RuntimeID),
+		LocalPath: binding.LocalPath,
+	}
+	return resp
+}
+
+func repositoryOperationBindingPathVisible(op db.RepositoryOperation, binding db.RepositoryBinding, daemonID string, runtimeID pgtype.UUID) bool {
+	if strings.TrimSpace(daemonID) == "" || binding.DaemonID != daemonID {
+		return false
+	}
+	if !op.TargetDaemonID.Valid || op.TargetDaemonID.String != daemonID {
+		return false
+	}
+	if op.TargetRuntimeID.Valid && (!runtimeID.Valid || op.TargetRuntimeID != runtimeID) {
+		return false
+	}
+	if binding.RuntimeID.Valid && (!runtimeID.Valid || binding.RuntimeID != runtimeID) {
+		return false
+	}
+	return strings.TrimSpace(binding.LocalPath) != ""
 }
 
 func jsonObjectOrEmpty(raw []byte) json.RawMessage {

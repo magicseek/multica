@@ -26,22 +26,32 @@ type RepoData struct {
 // RepositoryOperation mirrors the daemon-facing repository operation lifecycle
 // payload returned by /api/daemon/repository-operations/*.
 type RepositoryOperation struct {
-	ID              string          `json:"id"`
-	RepositoryID    string          `json:"repository_id"`
-	WorkspaceID     string          `json:"workspace_id"`
-	OperationType   string          `json:"operation_type"`
-	Status          string          `json:"status"`
-	RequestedByType string          `json:"requested_by_type"`
-	RequestedByID   *string         `json:"requested_by_id,omitempty"`
-	TargetDaemonID  *string         `json:"target_daemon_id,omitempty"`
-	TargetRuntimeID *string         `json:"target_runtime_id,omitempty"`
-	BindingID       *string         `json:"binding_id,omitempty"`
-	Request         json.RawMessage `json:"request"`
-	Result          json.RawMessage `json:"result"`
-	Error           *string         `json:"error,omitempty"`
-	CreatedAt       string          `json:"created_at"`
-	UpdatedAt       string          `json:"updated_at"`
-	CompletedAt     *string         `json:"completed_at,omitempty"`
+	ID              string                          `json:"id"`
+	RepositoryID    string                          `json:"repository_id"`
+	WorkspaceID     string                          `json:"workspace_id"`
+	OperationType   string                          `json:"operation_type"`
+	Status          string                          `json:"status"`
+	RequestedByType string                          `json:"requested_by_type"`
+	RequestedByID   *string                         `json:"requested_by_id,omitempty"`
+	TargetDaemonID  *string                         `json:"target_daemon_id,omitempty"`
+	TargetRuntimeID *string                         `json:"target_runtime_id,omitempty"`
+	BindingID       *string                         `json:"binding_id,omitempty"`
+	Request         json.RawMessage                 `json:"request"`
+	Result          json.RawMessage                 `json:"result"`
+	Error           *string                         `json:"error,omitempty"`
+	CreatedAt       string                          `json:"created_at"`
+	UpdatedAt       string                          `json:"updated_at"`
+	CompletedAt     *string                         `json:"completed_at,omitempty"`
+	Binding         *RepositoryOperationBindingData `json:"binding,omitempty"`
+}
+
+type RepositoryOperationBindingData struct {
+	ID        string  `json:"id"`
+	Kind      string  `json:"kind"`
+	State     string  `json:"state"`
+	DaemonID  string  `json:"daemon_id"`
+	RuntimeID *string `json:"runtime_id,omitempty"`
+	LocalPath string  `json:"local_path"`
 }
 
 // TaskRepositoryBindingData mirrors the sanitized binding summary returned by

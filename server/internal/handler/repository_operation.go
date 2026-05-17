@@ -273,7 +273,13 @@ func (h *Handler) CreateRepositoryOperation(w http.ResponseWriter, r *http.Reque
 	if operationType == "publish_remote" {
 		var obj map[string]any
 		_ = json.Unmarshal(requestBytes, &obj)
-		if rawURL, _ := obj["remote_url"].(string); strings.TrimSpace(rawURL) != "" && !isValidGitRepoURL(strings.TrimSpace(rawURL)) {
+		rawURL, _ := obj["remote_url"].(string)
+		remoteURL := strings.TrimSpace(rawURL)
+		if remoteURL == "" {
+			writeError(w, http.StatusBadRequest, "request.remote_url is required for publish_remote")
+			return
+		}
+		if !isValidGitRepoURL(remoteURL) {
 			writeError(w, http.StatusBadRequest, "request.remote_url must be a valid http(s) or ssh git URL")
 			return
 		}
@@ -418,17 +424,17 @@ func (h *Handler) ClaimRepositoryOperation(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to claim repository operation")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"operation": repositoryOperationToResponse(op)})
+	writeJSON(w, http.StatusOK, map[string]any{"operation": repositoryOperationToDaemonResponse(r.Context(), h.Queries, op, daemonID, runtimeID)})
 }
 
-func (h *Handler) repositoryOperationForDaemon(w http.ResponseWriter, r *http.Request) (db.RepositoryOperation, pgtype.UUID, string, bool) {
+func (h *Handler) repositoryOperationForDaemon(w http.ResponseWriter, r *http.Request) (db.RepositoryOperation, pgtype.UUID, string, pgtype.UUID, bool) {
 	opID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "operationId"), "repository operation id")
 	if !ok {
-		return db.RepositoryOperation{}, pgtype.UUID{}, "", false
+		return db.RepositoryOperation{}, pgtype.UUID{}, "", pgtype.UUID{}, false
 	}
 	workspaceID, daemonID, runtimeID, ok := h.repositoryOperationDaemonTarget(w, r)
 	if !ok {
-		return db.RepositoryOperation{}, pgtype.UUID{}, "", false
+		return db.RepositoryOperation{}, pgtype.UUID{}, "", pgtype.UUID{}, false
 	}
 	op, err := h.Queries.GetRepositoryOperationForDaemon(r.Context(), db.GetRepositoryOperationForDaemonParams{
 		ID:             opID,
@@ -437,17 +443,17 @@ func (h *Handler) repositoryOperationForDaemon(w http.ResponseWriter, r *http.Re
 	})
 	if err != nil {
 		writeError(w, http.StatusNotFound, "repository operation not found")
-		return db.RepositoryOperation{}, pgtype.UUID{}, "", false
+		return db.RepositoryOperation{}, pgtype.UUID{}, "", pgtype.UUID{}, false
 	}
 	if runtimeID.Valid && op.TargetRuntimeID.Valid && op.TargetRuntimeID != runtimeID {
 		writeError(w, http.StatusNotFound, "repository operation not found")
-		return db.RepositoryOperation{}, pgtype.UUID{}, "", false
+		return db.RepositoryOperation{}, pgtype.UUID{}, "", pgtype.UUID{}, false
 	}
-	return op, workspaceID, daemonID, true
+	return op, workspaceID, daemonID, runtimeID, true
 }
 
 func (h *Handler) StartRepositoryOperation(w http.ResponseWriter, r *http.Request) {
-	op, workspaceID, daemonID, ok := h.repositoryOperationForDaemon(w, r)
+	op, workspaceID, daemonID, runtimeID, ok := h.repositoryOperationForDaemon(w, r)
 	if !ok {
 		return
 	}
@@ -464,7 +470,7 @@ func (h *Handler) StartRepositoryOperation(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to start repository operation")
 		return
 	}
-	writeJSON(w, http.StatusOK, repositoryOperationToResponse(updated))
+	writeJSON(w, http.StatusOK, repositoryOperationToDaemonResponse(r.Context(), h.Queries, updated, daemonID, runtimeID))
 }
 
 func decodeRepositoryOperationCompleteRequest(r *http.Request) (CompleteRepositoryOperationRequest, error) {
@@ -476,7 +482,7 @@ func decodeRepositoryOperationCompleteRequest(r *http.Request) (CompleteReposito
 }
 
 func (h *Handler) CompleteRepositoryOperation(w http.ResponseWriter, r *http.Request) {
-	op, workspaceID, daemonID, ok := h.repositoryOperationForDaemon(w, r)
+	op, workspaceID, daemonID, _, ok := h.repositoryOperationForDaemon(w, r)
 	if !ok {
 		return
 	}
@@ -759,7 +765,7 @@ func (h *Handler) applyRepositoryOperationCompletion(r *http.Request, qtx *db.Qu
 }
 
 func (h *Handler) FailRepositoryOperation(w http.ResponseWriter, r *http.Request) {
-	op, workspaceID, daemonID, ok := h.repositoryOperationForDaemon(w, r)
+	op, workspaceID, daemonID, _, ok := h.repositoryOperationForDaemon(w, r)
 	if !ok {
 		return
 	}

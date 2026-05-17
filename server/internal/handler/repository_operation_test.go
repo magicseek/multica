@@ -78,9 +78,22 @@ func createHandlerTestRepositoryOperation(t *testing.T, repoID, operationType st
 
 func claimHandlerTestRepositoryOperation(t *testing.T, daemonID string) RepositoryOperationResponse {
 	t.Helper()
+	op := claimHandlerTestRepositoryOperationWithRuntime(t, daemonID, "")
+	if op == nil {
+		t.Fatal("expected claimed repository operation")
+	}
+	return *op
+}
 
+func claimHandlerTestRepositoryOperationWithRuntime(t *testing.T, daemonID, runtimeID string) *RepositoryOperationResponse {
+	t.Helper()
+
+	path := "/api/daemon/repository-operations/claim"
+	if strings.TrimSpace(runtimeID) != "" {
+		path += "?runtime_id=" + runtimeID
+	}
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("GET", "/api/daemon/repository-operations/claim", nil, testWorkspaceID, daemonID)
+	req := newDaemonTokenRequest("GET", path, nil, testWorkspaceID, daemonID)
 	testHandler.ClaimRepositoryOperation(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ClaimRepositoryOperation: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -91,10 +104,7 @@ func claimHandlerTestRepositoryOperation(t *testing.T, daemonID string) Reposito
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode ClaimRepositoryOperation: %v", err)
 	}
-	if resp.Operation == nil {
-		t.Fatal("expected claimed repository operation")
-	}
-	return *resp.Operation
+	return resp.Operation
 }
 
 func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing.T) {
@@ -109,6 +119,9 @@ func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing
 	})
 	if op.Status != "queued" || op.OperationType != "create_binding" {
 		t.Fatalf("created operation = %+v, want queued create_binding", op)
+	}
+	if op.Binding != nil {
+		t.Fatalf("public create response included daemon-private binding path: %+v", op.Binding)
 	}
 
 	w := httptest.NewRecorder()
@@ -129,6 +142,9 @@ func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing
 	}
 	if len(listResp.Operations) != 1 || listResp.Operations[0].ID != op.ID {
 		t.Fatalf("unexpected operations list: %+v", listResp.Operations)
+	}
+	if listResp.Operations[0].Binding != nil {
+		t.Fatalf("public list response included daemon-private binding path: %+v", listResp.Operations[0].Binding)
 	}
 
 	claimed := claimHandlerTestRepositoryOperation(t, "repo-op-daemon")
@@ -172,6 +188,9 @@ func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing
 	if completed.Status != "succeeded" || completed.CompletedAt == nil || completed.BindingID == nil {
 		t.Fatalf("completed operation missing terminal fields: %+v", completed)
 	}
+	if completed.Binding != nil {
+		t.Fatalf("complete response included daemon-private binding path: %+v", completed.Binding)
+	}
 
 	w = httptest.NewRecorder()
 	req = newRequest("GET", "/api/repositories/"+repo.ID+"/operations", nil)
@@ -182,6 +201,13 @@ func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing
 	}
 	if strings.Contains(w.Body.String(), privatePath) {
 		t.Fatalf("operation list leaked private path after completion: %s", w.Body.String())
+	}
+	listResp.Operations = nil
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode ListRepositoryOperations after complete: %v", err)
+	}
+	if len(listResp.Operations) != 1 || listResp.Operations[0].Binding != nil {
+		t.Fatalf("public operation list after complete should not include daemon-private binding: %+v", listResp.Operations)
 	}
 
 	otherUserID := createRepositoryTestMember(t)
@@ -199,19 +225,41 @@ func TestRepositoryOperationCreateListClaimStartCompleteCreateBinding(t *testing
 
 func TestRepositoryOperationInitGitPublishRemoteAndFailTransitions(t *testing.T) {
 	repo := createHandlerTestRepositoryWithState(t, "Local operation transitions", "local_dir")
-	binding := createHandlerTestRepositoryBinding(t, repo.ID, "repo-op-transition-daemon", "/Users/tester/private/local-operation")
+	localPath := "/Users/tester/private/local-operation"
+	binding := createHandlerTestRepositoryBinding(t, repo.ID, "repo-op-transition-daemon", localPath)
 
 	initOp := createHandlerTestRepositoryOperation(t, repo.ID, "init_git", map[string]any{
 		"target_daemon_id": "repo-op-transition-daemon",
 		"binding_id":       binding.ID,
 	})
+	if initOp.Binding != nil {
+		t.Fatalf("public create response included daemon-private binding path: %+v", initOp.Binding)
+	}
 	claimed := claimHandlerTestRepositoryOperation(t, "repo-op-transition-daemon")
 	if claimed.ID != initOp.ID {
 		t.Fatalf("claimed init operation %s, want %s", claimed.ID, initOp.ID)
 	}
+	if claimed.Binding == nil || claimed.Binding.LocalPath != localPath {
+		t.Fatalf("claim response missing target daemon binding path: %+v", claimed.Binding)
+	}
 
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/repository-operations/"+initOp.ID+"/complete", map[string]any{
+	req := newDaemonTokenRequest("POST", "/api/daemon/repository-operations/"+initOp.ID+"/start", nil, testWorkspaceID, "repo-op-transition-daemon")
+	req = withURLParam(req, "operationId", initOp.ID)
+	testHandler.StartRepositoryOperation(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("StartRepositoryOperation init_git: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var startedInit RepositoryOperationResponse
+	if err := json.NewDecoder(w.Body).Decode(&startedInit); err != nil {
+		t.Fatalf("decode StartRepositoryOperation init_git: %v", err)
+	}
+	if startedInit.Binding == nil || startedInit.Binding.LocalPath != localPath {
+		t.Fatalf("start response missing target daemon binding path: %+v", startedInit.Binding)
+	}
+
+	w = httptest.NewRecorder()
+	req = newDaemonTokenRequest("POST", "/api/daemon/repository-operations/"+initOp.ID+"/complete", map[string]any{
 		"result": map[string]any{"head_commit": "abc123"},
 		"repository": map[string]any{
 			"default_branch": "main",
@@ -225,6 +273,13 @@ func TestRepositoryOperationInitGitPublishRemoteAndFailTransitions(t *testing.T)
 	if w.Code != http.StatusOK {
 		t.Fatalf("CompleteRepositoryOperation init_git: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	var completedInit RepositoryOperationResponse
+	if err := json.NewDecoder(w.Body).Decode(&completedInit); err != nil {
+		t.Fatalf("decode CompleteRepositoryOperation init_git: %v", err)
+	}
+	if completedInit.Binding != nil || strings.Contains(w.Body.String(), localPath) {
+		t.Fatalf("complete init_git response leaked binding path: %+v body=%s", completedInit.Binding, w.Body.String())
+	}
 
 	var sourceState, defaultBranch string
 	if err := testPool.QueryRow(context.Background(), `
@@ -234,6 +289,18 @@ func TestRepositoryOperationInitGitPublishRemoteAndFailTransitions(t *testing.T)
 	}
 	if sourceState != "local_git" || defaultBranch != "main" {
 		t.Fatalf("repository after init_git = (%s, %s), want (local_git, main)", sourceState, defaultBranch)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/repositories/"+repo.ID+"/operations/publish-remote", map[string]any{
+		"target_daemon_id": "repo-op-transition-daemon",
+		"binding_id":       binding.ID,
+	})
+	req = withURLParam(req, "id", repo.ID)
+	req = withURLParam(req, "operationType", "publish-remote")
+	testHandler.CreateRepositoryOperation(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "request.remote_url is required") {
+		t.Fatalf("publish_remote without remote_url = %d %s, want 400 remote_url required", w.Code, w.Body.String())
 	}
 
 	remoteURL := "https://github.com/multica-ai/repository-operation-publish.git"
@@ -316,6 +383,9 @@ func TestRepositoryOperationInitGitPublishRemoteAndFailTransitions(t *testing.T)
 	if failed.Status != "failed" || failed.Error == nil || !strings.Contains(*failed.Error, "[REDACTED LOCAL PATH]") {
 		t.Fatalf("failed operation did not sanitize error: %+v", failed)
 	}
+	if failed.Binding != nil {
+		t.Fatalf("fail response included daemon-private binding path: %+v", failed.Binding)
+	}
 
 	w = httptest.NewRecorder()
 	req = newDaemonTokenRequest("POST", "/api/daemon/repository-operations/"+failOp.ID+"/complete", nil, testWorkspaceID, "repo-op-fail-daemon")
@@ -357,6 +427,20 @@ func TestRepositoryOperationRuntimeScopedMutationsRejectSiblingRuntime(t *testin
 		"target_runtime_id": runtimeID,
 		"binding_id":        binding.ID,
 	})
+
+	if op.Binding != nil {
+		t.Fatalf("public create response included daemon-private binding path: %+v", op.Binding)
+	}
+	if siblingClaim := claimHandlerTestRepositoryOperationWithRuntime(t, daemonID, siblingRuntimeID); siblingClaim != nil {
+		t.Fatalf("sibling runtime claimed target runtime operation: %+v", siblingClaim)
+	}
+	targetClaim := claimHandlerTestRepositoryOperationWithRuntime(t, daemonID, runtimeID)
+	if targetClaim == nil {
+		t.Fatal("target runtime did not claim repository operation")
+	}
+	if targetClaim.Binding == nil || targetClaim.Binding.LocalPath != "/Users/tester/private/runtime-scoped-operation" {
+		t.Fatalf("target runtime claim missing binding path: %+v", targetClaim.Binding)
+	}
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/repository-operations/"+op.ID+"/start?runtime_id="+siblingRuntimeID, nil, testWorkspaceID, daemonID)

@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -383,6 +385,171 @@ func TestRepositoryOperationUnsupportedOperationsFailExplicitly(t *testing.T) {
 	}
 }
 
+func TestRepositoryOperationInitGitDoesNotStageFiles(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "notes.txt"), []byte("draft"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	d := &Daemon{cfg: Config{WorkspacesRoot: t.TempDir()}}
+	bindingID := "binding-1"
+	op := &RepositoryOperation{
+		ID:            "operation-init-git",
+		WorkspaceID:   "workspace-1",
+		RepositoryID:  "repository-1",
+		OperationType: "init_git",
+		BindingID:     &bindingID,
+		Binding: &RepositoryOperationBindingData{
+			ID:        bindingID,
+			Kind:      "local_dir",
+			State:     "ready",
+			DaemonID:  "daemon-1",
+			LocalPath: repoDir,
+		},
+	}
+
+	body, failResult, err := d.repositoryOperationCompletionBody(op)
+	if err != nil {
+		t.Fatalf("repositoryOperationCompletionBody(init_git): %v", err)
+	}
+	if failResult != nil {
+		t.Fatalf("unexpected fail result: %+v", failResult)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
+		t.Fatalf("expected git repo to be initialized: %v", err)
+	}
+	if out := runTestGit(t, repoDir, "diff", "--cached", "--name-only"); strings.TrimSpace(out) != "" {
+		t.Fatalf("init_git staged files: %q", out)
+	}
+	if out := runTestGit(t, repoDir, "status", "--porcelain"); !strings.Contains(out, "?? notes.txt") {
+		t.Fatalf("init_git should leave fixture untracked, status=%q", out)
+	}
+
+	result, ok := body["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing result: %+v", body)
+	}
+	if got := result["status"]; got != "ready" {
+		t.Fatalf("result status = %v, want ready", got)
+	}
+	if got := result["has_commits"]; got != false {
+		t.Fatalf("has_commits = %v, want false", got)
+	}
+	if got := result["untracked_count"]; got != 1 {
+		t.Fatalf("untracked_count = %v, want 1", got)
+	}
+	repository, ok := body["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing repository info: %+v", body)
+	}
+	if got := repository["default_branch"]; got != "main" {
+		t.Fatalf("default_branch = %v, want main", got)
+	}
+}
+
+func TestRepositoryOperationPublishRemotePushesCurrentBranch(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	runTestGit(t, repoDir, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runTestGit(t, repoDir, "add", "README.md")
+	runTestGit(t, repoDir, "-c", "user.name=Multica Test", "-c", "user.email=test@multica.local", "commit", "-m", "Initial commit")
+
+	remoteDir := filepath.Join(t.TempDir(), "remote.git")
+	runTestGitDir(t, "", "init", "--bare", remoteDir)
+	remoteURL := remoteDir
+
+	d := &Daemon{cfg: Config{WorkspacesRoot: t.TempDir()}}
+	bindingID := "binding-1"
+	request := json.RawMessage(`{"remote_url":` + strconv.Quote(remoteURL) + `}`)
+	op := &RepositoryOperation{
+		ID:            "operation-publish",
+		WorkspaceID:   "workspace-1",
+		RepositoryID:  "repository-1",
+		OperationType: "publish_remote",
+		Request:       request,
+		BindingID:     &bindingID,
+		Binding: &RepositoryOperationBindingData{
+			ID:        bindingID,
+			Kind:      "local_dir",
+			State:     "ready",
+			DaemonID:  "daemon-1",
+			LocalPath: repoDir,
+		},
+	}
+
+	body, failResult, err := d.repositoryOperationCompletionBody(op)
+	if err != nil {
+		t.Fatalf("repositoryOperationCompletionBody(publish_remote): %v failResult=%+v", err, failResult)
+	}
+	if failResult != nil {
+		t.Fatalf("unexpected fail result: %+v", failResult)
+	}
+	if out := runTestGitDir(t, remoteDir, "rev-parse", "--verify", "refs/heads/main"); strings.TrimSpace(out) == "" {
+		t.Fatalf("remote main branch was not pushed")
+	}
+	repository, ok := body["repository"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing repository info: %+v", body)
+	}
+	if got := repository["remote_url"]; got != remoteURL {
+		t.Fatalf("remote_url = %v, want %s", got, remoteURL)
+	}
+	if got := repository["default_branch"]; got != "main" {
+		t.Fatalf("default_branch = %v, want main", got)
+	}
+}
+
+func TestRepositoryOperationPublishRemoteFailsWithoutCommit(t *testing.T) {
+	t.Parallel()
+
+	repoDir := t.TempDir()
+	runTestGit(t, repoDir, "init", "-b", "main")
+	remoteDir := filepath.Join(t.TempDir(), "remote.git")
+	runTestGitDir(t, "", "init", "--bare", remoteDir)
+
+	d := &Daemon{cfg: Config{WorkspacesRoot: t.TempDir()}}
+	bindingID := "binding-1"
+	request := json.RawMessage(`{"remote_url":` + strconv.Quote(remoteDir) + `}`)
+	op := &RepositoryOperation{
+		ID:            "operation-publish-empty",
+		WorkspaceID:   "workspace-1",
+		RepositoryID:  "repository-1",
+		OperationType: "publish_remote",
+		Request:       request,
+		BindingID:     &bindingID,
+		Binding: &RepositoryOperationBindingData{
+			ID:        bindingID,
+			Kind:      "local_dir",
+			State:     "ready",
+			DaemonID:  "daemon-1",
+			LocalPath: repoDir,
+		},
+	}
+
+	body, failResult, err := d.repositoryOperationCompletionBody(op)
+	if err == nil {
+		t.Fatal("expected publish_remote to fail without commits")
+	}
+	if body != nil {
+		t.Fatalf("body = %+v, want nil", body)
+	}
+	if got := failResult["reason"]; got != "no_commits_to_push" {
+		t.Fatalf("fail reason = %v, want no_commits_to_push", got)
+	}
+	if got := failResult["recoverable"]; got != true {
+		t.Fatalf("recoverable = %v, want true", got)
+	}
+	if containsAnyPathFragment(err.Error(), repoDir, remoteDir, d.cfg.WorkspacesRoot) || containsAnyPathFragment(fmt.Sprint(failResult), repoDir, remoteDir, d.cfg.WorkspacesRoot) {
+		t.Fatalf("publish failure leaked a local path: err=%q result=%+v", err.Error(), failResult)
+	}
+}
+
 func containsAnyPathFragment(value string, fragments ...string) bool {
 	for _, fragment := range fragments {
 		if fragment != "" && strings.Contains(value, fragment) {
@@ -390,4 +557,23 @@ func containsAnyPathFragment(value string, fragments ...string) bool {
 		}
 	}
 	return false
+}
+
+func runTestGit(t *testing.T, repoDir string, args ...string) string {
+	t.Helper()
+	return runTestGitDir(t, repoDir, args...)
+}
+
+func runTestGitDir(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	cmd.Env = repositoryOperationGitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %s: %v", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
+	}
+	return string(out)
 }
