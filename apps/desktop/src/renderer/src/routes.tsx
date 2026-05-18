@@ -8,6 +8,7 @@ import {
 import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
+import { ChatSessionPage } from "./pages/chat-session-page";
 import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
 import { SkillDetailPage } from "./pages/skill-detail-page";
 import { AgentDetailPage } from "./pages/agent-detail-page";
@@ -15,6 +16,7 @@ import { MemberDetailPage } from "./pages/member-detail-page";
 import { RuntimeDetailPage } from "./pages/runtime-detail-page";
 import { IssuesPage } from "@multica/views/issues/components";
 import { ProjectsPage } from "@multica/views/projects/components";
+import { ChatsPage, ChatNewPage } from "@multica/views/chat";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
@@ -111,6 +113,21 @@ export const appRoutes: RouteObject[] = [
             path: "projects/:id",
             element: <ProjectDetailPage />,
             handle: { title: "Project" },
+          },
+          {
+            path: "chats",
+            element: <ChatsPage />,
+            handle: { title: "Chats" },
+          },
+          {
+            path: "chats/new",
+            element: <ChatNewPage />,
+            handle: { title: "New Chat" },
+          },
+          {
+            path: "chats/:id",
+            element: <ChatSessionPage />,
+            handle: { title: "Chat" },
           },
           {
             path: "autopilots",
