@@ -593,6 +593,14 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if taskID := os.Getenv("MULTICA_QUICK_CREATE_TASK_ID"); taskID != "" {
 		body["origin_type"] = "quick_create"
 		body["origin_id"] = taskID
+	} else if chatSessionID := os.Getenv("MULTICA_CHAT_SESSION_ID"); chatSessionID != "" {
+		body["origin_type"] = "chat_session"
+		body["origin_id"] = chatSessionID
+		if _, hasProject := body["project_id"]; !hasProject {
+			if projectID := os.Getenv("MULTICA_CHAT_PROJECT_ID"); projectID != "" {
+				body["project_id"] = projectID
+			}
+		}
 	}
 
 	// Pre-validate attachments BEFORE creating the issue so a bad path

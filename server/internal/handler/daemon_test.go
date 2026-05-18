@@ -1914,6 +1914,67 @@ func TestClaimTask_ChatDefaultRepositoryOverridesWorkspaceFallback(t *testing.T)
 	}
 }
 
+func TestClaimTask_ProjectChatIncludesProjectContext(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	projectID := createHandlerTestProject(t, "Chat Project Context", "planned")
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	sessionID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, projectID, "project chat claim", "now()")
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("create chat task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-project-chat")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			ChatSessionID string `json:"chat_session_id"`
+			ProjectID     string `json:"project_id"`
+			ProjectTitle  string `json:"project_title"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if resp.Task.ChatSessionID != sessionID {
+		t.Fatalf("chat_session_id = %q, want %q", resp.Task.ChatSessionID, sessionID)
+	}
+	if resp.Task.ProjectID != projectID {
+		t.Fatalf("project_id = %q, want %q", resp.Task.ProjectID, projectID)
+	}
+	if resp.Task.ProjectTitle != "Chat Project Context" {
+		t.Fatalf("project_title = %q, want Chat Project Context", resp.Task.ProjectTitle)
+	}
+}
+
 // Regression test for #1276: ClaimTaskByRuntime must populate workspace_id in
 // the response for run_only autopilot tasks. Before the fix, resp.WorkspaceID
 // stayed empty because ClaimTaskByRuntime only handled IssueID and

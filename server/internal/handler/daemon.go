@@ -472,6 +472,30 @@ func setClaimRepositories(resp *AgentTaskResponse, repositories []TaskRepository
 	resp.Repos = remoteReposFromTaskRepositories(repositories)
 }
 
+func projectResourceDataFromRows(rows []db.ProjectResource) []ProjectResourceData {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]ProjectResourceData, 0, len(rows))
+	for _, row := range rows {
+		label := ""
+		if row.Label.Valid {
+			label = row.Label.String
+		}
+		ref := json.RawMessage(row.ResourceRef)
+		if len(ref) == 0 {
+			ref = json.RawMessage("{}")
+		}
+		out = append(out, ProjectResourceData{
+			ID:           uuidToString(row.ID),
+			ResourceType: row.ResourceType,
+			ResourceRef:  ref,
+			Label:        label,
+		})
+	}
+	return out
+}
+
 func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	var req DaemonRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1375,24 +1399,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 {
 					projectResourceRows = rows
-					out := make([]ProjectResourceData, 0, len(rows))
-					for _, row := range rows {
-						label := ""
-						if row.Label.Valid {
-							label = row.Label.String
-						}
-						ref := json.RawMessage(row.ResourceRef)
-						if len(ref) == 0 {
-							ref = json.RawMessage("{}")
-						}
-						out = append(out, ProjectResourceData{
-							ID:           uuidToString(row.ID),
-							ResourceType: row.ResourceType,
-							ResourceRef:  ref,
-							Label:        label,
-						})
-					}
-					resp.ProjectResources = out
+					resp.ProjectResources = projectResourceDataFromRows(rows)
 				}
 			}
 
@@ -1465,7 +1472,28 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
 			resp.WorkspaceID = uuidToString(cs.WorkspaceID)
 			resp.ChatSessionID = uuidToString(cs.ID)
+			var projectResourceRows []db.ProjectResource
+			if cs.ProjectContextKind == "project" && cs.ProjectID.Valid {
+				resp.ProjectID = uuidToString(cs.ProjectID)
+				if proj, err := h.Queries.GetProject(r.Context(), cs.ProjectID); err == nil {
+					resp.ProjectTitle = proj.Title
+				} else if len(cs.ProjectSnapshot) > 0 {
+					var snapshot struct {
+						Title string `json:"title"`
+					}
+					if json.Unmarshal(cs.ProjectSnapshot, &snapshot) == nil {
+						resp.ProjectTitle = snapshot.Title
+					}
+				}
+				if rows := h.listProjectResourcesForProject(r.Context(), cs.ProjectID); len(rows) > 0 {
+					projectResourceRows = rows
+					resp.ProjectResources = projectResourceDataFromRows(rows)
+				}
+			}
 			setClaimRepositories(&resp, h.chatDefaultTaskRepository(r.Context(), cs.WorkspaceID, cs.DefaultRepositoryID, task.RuntimeID, daemonID))
+			if len(resp.Repositories) == 0 && cs.ProjectContextKind == "project" && cs.ProjectID.Valid {
+				setClaimRepositories(&resp, h.projectTaskRepositories(r.Context(), cs.WorkspaceID, cs.ProjectID, task.RuntimeID, daemonID, projectResourceRows))
+			}
 			if len(resp.Repositories) == 0 {
 				setClaimRepositories(&resp, h.workspaceFallbackTaskRepositories(r.Context(), cs.WorkspaceID, task.RuntimeID, daemonID))
 			}

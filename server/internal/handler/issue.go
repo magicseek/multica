@@ -1530,7 +1530,8 @@ type CreateIssueRequest struct {
 	// platform-internal flows can deterministically locate it later. Only
 	// trusted callers should set these — currently the daemon CLI passes
 	// them through for quick-create tasks (origin_type=quick_create,
-	// origin_id=agent_task_queue.id).
+	// origin_id=agent_task_queue.id) and chat tasks (origin_type=chat_session,
+	// origin_id=chat_session.id).
 	OriginType *string `json:"origin_type,omitempty"`
 	OriginID   *string `json:"origin_id,omitempty"`
 
@@ -1647,6 +1648,44 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		dueDate = pgtype.Timestamptz{Time: t, Valid: true}
 	}
 
+	// Optional origin stamping (quick-create / chat_session). Only
+	// allowed origin types are accepted; anything else is rejected so a rogue
+	// caller can't mint arbitrary origin labels. Both fields must be provided
+	// together.
+	var originType pgtype.Text
+	var originID pgtype.UUID
+	if req.OriginType != nil || req.OriginID != nil {
+		if req.OriginType == nil || req.OriginID == nil {
+			writeError(w, http.StatusBadRequest, "origin_type and origin_id must be provided together")
+			return
+		}
+		oid, ok := parseUUIDOrBadRequest(w, *req.OriginID, "origin_id")
+		if !ok {
+			return
+		}
+		switch *req.OriginType {
+		case "quick_create":
+			// Allowed — daemon CLI passes this through from a quick-create task.
+		case "chat_session":
+			session, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+				ID:          oid,
+				WorkspaceID: wsUUID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "chat session not found in this workspace")
+				return
+			}
+			if !projectID.Valid && session.ProjectContextKind == "project" && session.ProjectID.Valid {
+				projectID = session.ProjectID
+			}
+		default:
+			writeError(w, http.StatusBadRequest, "unsupported origin_type")
+			return
+		}
+		originType = pgtype.Text{String: *req.OriginType, Valid: true}
+		originID = oid
+	}
+
 	// Use a transaction to atomically guard against active duplicates,
 	// increment the workspace issue counter, and create the issue.
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -1683,32 +1722,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Determine creator identity: agent (via X-Agent-ID header) or member.
 	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
-
-	// Optional origin stamping (quick-create / autopilot). Only the
-	// allowed origin types are accepted; anything else is rejected so a
-	// rogue caller can't mint arbitrary origin labels. Both fields must
-	// be provided together.
-	var originType pgtype.Text
-	var originID pgtype.UUID
-	if req.OriginType != nil || req.OriginID != nil {
-		if req.OriginType == nil || req.OriginID == nil {
-			writeError(w, http.StatusBadRequest, "origin_type and origin_id must be provided together")
-			return
-		}
-		switch *req.OriginType {
-		case "quick_create":
-			// Allowed — daemon CLI passes this through from a quick-create task.
-		default:
-			writeError(w, http.StatusBadRequest, "unsupported origin_type")
-			return
-		}
-		oid, ok := parseUUIDOrBadRequest(w, *req.OriginID, "origin_id")
-		if !ok {
-			return
-		}
-		originType = pgtype.Text{String: *req.OriginType, Valid: true}
-		originID = oid
-	}
 
 	var issue db.Issue
 	if originType.Valid {
@@ -1784,6 +1797,12 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 	h.publish(protocol.EventIssueCreated, workspaceID, creatorType, actualCreatorID, map[string]any{"issue": resp})
+	if originType.Valid && originType.String == "chat_session" {
+		h.publishChat(protocol.EventChatIssuesUpdated, workspaceID, creatorType, actualCreatorID, uuidToString(originID), map[string]any{
+			"chat_session_id": uuidToString(originID),
+			"count":           1,
+		})
+	}
 	analyticsActorID := actualCreatorID
 	analyticsAgentID := ""
 	if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" {
@@ -1803,6 +1822,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		case "quick_create":
 			analyticsSource = analytics.SourceManual
 			analyticsTaskID = uuidToString(originID)
+		case "chat_session":
+			analyticsSource = analytics.SourceManual
 		case "autopilot":
 			analyticsSource = analytics.SourceAutopilot
 			analyticsAutopilotRunID = uuidToString(originID)

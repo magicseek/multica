@@ -602,18 +602,35 @@ function WorkflowEditor({
         </div>
       </div>
 
-      <Tabs defaultValue="source" className="min-h-0 flex-1 gap-0">
+      <Tabs
+        defaultValue="source"
+        data-testid="workflow-editor-tabs"
+        className="min-h-0 flex-1 flex-col gap-0"
+      >
         <div className="flex h-10 shrink-0 items-center border-b px-4">
-          <TabsList variant="line" className="h-8">
-            <TabsTrigger value="source">
+          <TabsList
+            variant="line"
+            data-testid="workflow-editor-tabs-list"
+            className="h-8 !flex-row !items-center !justify-start"
+          >
+            <TabsTrigger
+              value="source"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
               <FileText className="h-3.5 w-3.5" />
               {t(($) => $.tabs.source)}
             </TabsTrigger>
-            <TabsTrigger value="steps">
+            <TabsTrigger
+              value="steps"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
               <ListChecks className="h-3.5 w-3.5" />
               {t(($) => $.tabs.steps)}
             </TabsTrigger>
-            <TabsTrigger value="preview">
+            <TabsTrigger
+              value="preview"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
               <Eye className="h-3.5 w-3.5" />
               {t(($) => $.tabs.preview)}
             </TabsTrigger>
@@ -623,7 +640,7 @@ function WorkflowEditor({
           )}
         </div>
 
-        <TabsContent value="source" className="min-h-0 overflow-y-auto p-4">
+        <TabsContent value="source" className="h-full min-h-0 overflow-y-auto p-4">
           <div className="grid gap-4">
             <div className="grid gap-2 md:grid-cols-2">
               <div className="space-y-1.5">
@@ -699,7 +716,7 @@ function WorkflowEditor({
           </div>
         </TabsContent>
 
-        <TabsContent value="steps" className="min-h-0 overflow-y-auto p-4">
+        <TabsContent value="steps" className="h-full min-h-0 overflow-y-auto p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-medium">{t(($) => $.steps.title)}</h2>
@@ -873,7 +890,7 @@ function WorkflowEditor({
 
         <TabsContent
           value="preview"
-          className="min-h-0 overflow-hidden bg-muted/10 p-4"
+          className="h-full min-h-0 overflow-hidden bg-muted/10 p-4"
         >
           <div
             className={cn(

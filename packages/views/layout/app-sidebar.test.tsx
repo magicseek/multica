@@ -1,9 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
+import { I18nProvider } from "@multica/core/i18n/react";
+import enLayout from "../locales/en/layout.json";
 import { AppSidebar } from "./app-sidebar";
 
-const { detail, deletePin, pins } = vi.hoisted(() => ({
+const { chatSidebar, detail, deletePin, pins } = vi.hoisted(() => ({
+  chatSidebar: {
+    current: {
+      projects: [] as unknown[],
+      loose: [] as unknown[],
+      loose_next_cursor: null as string | null,
+      loose_has_more: false,
+    },
+  },
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
   pins: {
@@ -20,6 +30,16 @@ const { detail, deletePin, pins } = vi.hoisted(() => ({
     ],
   },
 }));
+
+const TEST_RESOURCES = { en: { layout: enLayout } };
+
+function renderSidebar() {
+  return render(
+    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <AppSidebar />
+    </I18nProvider>,
+  );
+}
 
 vi.mock("@dnd-kit/core", () => ({
   DndContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -129,7 +149,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "chat-sidebar") {
-      return { data: { projects: [], loose: [], loose_next_cursor: null, loose_has_more: false } };
+      return { data: chatSidebar.current };
     }
     return { data: [] };
   },
@@ -140,23 +160,85 @@ describe("PinRow", () => {
   beforeEach(() => {
     deletePin.mockReset();
     detail.current = { isPending: false, isError: false, data: null, error: null };
+    chatSidebar.current = { projects: [], loose: [], loose_next_cursor: null, loose_has_more: false };
   });
 
   it("unpins missing details", async () => {
     detail.current = { isPending: false, isError: true, data: null, error: new ApiError("missing", 404, "Not Found") };
-    render(<AppSidebar />);
+    renderSidebar();
     await waitFor(() => expect(deletePin).toHaveBeenCalledTimes(1));
   });
 
   it("ignores non-404 errors", async () => {
     detail.current = { isPending: false, isError: true, data: null, error: new ApiError("error", 500, "Server Error") };
-    render(<AppSidebar />);
+    renderSidebar();
     await waitFor(() => expect(deletePin).not.toHaveBeenCalled());
   });
 
   it("renders loaded details", async () => {
     detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
-    render(<AppSidebar />);
+    renderSidebar();
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
+  });
+
+  it("keeps projects and recents together below workspace nav with a divider", () => {
+    chatSidebar.current = {
+      projects: [
+        {
+          project: {
+            id: "project-1",
+            workspace_id: "ws-1",
+            title: "Multica WF",
+            description: null,
+            status: "planned",
+            icon: null,
+            color: null,
+            issue_count: 0,
+            open_issue_count: 0,
+            created_at: "2026-05-06T00:00:00Z",
+            updated_at: "2026-05-06T00:00:00Z",
+          },
+          sessions: [],
+        },
+      ],
+      loose: [],
+      loose_next_cursor: null,
+      loose_has_more: false,
+    };
+
+    const { container } = renderSidebar();
+
+    const issues = screen.getByText("Issues");
+    const agents = screen.getByText("Agents");
+    const usage = screen.getByText("Usage");
+    const projects = screen.getByText("Projects");
+    const recents = screen.getByText("Recents");
+
+    expect(issues.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(agents.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(usage.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(projects.compareDocumentPosition(recents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector("[data-sidebar-projects-separator]")).toBeInTheDocument();
+  });
+
+  it("keeps project and recent toggles beside their labels and hides them until hover", () => {
+    chatSidebar.current = {
+      projects: [],
+      loose: [],
+      loose_next_cursor: null,
+      loose_has_more: false,
+    };
+
+    const { container } = renderSidebar();
+
+    for (const label of ["Projects", "Recents"]) {
+      const toggle = screen.getByText(label).parentElement?.querySelector(".lucide-chevron-right");
+      expect(toggle).toBeInTheDocument();
+      expect(toggle).toHaveClass("opacity-0");
+      expect(toggle).toHaveClass("group-hover/tree:opacity-100");
+      expect(toggle).not.toHaveClass("ml-auto");
+    }
+
+    expect(container.querySelector(".lucide-external-link")).not.toBeInTheDocument();
   });
 });

@@ -28,12 +28,12 @@ import {
   SquarePen,
   CircleUser,
   FolderKanban,
+  FolderOpen,
   BarChart3,
   X,
   Zap,
   Users,
   MessageSquare,
-  ExternalLink,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -351,16 +351,16 @@ function SidebarTreeSection({
       <SidebarMenuItem>
         <div
           className={cn(
-            "group/tree flex h-7 items-center gap-1 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+            "group/tree relative flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
             isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
           )}
         >
-          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle}>
+          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 pr-6 text-left" onClick={onToggle}>
             <Icon className="size-4 shrink-0" />
             <span className="truncate">{label}</span>
-            <ChevronRight className={cn("ml-auto size-3 shrink-0 stroke-[2.5] transition-transform", isOpen && "rotate-90")} />
+            <ChevronRight className={cn("size-3 shrink-0 stroke-[2.5] opacity-0 transition-all group-hover/tree:opacity-100", isOpen && "rotate-90")} />
           </button>
-          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/tree:opacity-100">
+          <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/tree:opacity-100">
             {actions.map((action, index) => (
               <Tooltip key={`${action.label}-${index}`}>
                 <TooltipTrigger
@@ -417,16 +417,15 @@ function ProjectChatTreeItem({
       <SidebarMenuItem>
         <div
           className={cn(
-            "group/project ml-3 flex h-7 items-center gap-1 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+            "group/project relative ml-3 flex h-7 items-center rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
             isProjectActive && "bg-sidebar-accent text-sidebar-accent-foreground",
           )}
         >
-          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle}>
+          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 pr-12 text-left" onClick={onToggle}>
             <ProjectIcon project={project} size="sm" />
             <span className="truncate">{project.title}</span>
-            <ChevronRight className={cn("ml-auto size-3 shrink-0 stroke-[2.5] transition-transform", isOpen && "rotate-90")} />
           </button>
-          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100">
+          <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover/project:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -438,7 +437,7 @@ function ProjectChatTreeItem({
                       onNavigate(projectHref);
                     }}
                   >
-                    <ExternalLink className="size-3.5" />
+                    <FolderOpen className="size-3.5" />
                   </button>
                 }
               />
@@ -826,7 +825,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
       <Sidebar variant="inset">
         {topSlot}
         {/* Workspace Switcher */}
-        <SidebarHeader className={cn("py-3", headerClassName)} style={headerStyle}>
+        <SidebarHeader className={cn("pb-1 pt-2", headerClassName)} style={headerStyle}>
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
@@ -969,7 +968,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
 
         {/* Navigation */}
         <SidebarContent ref={sidebarScrollRef} style={sidebarFadeStyle}>
-          <SidebarGroup>
+          <SidebarGroup className="px-2 pb-2 pt-0">
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {[...personalNav, ...workspaceNav].map((item) => {
@@ -992,54 +991,48 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   );
-                  if (item.key === "issues") {
-                    return (
-                      <React.Fragment key={item.key}>
-                        {node}
-                        <SidebarTreeSection
-                          icon={FolderKanban}
-                          label={t(($) => $.nav.projects)}
-                          isActive={isNavActive(pathname, p.projects())}
-                          isOpen={projectsOpen}
-                          onToggle={() => setProjectsOpen((open) => !open)}
-                          actions={[
-                            {
-                              label: t(($) => $.sidebar.open_projects_tooltip),
-                              icon: ExternalLink,
-                              onClick: () => push(p.projects()),
-                            },
-                          ]}
-                        >
-                          {chatSidebar.projects.map((group) => {
-                            const projectOpen = expandedProjectIds.has(group.project.id);
-                            return (
-                              <ProjectChatTreeItem
-                                key={group.project.id}
-                                project={group.project}
-                                sessions={group.sessions}
-                                isOpen={projectOpen}
-                                activePathname={pathname}
-                                projectHref={p.projectDetail(group.project.id)}
-                                newChatHref={p.chatNew(group.project.id)}
-                                sessionHref={(sessionId) => p.chatSession(sessionId)}
-                                onToggle={() => toggleProjectExpansion(group.project.id)}
-                                onNavigate={push}
-                                labels={{
-                                  openProject: t(($) => $.sidebar.open_project_tooltip),
-                                  newChat: t(($) => $.sidebar.new_project_chat_tooltip),
-                                  untitled: t(($) => $.sidebar.untitled_chat),
-                                }}
-                              />
-                            );
-                          })}
-                        </SidebarTreeSection>
-                      </React.Fragment>
-                    );
-                  }
                   if (item.key !== "usage") return node;
                   return (
                     <React.Fragment key={item.key}>
                       {node}
+                      <div data-sidebar-projects-separator className="mx-2 my-2 border-t border-sidebar-border/70 pt-2" />
+                      <SidebarTreeSection
+                        icon={FolderKanban}
+                        label={t(($) => $.nav.projects)}
+                        isActive={isNavActive(pathname, p.projects())}
+                        isOpen={projectsOpen}
+                        onToggle={() => setProjectsOpen((open) => !open)}
+                        actions={[
+                          {
+                            label: t(($) => $.sidebar.open_projects_tooltip),
+                            icon: FolderOpen,
+                            onClick: () => push(p.projects()),
+                          },
+                        ]}
+                      >
+                        {chatSidebar.projects.map((group) => {
+                          const projectOpen = expandedProjectIds.has(group.project.id);
+                          return (
+                            <ProjectChatTreeItem
+                              key={group.project.id}
+                              project={group.project}
+                              sessions={group.sessions}
+                              isOpen={projectOpen}
+                              activePathname={pathname}
+                              projectHref={p.projectDetail(group.project.id)}
+                              newChatHref={p.chatNew(group.project.id)}
+                              sessionHref={(sessionId) => p.chatSession(sessionId)}
+                              onToggle={() => toggleProjectExpansion(group.project.id)}
+                              onNavigate={push}
+                              labels={{
+                                openProject: t(($) => $.sidebar.open_project_tooltip),
+                                newChat: t(($) => $.sidebar.new_project_chat_tooltip),
+                                untitled: t(($) => $.sidebar.untitled_chat),
+                              }}
+                            />
+                          );
+                        })}
+                      </SidebarTreeSection>
                       <SidebarTreeSection
                         icon={MessageSquare}
                         label={t(($) => $.nav.recents)}
@@ -1049,7 +1042,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         actions={[
                           {
                             label: t(($) => $.sidebar.open_chats_tooltip),
-                            icon: ExternalLink,
+                            icon: MessageSquare,
                             onClick: () => push(p.chats()),
                           },
                           {

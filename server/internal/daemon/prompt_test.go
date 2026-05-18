@@ -154,6 +154,28 @@ func TestBuildQuickCreatePromptProjectPinning(t *testing.T) {
 	}
 }
 
+// TestBuildChatPromptRoutesIssueCreationToProposals locks in the chat contract:
+// when a user asks inside chat to create or split tasks, the daemon should
+// produce reviewable issue proposals instead of directly creating issues.
+func TestBuildChatPromptRoutesIssueCreationToProposals(t *testing.T) {
+	out := buildChatPrompt(Task{
+		ChatSessionID: "chat-1",
+		ChatMessage:   "创建合适数量的 task",
+	})
+
+	mustContain := []string{
+		".multica/issue-proposals.json",
+		"proposal cards",
+		"Do not run `multica issue create`",
+		"explicitly asks to create immediately",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("buildChatPrompt must route chat task creation through proposals, missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionForMemberTrigger verifies that the
 // squad leader no_action prohibition is injected in the per-turn prompt
 // regardless of whether the triggering comment was posted by an agent or

@@ -2285,6 +2285,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.QuickCreatePrompt != "" {
 		agentEnv["MULTICA_QUICK_CREATE_TASK_ID"] = task.ID
 	}
+	if task.ChatSessionID != "" {
+		agentEnv["MULTICA_CHAT_SESSION_ID"] = task.ChatSessionID
+		if task.ProjectID != "" {
+			agentEnv["MULTICA_CHAT_PROJECT_ID"] = task.ProjectID
+		}
+	}
 	// Ensure the multica CLI is on PATH inside the agent's environment.
 	// Some runtimes (e.g. Codex) run in an isolated sandbox that may not
 	// inherit the daemon's PATH. Prepend the directory of the running

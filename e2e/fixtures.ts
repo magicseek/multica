@@ -123,7 +123,7 @@ export class TestApiClient {
 
   async ensureWorkspace(name = "E2E Workspace", slug = "e2e-workspace") {
     const workspaces = await this.getWorkspaces();
-    const workspace = workspaces.find((item) => item.slug === slug) ?? workspaces[0];
+    const workspace = workspaces.find((item) => item.slug === slug);
     if (workspace) {
       this.workspaceId = workspace.id;
       this.workspaceSlug = workspace.slug;
@@ -137,13 +137,15 @@ export class TestApiClient {
     if (res.ok) {
       const created = (await res.json()) as TestWorkspace;
       this.workspaceId = created.id;
+      this.workspaceSlug = created.slug;
       return created;
     }
 
     const refreshed = await this.getWorkspaces();
-    const created = refreshed.find((item) => item.slug === slug) ?? refreshed[0];
+    const created = refreshed.find((item) => item.slug === slug);
     if (created) {
       this.workspaceId = created.id;
+      this.workspaceSlug = created.slug;
       return created;
     }
 

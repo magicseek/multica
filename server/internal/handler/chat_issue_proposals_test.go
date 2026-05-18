@@ -197,6 +197,59 @@ func TestApproveChatIssueProposal_CreatesBacklogIssuesAndRestoresSkippedItems(t 
 	}
 }
 
+func TestCreateIssueWithChatOriginDefaultsProjectAndAppearsInChatIssues(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	projectID := createHandlerTestProject(t, "Chat Origin Project", "planned")
+
+	var agentID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	sessionID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, projectID, "chat origin issue", "now()")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues", map[string]any{
+		"title":       "Direct chat-origin issue",
+		"origin_type": "chat_session",
+		"origin_id":   sessionID,
+	})
+	req = withChatTestWorkspaceCtx(t, req)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created issue: %v", err)
+	}
+	if created.ProjectID == nil || *created.ProjectID != projectID {
+		t.Fatalf("created issue project_id = %v, want %s", created.ProjectID, projectID)
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest("GET", "/api/chat/sessions/"+sessionID+"/issues", nil)
+	listReq = withURLParam(listReq, "sessionId", sessionID)
+	listReq = withChatTestWorkspaceCtx(t, listReq)
+	testHandler.ListChatIssues(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListChatIssues: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var listResp ChatSessionIssuesResponse
+	if err := json.NewDecoder(listW.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode issues response: %v", err)
+	}
+	if listResp.Total != 1 || len(listResp.Issues) != 1 || listResp.Issues[0].ID != created.ID {
+		t.Fatalf("list chat issues = %+v, want direct chat-origin issue", listResp)
+	}
+}
+
 func TestApproveChatIssueProposal_InvalidAssigneeCreatesNoPartialBatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

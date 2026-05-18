@@ -65,6 +65,7 @@ const WORKSPACE_TAB_ICONS = {
 
 const DEFAULT_TAB = "profile";
 const TAB_QUERY_KEY = "tab";
+const CONFIGURE_TAB_VALUES = new Set<string>(CONFIGURE_TAB_KEYS);
 
 export interface ExtraSettingsTab {
   value: string;
@@ -100,6 +101,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
   const activeTab =
     tabFromUrl && validTabs.has(tabFromUrl) ? tabFromUrl : DEFAULT_TAB;
+  const isConfigureTab = CONFIGURE_TAB_VALUES.has(activeTab);
 
   // replace (not push) so settings tab switches don't pollute browser history.
   // Preserve any other query params the page may carry.
@@ -171,15 +173,18 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       </div>
 
       {/* Right content */}
-      <div className="flex-1 min-w-0 md:overflow-y-auto">
-        <div className="w-full max-w-6xl mx-auto p-4 md:p-6">
+      <div className={isConfigureTab ? "min-h-0 flex-1 min-w-0 md:overflow-hidden" : "flex-1 min-w-0 md:overflow-y-auto"}>
+        <div
+          data-settings-content-shell={isConfigureTab ? "configure" : "standard"}
+          className={isConfigureTab ? "flex h-full min-h-0 w-full overflow-hidden" : "w-full max-w-6xl mx-auto p-4 md:p-6"}
+        >
           <TabsContent value="profile"><AccountTab /></TabsContent>
           <TabsContent value="preferences"><PreferencesTab /></TabsContent>
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
           <TabsContent value="tokens"><TokensTab /></TabsContent>
-          <TabsContent value="runtimes"><RuntimesPage /></TabsContent>
-          <TabsContent value="workflows"><WorkflowsPage /></TabsContent>
-          <TabsContent value="skills"><SkillsPage /></TabsContent>
+          <TabsContent value="runtimes" className="flex h-full min-h-0 flex-1 overflow-hidden"><RuntimesPage /></TabsContent>
+          <TabsContent value="workflows" className="flex h-full min-h-0 flex-1 overflow-hidden"><WorkflowsPage /></TabsContent>
+          <TabsContent value="skills" className="flex h-full min-h-0 flex-1 overflow-hidden"><SkillsPage /></TabsContent>
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
           <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
           <TabsContent value="integrations"><IntegrationsTab /></TabsContent>

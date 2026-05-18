@@ -237,6 +237,53 @@ func TestRunIssueCreateSendsAllowDuplicate(t *testing.T) {
 	}
 }
 
+func TestRunIssueCreateStampsChatOriginAndDefaultsProjectFromEnv(t *testing.T) {
+	const (
+		chatSessionID = "11111111-2222-3333-4444-555555555555"
+		projectID     = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	)
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/issues" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":         "issue-1",
+			"identifier": "MUL-1",
+			"title":      "Chat-created issue",
+			"status":     "todo",
+			"priority":   "none",
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_CHAT_SESSION_ID", chatSessionID)
+	t.Setenv("MULTICA_CHAT_PROJECT_ID", projectID)
+
+	cmd := newIssueCreateTestCmd()
+	_ = cmd.Flags().Set("title", "Chat-created issue")
+	if err := runIssueCreate(cmd, nil); err != nil {
+		t.Fatalf("runIssueCreate: %v", err)
+	}
+	if got := body["origin_type"]; got != "chat_session" {
+		t.Fatalf("origin_type = %#v, want chat_session", got)
+	}
+	if got := body["origin_id"]; got != chatSessionID {
+		t.Fatalf("origin_id = %#v, want %s", got, chatSessionID)
+	}
+	if got := body["project_id"]; got != projectID {
+		t.Fatalf("project_id = %#v, want %s", got, projectID)
+	}
+}
+
 func TestRunIssueCreateShowsDuplicateMessage(t *testing.T) {
 	want := "Active duplicate issue exists: YUA-36 SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). Set allow_duplicate=true or use --allow-duplicate to create another."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

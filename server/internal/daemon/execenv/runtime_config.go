@@ -273,7 +273,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- You have full access to the `multica` CLI to look up issues, workspace info, members, agents, etc.\n")
 		b.WriteString("- If asked about issues, use `multica issue list --output json` or `multica issue get <id> --output json`\n")
 		b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
-		b.WriteString("- If asked to perform actions (create issues, update status, etc.), use the appropriate CLI commands\n")
+		b.WriteString("- If asked to create, split, plan, or generate issues/tasks, write proposal cards to `.multica/issue-proposals.json` for user approval. Do not run `multica issue create` unless the user explicitly asks to create immediately without approval.\n")
+		b.WriteString("- For non-creation actions such as status updates on existing issues, use the appropriate CLI commands.\n")
 		b.WriteString("- If the task requires code changes, use the Repositories section to identify the code target. For repositories with a checkout command, run it first; for local-only repositories without `remote_url`, local binding execution is not available in this slice\n")
 		b.WriteString("- Keep responses concise and direct\n\n")
 	} else if ctx.QuickCreatePrompt != "" {
