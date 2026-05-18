@@ -23,6 +23,15 @@ function workspaceScoped(slug: string) {
     issueDetail: (id: string) => `${ws}/issues/${encode(id)}`,
     projects: () => `${ws}/projects`,
     projectDetail: (id: string) => `${ws}/projects/${encode(id)}`,
+    chats: () => `${ws}/chats`,
+    chatNew: (projectId?: string | null) => {
+      const base = `${ws}/chats/new`;
+      return projectId ? `${base}?project_id=${encode(projectId)}` : base;
+    },
+    chatSession: (id: string, tab?: "chat" | "issues" | "outputs") => {
+      const base = `${ws}/chats/${encode(id)}`;
+      return tab && tab !== "chat" ? `${base}?tab=${encode(tab)}` : base;
+    },
     autopilots: () => `${ws}/autopilots`,
     autopilotDetail: (id: string) => `${ws}/autopilots/${encode(id)}`,
     agents: () => `${ws}/agents`,

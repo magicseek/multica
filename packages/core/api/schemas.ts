@@ -4,6 +4,12 @@ import type {
   AgentTemplate,
   AgentTemplateSummary,
   Attachment,
+  ApproveChatIssueProposalResponse,
+  ChatIssueProposal,
+  ChatIssueProposalItem,
+  ChatSessionIssuesResponse,
+  ChatSession,
+  ChatSidebarResponse,
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
@@ -142,7 +148,7 @@ export const CommentSchema = z.object({
 
 export const CommentsListSchema = z.array(CommentSchema);
 
-const IssueSchema = z.object({
+export const IssueSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   number: z.number(),
@@ -533,6 +539,10 @@ export const TaskOutputMetadataSchema = z.object({
   mime_type: z.string().nullable().default(null),
   metadata: JsonObjectSchema,
   created_at: z.string().default(""),
+  source_type: z.string().nullable().optional(),
+  source_issue_id: z.string().nullable().optional(),
+  source_issue_identifier: z.string().nullable().optional(),
+  source_issue_title: z.string().nullable().optional(),
 }).loose();
 
 export const EMPTY_TASK_OUTPUT_METADATA: TaskOutputMetadata = {
@@ -556,5 +566,175 @@ export const ListTaskOutputMetadataResponseSchema = z.object({
 
 export const EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE: ListTaskOutputMetadataResponse = {
   outputs: [],
+  total: 0,
+};
+
+// ---------------------------------------------------------------------------
+// Chat sessions
+//
+// Route-backed chat pages consume these responses directly, so we parse the
+// project/session hierarchy with the same lenient posture used for issues:
+// string enums can grow server-side, unknown fields pass through, and missing
+// arrays fall back to empty lists.
+// ---------------------------------------------------------------------------
+
+const ProjectContextSnapshotSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  title: z.string().default(""),
+  icon: z.string().nullable().default(null),
+  status: z.string().default(""),
+  captured_at: z.string().default(""),
+}).loose();
+
+export const ChatSessionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  agent_id: z.string(),
+  creator_id: z.string(),
+  title: z.string().default(""),
+  status: z.string().default("active"),
+  default_repository_id: z.string().nullable().default(null),
+  project_id: z.string().nullable().default(null),
+  project_context_kind: z.string().default("loose"),
+  project_snapshot: ProjectContextSnapshotSchema.nullable().default(null),
+  title_source: z.string().default("legacy"),
+  has_unread: z.boolean().default(false),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ChatSessionListSchema = z.array(ChatSessionSchema);
+
+export const EMPTY_CHAT_SESSION: ChatSession = {
+  id: "",
+  workspace_id: "",
+  agent_id: "",
+  creator_id: "",
+  title: "",
+  status: "active",
+  default_repository_id: null,
+  project_id: null,
+  project_context_kind: "loose",
+  project_snapshot: null,
+  title_source: "legacy",
+  has_unread: false,
+  created_at: "",
+  updated_at: "",
+};
+
+const ChatSidebarProjectSchema = z.object({
+  id: z.string(),
+  title: z.string().default(""),
+  icon: z.string().nullable().default(null),
+  status: z.string().default("active"),
+}).loose();
+
+const ChatSidebarProjectGroupSchema = z.object({
+  project: ChatSidebarProjectSchema,
+  sessions: z.array(ChatSessionSchema).default([]),
+}).loose();
+
+export const ChatSidebarResponseSchema = z.object({
+  projects: z.array(ChatSidebarProjectGroupSchema).default([]),
+  loose: z.array(ChatSessionSchema).default([]),
+}).loose();
+
+export const EMPTY_CHAT_SIDEBAR_RESPONSE: ChatSidebarResponse = {
+  projects: [],
+  loose: [],
+};
+
+export const ChatIssueProposalItemSchema = z.object({
+  id: z.string(),
+  proposal_id: z.string(),
+  position: z.number().default(0),
+  title: z.string().default(""),
+  description: z.string().default(""),
+  priority: z.string().nullable().default(null),
+  labels: z.array(z.unknown()).default([]),
+  assignee_type: z.string().nullable().default(null),
+  assignee_id: z.string().nullable().default(null),
+  status: z.string().default("pending"),
+  issue_id: z.string().nullable().default(null),
+  approved_snapshot: JsonObjectSchema.nullable().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_CHAT_ISSUE_PROPOSAL_ITEM: ChatIssueProposalItem = {
+  id: "",
+  proposal_id: "",
+  position: 0,
+  title: "",
+  description: "",
+  priority: null,
+  labels: [],
+  assignee_type: null,
+  assignee_id: null,
+  status: "pending",
+  issue_id: null,
+  approved_snapshot: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const ChatIssueProposalSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  chat_session_id: z.string(),
+  source_chat_message_id: z.string().nullable().default(null),
+  source_task_id: z.string().nullable().default(null),
+  proposer_agent_id: z.string().nullable().default(null),
+  title: z.string().default(""),
+  summary: z.string().nullable().default(null),
+  status: z.string().default("pending"),
+  items: z.array(ChatIssueProposalItemSchema).default([]),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+const ChatIssueProposalListResponseSchema = z.object({
+  proposals: z.array(ChatIssueProposalSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ChatIssueProposalListSchema = z.union([
+  z.array(ChatIssueProposalSchema),
+  ChatIssueProposalListResponseSchema.transform((response) => response.proposals),
+]);
+
+export const EMPTY_CHAT_ISSUE_PROPOSALS: ChatIssueProposal[] = [];
+
+export const ChatIssueProposalApprovalResponseSchema = z.object({
+  issues: z.array(IssueSchema).default([]),
+  proposal: ChatIssueProposalSchema,
+}).loose();
+
+export const EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE: ApproveChatIssueProposalResponse = {
+  issues: [],
+  proposal: {
+    id: "",
+    workspace_id: "",
+    chat_session_id: "",
+    source_chat_message_id: null,
+    source_task_id: null,
+    proposer_agent_id: null,
+    title: "",
+    summary: null,
+    status: "pending",
+    items: [],
+    created_at: "",
+    updated_at: "",
+  },
+};
+
+export const ChatSessionIssuesResponseSchema = z.object({
+  issues: z.array(IssueSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_CHAT_SESSION_ISSUES_RESPONSE: ChatSessionIssuesResponse = {
+  issues: [],
   total: 0,
 };

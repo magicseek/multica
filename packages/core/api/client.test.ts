@@ -33,6 +33,55 @@ describe("ApiClient", () => {
     }
   });
 
+  it("parses wrapped chat issue proposal list responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            proposals: [
+              {
+                id: "proposal-1",
+                workspace_id: "workspace-1",
+                chat_session_id: "session-1",
+                title: "Follow-ups",
+                status: "pending",
+                items: [],
+                created_at: "2026-05-18T00:00:00Z",
+                updated_at: "2026-05-18T00:00:00Z",
+              },
+            ],
+            total: 1,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const proposals = await client.listChatIssueProposals("session-1");
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.id).toBe("proposal-1");
+  });
+
+  it("falls back to an empty proposal list when the wrapped response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ proposals: null, total: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const proposals = await client.listChatIssueProposals("session-1");
+
+    expect(proposals).toEqual([]);
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {

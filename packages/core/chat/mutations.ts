@@ -2,8 +2,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
 import { chatKeys } from "./queries";
+import { issueKeys } from "../issues/queries";
+import { labelKeys } from "../labels/queries";
 import { createLogger } from "../logger";
-import type { ChatSession } from "../types";
+import type { ChatSession, UpdateChatIssueProposalItemRequest } from "../types";
 
 const logger = createLogger("chat.mut");
 
@@ -16,6 +18,7 @@ export function useCreateChatSession() {
       agent_id: string;
       title?: string;
       default_repository_id?: string | null;
+      project_id?: string | null;
     }) => {
       logger.info("createChatSession.start", { agent_id: data.agent_id, titleLength: data.title?.length ?? 0 });
       return api.createChatSession(data);
@@ -28,6 +31,7 @@ export function useCreateChatSession() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) });
     },
   });
 }
@@ -64,6 +68,7 @@ export function useMarkChatSessionRead() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) });
     },
   });
 }
@@ -117,14 +122,15 @@ export function useUpdateChatSession() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) });
     },
   });
 }
 
 /**
- * Hard-deletes a chat session. Optimistically removes the row from the
+ * Archives a chat session. Optimistically removes the row from the
  * sessions list so the dropdown updates instantly; rolls back on error.
- * The matching `chat:session_deleted` WS event keeps other tabs/devices
+ * The matching `chat:session_archived` WS event keeps other tabs/devices
  * in sync — see use-realtime-sync.ts.
  */
 export function useDeleteChatSession() {
@@ -154,6 +160,100 @@ export function useDeleteChatSession() {
     onSettled: (_data, _err, sessionId) => {
       logger.debug("deleteChatSession.settled", { sessionId });
       qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+      qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) });
+    },
+  });
+}
+
+export function useUpdateChatIssueProposalItem(sessionId: string) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: {
+      proposalId: string;
+      itemId: string;
+      patch: UpdateChatIssueProposalItemRequest;
+    }) => {
+      logger.info("updateChatIssueProposalItem.start", {
+        proposalId: data.proposalId,
+        itemId: data.itemId,
+      });
+      return api.updateChatIssueProposalItem(data.proposalId, data.itemId, data.patch);
+    },
+    onError: (err, vars) => {
+      logger.error("updateChatIssueProposalItem.error", {
+        proposalId: vars.proposalId,
+        itemId: vars.itemId,
+        err,
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(sessionId) });
+    },
+  });
+}
+
+export function useApproveChatIssueProposal(sessionId: string) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+
+  return useMutation({
+    mutationFn: (data: { proposalId: string; itemIds: string[] }) => {
+      logger.info("approveChatIssueProposal.start", {
+        proposalId: data.proposalId,
+        count: data.itemIds.length,
+      });
+      return api.approveChatIssueProposal(data.proposalId, data.itemIds);
+    },
+    onError: (err, vars) => {
+      logger.error("approveChatIssueProposal.error", {
+        proposalId: vars.proposalId,
+        err,
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(sessionId) });
+      qc.invalidateQueries({ queryKey: chatKeys.issues(sessionId) });
+      qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+      qc.invalidateQueries({ queryKey: labelKeys.list(wsId) });
+    },
+  });
+}
+
+export function useRestoreChatIssueProposalItem(sessionId: string) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: { proposalId: string; itemId: string }) => {
+      logger.info("restoreChatIssueProposalItem.start", data);
+      return api.restoreChatIssueProposalItem(data.proposalId, data.itemId);
+    },
+    onError: (err, vars) => {
+      logger.error("restoreChatIssueProposalItem.error", {
+        proposalId: vars.proposalId,
+        itemId: vars.itemId,
+        err,
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(sessionId) });
+    },
+  });
+}
+
+export function useDismissChatIssueProposal(sessionId: string) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (proposalId: string) => {
+      logger.info("dismissChatIssueProposal.start", { proposalId });
+      return api.dismissChatIssueProposal(proposalId);
+    },
+    onError: (err, proposalId) => {
+      logger.error("dismissChatIssueProposal.error", { proposalId, err });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(sessionId) });
     },
   });
 }

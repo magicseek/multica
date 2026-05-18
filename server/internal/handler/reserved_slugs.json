@@ -68,6 +68,7 @@
       "slugs": [
         "issues",
         "projects",
+        "chats",
         "autopilots",
         "agents",
         "squads",

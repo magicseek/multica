@@ -57,11 +57,19 @@ import type {
   AssigneeFrequencyEntry,
   TaskMessagePayload,
   Attachment,
+  ApproveChatIssueProposalResponse,
+  ChatIssueProposal,
+  ChatIssueProposalItem,
   ChatSession,
+  ChatSessionIssuesResponse,
+  ChatSessionListParams,
+  ChatSessionOutputsResponse,
+  ChatSidebarResponse,
   ChatMessage,
   ChatPendingTask,
   PendingChatTasksResponse,
   SendChatMessageResponse,
+  UpdateChatIssueProposalItemRequest,
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
@@ -128,6 +136,14 @@ import {
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
+  ChatIssueProposalApprovalResponseSchema,
+  ChatIssueProposalItemSchema,
+  ChatIssueProposalListSchema,
+  ChatIssueProposalSchema,
+  ChatSessionIssuesResponseSchema,
+  ChatSessionListSchema,
+  ChatSessionSchema,
+  ChatSidebarResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CreateAgentFromTemplateResponseSchema,
@@ -138,6 +154,12 @@ import {
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_ATTACHMENT,
+  EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE,
+  EMPTY_CHAT_ISSUE_PROPOSAL_ITEM,
+  EMPTY_CHAT_ISSUE_PROPOSALS,
+  EMPTY_CHAT_SESSION,
+  EMPTY_CHAT_SESSION_ISSUES_RESPONSE,
+  EMPTY_CHAT_SIDEBAR_RESPONSE,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_PROJECT_REPOSITORIES_RESPONSE,
@@ -1398,23 +1420,44 @@ export class ApiClient {
   }
 
   // Chat Sessions
-  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
-    const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`);
+  async listChatSessions(params?: ChatSessionListParams): Promise<ChatSession[]> {
+    const search = new URLSearchParams();
+    if (params?.status) search.set("status", params.status);
+    if (params?.scope) search.set("scope", params.scope);
+    if (params?.projectId) search.set("project_id", params.projectId);
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/chat/sessions${query}`);
+    return parseWithFallback(raw, ChatSessionListSchema, [], {
+      endpoint: "GET /api/chat/sessions",
+    });
+  }
+
+  async listChatSidebar(): Promise<ChatSidebarResponse> {
+    const raw = await this.fetch<unknown>("/api/chat/sidebar");
+    return parseWithFallback(raw, ChatSidebarResponseSchema, EMPTY_CHAT_SIDEBAR_RESPONSE, {
+      endpoint: "GET /api/chat/sidebar",
+    });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`);
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "GET /api/chat/sessions/{id}",
+    });
   }
 
   async createChatSession(data: {
     agent_id: string;
     title?: string;
     default_repository_id?: string | null;
+    project_id?: string | null;
   }): Promise<ChatSession> {
-    return this.fetch("/api/chat/sessions", {
+    const raw = await this.fetch<unknown>("/api/chat/sessions", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "POST /api/chat/sessions",
     });
   }
 
@@ -1426,9 +1469,12 @@ export class ApiClient {
     title?: string;
     default_repository_id?: string | null;
   }): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, {
+      endpoint: "PATCH /api/chat/sessions/{id}",
     });
   }
 
@@ -1461,6 +1507,75 @@ export class ApiClient {
 
   async markChatSessionRead(sessionId: string): Promise<void> {
     await this.fetch(`/api/chat/sessions/${sessionId}/read`, { method: "POST" });
+  }
+
+  async listChatIssueProposals(sessionId: string): Promise<ChatIssueProposal[]> {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/issue-proposals`);
+    return parseWithFallback(raw, ChatIssueProposalListSchema, EMPTY_CHAT_ISSUE_PROPOSALS, {
+      endpoint: "GET /api/chat/sessions/{id}/issue-proposals",
+    });
+  }
+
+  async listChatSessionIssues(sessionId: string): Promise<ChatSessionIssuesResponse> {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/issues`);
+    return parseWithFallback(raw, ChatSessionIssuesResponseSchema, EMPTY_CHAT_SESSION_ISSUES_RESPONSE, {
+      endpoint: "GET /api/chat/sessions/{id}/issues",
+    });
+  }
+
+  async updateChatIssueProposalItem(
+    proposalId: string,
+    itemId: string,
+    data: UpdateChatIssueProposalItemRequest,
+  ): Promise<ChatIssueProposalItem> {
+    const raw = await this.fetch<unknown>(`/api/chat/issue-proposals/${proposalId}/items/${itemId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ChatIssueProposalItemSchema, EMPTY_CHAT_ISSUE_PROPOSAL_ITEM, {
+      endpoint: "PATCH /api/chat/issue-proposals/{id}/items/{itemId}",
+    });
+  }
+
+  async approveChatIssueProposal(
+    proposalId: string,
+    itemIds: string[],
+  ): Promise<ApproveChatIssueProposalResponse> {
+    const raw = await this.fetch<unknown>(`/api/chat/issue-proposals/${proposalId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ item_ids: itemIds }),
+    });
+    return parseWithFallback(raw, ChatIssueProposalApprovalResponseSchema, EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE, {
+      endpoint: "POST /api/chat/issue-proposals/{id}/approve",
+    });
+  }
+
+  async restoreChatIssueProposalItem(
+    proposalId: string,
+    itemId: string,
+  ): Promise<ChatIssueProposal> {
+    const raw = await this.fetch<unknown>(`/api/chat/issue-proposals/${proposalId}/items/${itemId}/restore`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, ChatIssueProposalSchema, EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE.proposal, {
+      endpoint: "POST /api/chat/issue-proposals/{id}/items/{itemId}/restore",
+    });
+  }
+
+  async dismissChatIssueProposal(proposalId: string): Promise<ChatIssueProposal> {
+    const raw = await this.fetch<unknown>(`/api/chat/issue-proposals/${proposalId}/dismiss`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, ChatIssueProposalSchema, EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE.proposal, {
+      endpoint: "POST /api/chat/issue-proposals/{id}/dismiss",
+    });
+  }
+
+  async listChatSessionOutputs(sessionId: string): Promise<ChatSessionOutputsResponse> {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/outputs`);
+    return parseWithFallback(raw, ListTaskOutputMetadataResponseSchema, EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE, {
+      endpoint: "GET /api/chat/sessions/{id}/outputs",
+    });
   }
 
   async cancelTaskById(taskId: string): Promise<void> {

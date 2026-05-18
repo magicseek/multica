@@ -10,6 +10,11 @@ describe("paths.workspace(slug)", () => {
     expect(ws.issueDetail("abc-123")).toBe("/acme/issues/abc-123");
     expect(ws.projects()).toBe("/acme/projects");
     expect(ws.projectDetail("p1")).toBe("/acme/projects/p1");
+    expect(ws.chats()).toBe("/acme/chats");
+    expect(ws.chatNew()).toBe("/acme/chats/new");
+    expect(ws.chatNew("p1")).toBe("/acme/chats/new?project_id=p1");
+    expect(ws.chatSession("c1")).toBe("/acme/chats/c1");
+    expect(ws.chatSession("c1", "issues")).toBe("/acme/chats/c1?tab=issues");
     expect(ws.autopilots()).toBe("/acme/autopilots");
     expect(ws.autopilotDetail("a1")).toBe("/acme/autopilots/a1");
     expect(ws.agents()).toBe("/acme/agents");

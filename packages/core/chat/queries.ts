@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import type { ChatSessionListParams } from "../types";
 
 // NOTE on workspace scoping:
 // `wsId` is used only as part of queryKey for cache isolation per workspace.
@@ -11,9 +12,16 @@ import { api } from "../api";
 export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
   /** Full sessions list (active + archived); the dropdown splits locally. */
-  sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
+  sessions: (wsId: string, params?: ChatSessionListParams) =>
+    params
+      ? [...chatKeys.all(wsId), "sessions", normalizeChatSessionListParams(params)] as const
+      : [...chatKeys.all(wsId), "sessions"] as const,
+  sidebar: (wsId: string) => [...chatKeys.all(wsId), "sidebar"] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
   messages: (sessionId: string) => ["chat", "messages", sessionId] as const,
+  issueProposals: (sessionId: string) => ["chat", "issue-proposals", sessionId] as const,
+  issues: (sessionId: string) => ["chat", "issues", sessionId] as const,
+  outputs: (sessionId: string) => ["chat", "outputs", sessionId] as const,
   pendingTask: (sessionId: string) => ["chat", "pending-task", sessionId] as const,
   /** Aggregate of in-flight chat tasks for the current user — FAB reads this. */
   pendingTasks: (wsId: string) => [...chatKeys.all(wsId), "pending-tasks"] as const,
@@ -21,10 +29,29 @@ export const chatKeys = {
   taskMessages: (taskId: string) => ["task-messages", taskId] as const,
 };
 
-export function chatSessionsOptions(wsId: string) {
+function normalizeChatSessionListParams(params: ChatSessionListParams) {
+  return {
+    status: params.status ?? "active",
+    scope: params.scope ?? "all",
+    projectId: params.projectId ?? null,
+  };
+}
+
+export function chatSessionsOptions(wsId: string, params?: ChatSessionListParams) {
+  const resolvedParams = params ?? { status: "all" as const };
   return queryOptions({
-    queryKey: chatKeys.sessions(wsId),
-    queryFn: () => api.listChatSessions({ status: "all" }),
+    queryKey: chatKeys.sessions(wsId, params),
+    queryFn: () => api.listChatSessions(resolvedParams),
+    enabled: !!wsId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatSidebarOptions(wsId: string) {
+  return queryOptions({
+    queryKey: chatKeys.sidebar(wsId),
+    queryFn: () => api.listChatSidebar(),
+    enabled: !!wsId,
     staleTime: Infinity,
   });
 }
@@ -42,6 +69,33 @@ export function chatMessagesOptions(sessionId: string) {
   return queryOptions({
     queryKey: chatKeys.messages(sessionId),
     queryFn: () => api.listChatMessages(sessionId),
+    enabled: !!sessionId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatIssueProposalsOptions(sessionId: string) {
+  return queryOptions({
+    queryKey: chatKeys.issueProposals(sessionId),
+    queryFn: () => api.listChatIssueProposals(sessionId),
+    enabled: !!sessionId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatIssuesOptions(sessionId: string) {
+  return queryOptions({
+    queryKey: chatKeys.issues(sessionId),
+    queryFn: () => api.listChatSessionIssues(sessionId),
+    enabled: !!sessionId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatOutputsOptions(sessionId: string) {
+  return queryOptions({
+    queryKey: chatKeys.outputs(sessionId),
+    queryFn: () => api.listChatSessionOutputs(sessionId),
     enabled: !!sessionId,
     staleTime: Infinity,
   });

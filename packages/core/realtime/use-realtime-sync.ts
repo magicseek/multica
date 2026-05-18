@@ -63,6 +63,7 @@ import type {
   TaskFailedPayload,
   TaskCancelledPayload,
   ChatDonePayload,
+  ChatIssuesUpdatedPayload,
   ChatMessage,
   ChatPendingTask,
   InvitationCreatedPayload,
@@ -299,8 +300,8 @@ export function useRealtimeSync(
       "subscriber:added", "subscriber:removed",
       "daemon:heartbeat",
       // Chat events are handled explicitly below; do not double-invalidate.
-      "chat:message", "chat:done", "chat:session_read", "chat:session_deleted",
-      "chat:session_updated",
+      "chat:message", "chat:done", "chat:session_read", "chat:session_archived", "chat:session_deleted",
+      "chat:session_updated", "chat:issue_proposals_updated", "chat:issues_updated",
       // task:message stays out of the prefix path because it fires per
       // streamed message during a long run — invalidating the snapshot on
       // every message would flood the network. Specific chat handlers below
@@ -631,7 +632,10 @@ export function useRealtimeSync(
     };
     const invalidateSessionLists = () => {
       const id = getCurrentWsId();
-      if (id) qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+      if (id) {
+        qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+        qc.invalidateQueries({ queryKey: chatKeys.sidebar(id) });
+      }
     };
 
     const unsubChatMessage = ws.on("chat:message", (p) => {
@@ -791,29 +795,68 @@ export function useRealtimeSync(
             : s,
         );
       qc.setQueryData(chatKeys.sessions(id), patch);
+      invalidateSessionLists();
     });
 
-    // chat:session_deleted fires after a hard delete. The originating tab has
-    // already optimistically dropped the row via useDeleteChatSession; this
-    // handler keeps OTHER tabs/devices in sync and also clears the active
-    // session pointer so a deleted session doesn't keep the chat window
-    // pointed at vanished messages.
-    const unsubChatSessionDeleted = ws.on("chat:session_deleted", (p) => {
+    const unsubChatIssueProposalsUpdated = ws.on("chat:issue_proposals_updated", (p) => {
       const payload = p as { chat_session_id: string };
-      chatWsLogger.info("chat:session_deleted (global)", payload);
+      if (!payload.chat_session_id) return;
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(payload.chat_session_id) });
+    });
+
+    const unsubChatIssuesUpdated = ws.on("chat:issues_updated", (p) => {
+      const payload = p as ChatIssuesUpdatedPayload;
+      if (!payload.chat_session_id) return;
+      qc.invalidateQueries({ queryKey: chatKeys.issues(payload.chat_session_id) });
+      const wsId = getCurrentWsId();
+      if (wsId) qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+    });
+
+    const unsubTaskOutputsUpdated = ws.on("task:outputs_updated", (p) => {
+      const payload = p as { task_id?: string; chat_session_id?: string };
+      if (payload.chat_session_id) {
+        qc.invalidateQueries({ queryKey: chatKeys.outputs(payload.chat_session_id) });
+      }
+      if (payload.task_id) {
+        qc.invalidateQueries({ queryKey: repositoryKeys.taskOutputs(payload.task_id) });
+      }
+    });
+
+    // chat:session_archived fires after the user archives a session. The row
+    // remains durable, so keep transcript caches intact; active lists and
+    // pending-task state still need to drop the session immediately.
+    const handleChatSessionArchived = (p: unknown) => {
+      const payload = p as { chat_session_id: string };
+      if (!payload.chat_session_id) return;
+      chatWsLogger.info("chat:session_archived (global)", payload);
       const id = getCurrentWsId();
       if (id) {
         const drop = (old?: { id: string }[]) =>
           old?.filter((s) => s.id !== payload.chat_session_id);
         qc.setQueryData(chatKeys.sessions(id), drop);
+        qc.invalidateQueries({ queryKey: chatKeys.sidebar(id) });
+        qc.invalidateQueries({ queryKey: chatKeys.session(id, payload.chat_session_id) });
       }
-      qc.removeQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
       qc.removeQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
       invalidatePendingAggregate();
 
       const chatState = useChatStore.getState?.();
       if (chatState && chatState.activeSessionId === payload.chat_session_id) {
         chatState.setActiveSession(null);
+      }
+    };
+
+    const unsubChatSessionArchived = ws.on("chat:session_archived", handleChatSessionArchived);
+
+    // Compatibility with older servers that emitted the deleted event from
+    // the archive path. If a future hard-delete path uses it, message caches
+    // are removed after the same list cleanup.
+    const unsubChatSessionDeleted = ws.on("chat:session_deleted", (p) => {
+      const payload = p as { chat_session_id: string };
+      handleChatSessionArchived(payload);
+      if (payload.chat_session_id) {
+        chatWsLogger.info("chat:session_deleted (global)", payload);
+        qc.removeQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
       }
     });
 
@@ -852,8 +895,12 @@ export function useRealtimeSync(
       unsubTaskCompleted();
       unsubTaskFailed();
       unsubChatSessionRead();
+      unsubChatSessionArchived();
       unsubChatSessionDeleted();
       unsubChatSessionUpdated();
+      unsubChatIssueProposalsUpdated();
+      unsubChatIssuesUpdated();
+      unsubTaskOutputsUpdated();
       timers.forEach(clearTimeout);
       timers.clear();
     };

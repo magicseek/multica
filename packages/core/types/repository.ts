@@ -117,6 +117,10 @@ export interface TaskOutputMetadata {
   mime_type: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+  source_type?: "chat_task" | "issue_task" | string | null;
+  source_issue_id?: string | null;
+  source_issue_identifier?: string | null;
+  source_issue_title?: string | null;
 }
 
 export interface ListRepositoriesResponse {

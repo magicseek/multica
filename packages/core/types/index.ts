@@ -63,7 +63,28 @@ export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
-export type { ChatSession, ChatMessage, ChatPendingTask, PendingChatTaskItem, PendingChatTasksResponse, SendChatMessageResponse } from "./chat";
+export type {
+  ChatIssueProposal,
+  ChatIssueProposalItem,
+  ChatPendingTask,
+  ChatProjectContextKind,
+  ChatSession,
+  ChatSessionIssuesResponse,
+  ChatSessionListParams,
+  ChatSessionOutputsResponse,
+  ChatSessionStatus,
+  ChatSessionTitleSource,
+  ChatSidebarProject,
+  ChatSidebarProjectGroup,
+  ChatSidebarResponse,
+  ChatMessage,
+  ApproveChatIssueProposalResponse,
+  PendingChatTaskItem,
+  PendingChatTasksResponse,
+  ProjectContextSnapshot,
+  SendChatMessageResponse,
+  UpdateChatIssueProposalItemRequest,
+} from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
   Repository,
