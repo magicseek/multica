@@ -30,6 +30,12 @@ interface TitleEditorRef {
   focus: () => void;
 }
 
+function titleContent(value: string) {
+  return value
+    ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: value }] }] }
+    : "";
+}
+
 // ---------------------------------------------------------------------------
 // Single-paragraph document — prevents Enter from creating new lines
 // ---------------------------------------------------------------------------
@@ -85,6 +91,7 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
     const onSubmitRef = useRef(onSubmit);
     const onBlurRef = useRef(onBlur);
     const onChangeRef = useRef(onChange);
+    const defaultValueRef = useRef(defaultValue);
 
     onSubmitRef.current = onSubmit;
     onBlurRef.current = onBlur;
@@ -92,9 +99,7 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
 
     const editor = useEditor({
       immediatelyRender: false,
-      content: defaultValue
-        ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: defaultValue }] }] }
-        : "",
+      content: titleContent(defaultValue),
       extensions: [
         SingleLineDocument,
         Paragraph,
@@ -120,6 +125,14 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
         onBlurRef.current?.(ed.getText());
       },
     });
+
+    useEffect(() => {
+      if (!editor) return;
+      if (defaultValueRef.current === defaultValue) return;
+      defaultValueRef.current = defaultValue;
+      if (editor.isFocused || editor.getText() === defaultValue) return;
+      editor.commands.setContent(titleContent(defaultValue), { emitUpdate: false });
+    }, [defaultValue, editor]);
 
     // Auto-focus after mount — delay to wait for Dialog open animation
     useEffect(() => {

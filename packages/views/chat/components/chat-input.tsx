@@ -22,8 +22,8 @@ const logger = createLogger("chat.ui");
 interface ChatInputProps {
   onSend: (content: string, attachmentIds?: string[]) => void;
   /** Receives a File and returns the attachment row (with id + CDN link).
-   *  The wrapper owner (ChatWindow) lazy-creates a chat_session if needed
-   *  and forwards `chatSessionId` to the upload — chat-input only cares
+   *  The wrapper owner lazy-creates a chat_session if needed and forwards
+   *  `chatSessionId` to the upload — chat-input only cares
    *  about the upload result so it can map URL → id for back-fill on send.
    *  When unset, paste/drag/button still type into the editor but no upload
    *  fires (the editor's file-upload extension is a no-op without a handler). */
@@ -44,6 +44,10 @@ interface ChatInputProps {
   /** Rendered inside the rounded container, above the editor — attached
    *  context cards, drafts, etc. */
   topSlot?: ReactNode;
+  /** Route-owned pages pass explicit draft identity so URL state, not the
+   *  legacy floating chat store, decides which session is being composed. */
+  draftKeyOverride?: string;
+  editorKeyOverride?: string;
 }
 
 export function ChatInput({
@@ -57,6 +61,8 @@ export function ChatInput({
   leftAdornment,
   rightAdornment,
   topSlot,
+  draftKeyOverride,
+  editorKeyOverride,
 }: ChatInputProps) {
   const { t } = useT("chat");
   const editorRef = useRef<ContentEditorRef>(null);
@@ -84,8 +90,10 @@ export function ChatInput({
   // identity stable across the lazy-create event is what makes
   // first-upload-creates-session work the same as second-upload.
   const draftKey =
-    activeSessionId ?? `${DRAFT_NEW_SESSION}:${selectedAgentId ?? ""}`;
-  const editorKey = selectedAgentId ?? "no-agent";
+    draftKeyOverride ??
+    activeSessionId ??
+    `${DRAFT_NEW_SESSION}:${selectedAgentId ?? ""}`;
+  const editorKey = editorKeyOverride ?? selectedAgentId ?? "no-agent";
   // Select a primitive — empty-string fallback keeps referential stability.
   const inputDraft = useChatStore((s) => s.inputDrafts[draftKey] ?? "");
   const setInputDraft = useChatStore((s) => s.setInputDraft);

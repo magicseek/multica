@@ -35,6 +35,8 @@ import {
   X,
   Zap,
   Users,
+  MessageSquare,
+  ExternalLink,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -77,7 +79,8 @@ import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
-import type { PinnedItem } from "@multica/core/types";
+import { chatSidebarOptions } from "@multica/core/chat/queries";
+import type { ChatSession, ChatSidebarProject, ChatSidebarResponse, PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { useT } from "../i18n";
@@ -99,6 +102,7 @@ const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
+const EMPTY_CHAT_SIDEBAR: ChatSidebarResponse = { projects: [], loose: [] };
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -107,7 +111,6 @@ type NavKey =
   | "inbox"
   | "myIssues"
   | "issues"
-  | "projects"
   | "autopilots"
   | "agents"
   | "squads"
@@ -122,7 +125,6 @@ type NavLabelKey =
   | "inbox"
   | "my_issues"
   | "issues"
-  | "projects"
   | "autopilots"
   | "agents"
   | "squads"
@@ -139,7 +141,6 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] 
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "issues", labelKey: "issues", icon: ListTodo },
-  { key: "projects", labelKey: "projects", icon: FolderKanban },
   { key: "autopilots", labelKey: "autopilots", icon: Zap },
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
@@ -332,6 +333,248 @@ function PinSkeleton() {
   );
 }
 
+interface SidebarTreeAction {
+  label: string;
+  icon: typeof Inbox;
+  onClick: () => void;
+}
+
+function SidebarTreeSection({
+  icon: Icon,
+  label,
+  isActive,
+  isOpen,
+  actions,
+  onToggle,
+  children,
+}: {
+  icon: typeof Inbox;
+  label: string;
+  isActive: boolean;
+  isOpen: boolean;
+  actions: SidebarTreeAction[];
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <SidebarMenuItem>
+        <div
+          className={cn(
+            "group/tree flex h-7 items-center gap-1 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+            isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
+          )}
+        >
+          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle}>
+            <Icon className="size-4 shrink-0" />
+            <span className="truncate">{label}</span>
+            <ChevronRight className={cn("ml-auto size-3 shrink-0 stroke-[2.5] transition-transform", isOpen && "rotate-90")} />
+          </button>
+          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/tree:opacity-100">
+            {actions.map((action, index) => (
+              <Tooltip key={`${action.label}-${index}`}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex size-6 items-center justify-center rounded-md hover:bg-sidebar-accent"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        action.onClick();
+                      }}
+                    >
+                      <action.icon className="size-3.5" />
+                    </button>
+                  }
+                />
+                <TooltipContent side="right">{action.label}</TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        </div>
+      </SidebarMenuItem>
+      {isOpen && children}
+    </>
+  );
+}
+
+function ProjectChatTreeItem({
+  project,
+  sessions,
+  isOpen,
+  activePathname,
+  projectHref,
+  newChatHref,
+  sessionHref,
+  labels,
+  onToggle,
+  onNavigate,
+}: {
+  project: ChatSidebarProject;
+  sessions: ChatSession[];
+  isOpen: boolean;
+  activePathname: string;
+  projectHref: string;
+  newChatHref: string;
+  sessionHref: (sessionId: string) => string;
+  labels: { openProject: string; newChat: string; untitled: string };
+  onToggle: () => void;
+  onNavigate: (path: string) => void;
+}) {
+  const isProjectActive = activePathname === projectHref;
+  return (
+    <>
+      <SidebarMenuItem>
+        <div
+          className={cn(
+            "group/project ml-3 flex h-7 items-center gap-1 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+            isProjectActive && "bg-sidebar-accent text-sidebar-accent-foreground",
+          )}
+        >
+          <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onToggle}>
+            <ProjectIcon project={project} size="sm" />
+            <span className="truncate">{project.title}</span>
+            <ChevronRight className={cn("ml-auto size-3 shrink-0 stroke-[2.5] transition-transform", isOpen && "rotate-90")} />
+          </button>
+          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="inline-flex size-6 items-center justify-center rounded-md hover:bg-sidebar-accent"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onNavigate(projectHref);
+                    }}
+                  >
+                    <ExternalLink className="size-3.5" />
+                  </button>
+                }
+              />
+              <TooltipContent side="right">{labels.openProject}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="inline-flex size-6 items-center justify-center rounded-md hover:bg-sidebar-accent"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onNavigate(newChatHref);
+                    }}
+                  >
+                    <SquarePen className="size-3.5" />
+                  </button>
+                }
+              />
+              <TooltipContent side="right">{labels.newChat}</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      </SidebarMenuItem>
+      {isOpen && (
+        <div className="ml-7 space-y-0.5">
+          {sessions.map((session) => (
+            <SidebarChatSessionRow
+              key={session.id}
+              session={session}
+              href={sessionHref(session.id)}
+              activePathname={activePathname}
+              untitledLabel={labels.untitled}
+              onNavigate={onNavigate}
+            />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function LooseChatTree({
+  sessions,
+  activePathname,
+  sessionHref,
+  labels,
+  onNavigate,
+}: {
+  sessions: ChatSession[];
+  activePathname: string;
+  sessionHref: (sessionId: string) => string;
+  labels: { loose: string; empty: string; untitled: string };
+  onNavigate: (path: string) => void;
+}) {
+  return (
+    <div className="ml-3 space-y-0.5">
+      <div className="flex h-6 items-center px-2 text-xs font-medium text-muted-foreground">
+        {labels.loose}
+      </div>
+      {sessions.length === 0 ? (
+        <div className="px-2 py-1 text-xs text-muted-foreground">{labels.empty}</div>
+      ) : (
+        sessions.map((session) => (
+          <SidebarChatSessionRow
+            key={session.id}
+            session={session}
+            href={sessionHref(session.id)}
+            activePathname={activePathname}
+            untitledLabel={labels.untitled}
+            onNavigate={onNavigate}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+function SidebarChatSessionRow({
+  session,
+  href,
+  activePathname,
+  untitledLabel,
+  onNavigate,
+}: {
+  session: ChatSession;
+  href: string;
+  activePathname: string;
+  untitledLabel: string;
+  onNavigate: (path: string) => void;
+}) {
+  const isActive = activePathname === href;
+  return (
+    <SidebarMenuItem>
+      <button
+        type="button"
+        className={cn(
+          "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+          isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
+        )}
+        onClick={() => onNavigate(href)}
+      >
+        <MessageSquare className="size-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{session.title || untitledLabel}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{formatSidebarTime(session.updated_at)}</span>
+      </button>
+    </SidebarMenuItem>
+  );
+}
+
+function formatSidebarTime(value: string): string {
+  if (!value) return "";
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return "";
+  const diff = Date.now() - time;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return "now";
+  if (diff < hour) return `${Math.floor(diff / minute)}m`;
+  if (diff < day) return `${Math.floor(diff / hour)}h`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)}d`;
+  return new Date(value).toLocaleDateString();
+}
+
 interface AppSidebarProps {
   /** Rendered above SidebarHeader (e.g. desktop traffic light spacer) */
   topSlot?: React.ReactNode;
@@ -355,6 +598,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
 
   const wsId = workspace?.id;
+  const { data: chatSidebar = EMPTY_CHAT_SIDEBAR } = useQuery({
+    ...chatSidebarOptions(wsId ?? ""),
+    enabled: !!wsId,
+  });
   const { data: inboxItems = EMPTY_INBOX } = useQuery({
     queryKey: wsId ? inboxKeys.list(wsId) : ["inbox", "disabled"],
     queryFn: () => api.listInbox(),
@@ -380,6 +627,9 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // write (our own optimistic update, or a WS refetch) cannot reorder the
   // DOM under dnd-kit while its drop animation is still interpolating.
   const [localPinned, setLocalPinned] = useState<PinnedItem[]>(pinnedItems);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [chatsOpen, setChatsOpen] = useState(true);
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
   const isDraggingRef = useRef(false);
   useEffect(() => {
     if (!isDraggingRef.current) {
@@ -462,6 +712,15 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [pathname]);
+
+  const toggleProjectExpansion = useCallback((projectId: string) => {
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  }, []);
 
   return (
       <Sidebar variant="inset">
@@ -680,7 +939,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 {workspaceNav.map((item) => {
                   const href = p[item.key]();
                   const isActive = isNavActive(pathname, href);
-                  return (
+                  const node = (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton
                         isActive={isActive}
@@ -691,6 +950,80 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         <span>{t(($) => $.nav[item.labelKey])}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
+                  );
+                  if (item.key !== "issues") return node;
+                  return (
+                    <React.Fragment key={item.key}>
+                      {node}
+                      <SidebarTreeSection
+                        icon={FolderKanban}
+                        label={t(($) => $.nav.projects)}
+                        isActive={isNavActive(pathname, p.projects())}
+                        isOpen={projectsOpen}
+                        onToggle={() => setProjectsOpen((open) => !open)}
+                        actions={[
+                          {
+                            label: t(($) => $.sidebar.open_projects_tooltip),
+                            icon: ExternalLink,
+                            onClick: () => push(p.projects()),
+                          },
+                        ]}
+                      >
+                        {chatSidebar.projects.map((group) => {
+                          const projectOpen = expandedProjectIds.has(group.project.id);
+                          return (
+                            <ProjectChatTreeItem
+                              key={group.project.id}
+                              project={group.project}
+                              sessions={group.sessions}
+                              isOpen={projectOpen}
+                              activePathname={pathname}
+                              projectHref={p.projectDetail(group.project.id)}
+                              newChatHref={p.chatNew(group.project.id)}
+                              sessionHref={(sessionId) => p.chatSession(sessionId)}
+                              onToggle={() => toggleProjectExpansion(group.project.id)}
+                              onNavigate={push}
+                              labels={{
+                                openProject: t(($) => $.sidebar.open_project_tooltip),
+                                newChat: t(($) => $.sidebar.new_project_chat_tooltip),
+                                untitled: t(($) => $.sidebar.untitled_chat),
+                              }}
+                            />
+                          );
+                        })}
+                      </SidebarTreeSection>
+                      <SidebarTreeSection
+                        icon={MessageSquare}
+                        label={t(($) => $.nav.chats)}
+                        isActive={isNavActive(pathname, p.chats())}
+                        isOpen={chatsOpen}
+                        onToggle={() => setChatsOpen((open) => !open)}
+                        actions={[
+                          {
+                            label: t(($) => $.sidebar.open_chats_tooltip),
+                            icon: ExternalLink,
+                            onClick: () => push(p.chats()),
+                          },
+                          {
+                            label: t(($) => $.sidebar.new_loose_chat_tooltip),
+                            icon: SquarePen,
+                            onClick: () => push(p.chatNew()),
+                          },
+                        ]}
+                      >
+                        <LooseChatTree
+                          sessions={chatSidebar.loose}
+                          activePathname={pathname}
+                          sessionHref={(sessionId) => p.chatSession(sessionId)}
+                          onNavigate={push}
+                          labels={{
+                            loose: t(($) => $.sidebar.loose_chats_label),
+                            empty: t(($) => $.sidebar.no_recent_chats),
+                            untitled: t(($) => $.sidebar.untitled_chat),
+                          }}
+                        />
+                      </SidebarTreeSection>
+                    </React.Fragment>
                   );
                 })}
               </SidebarMenu>

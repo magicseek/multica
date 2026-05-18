@@ -871,10 +871,8 @@ function SessionDropdown({
   const handleConfirmDelete = () => {
     if (!pendingDelete) return;
     const sessionId = pendingDelete.id;
-    // Eager local clear when the user is deleting the session they're
-    // currently looking at — otherwise messages / pendingTask queries
-    // keep rendering the now-deleted session until chat:session_deleted
-    // arrives over WS (~50–200ms gap).
+    // Eager local clear when the user archives the session they're currently
+    // looking at; the WS archive event keeps other tabs/devices in sync.
     if (activeSessionId === sessionId) setActiveSession(null);
     deleteSession.mutate(sessionId, {
       onSettled: () => setPendingDelete(null),

@@ -4,6 +4,7 @@
     "my_issues": "我的 Issue",
     "issues": "Issue",
     "projects": "项目",
+    "chats": "对话",
     "autopilots": "自动化",
     "agents": "智能体",
     "squads": "小队",
@@ -37,6 +38,14 @@
     "pinned_label": "固定",
     "workspace_group": "工作区",
     "configure_group": "配置",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "open_projects_tooltip": "打开所有项目",
+    "open_project_tooltip": "打开项目",
+    "new_project_chat_tooltip": "新建项目对话",
+    "open_chats_tooltip": "打开所有对话",
+    "new_loose_chat_tooltip": "新建零散对话",
+    "loose_chats_label": "Loose",
+    "no_recent_chats": "最近没有对话",
+    "untitled_chat": "无标题"
   }
 }

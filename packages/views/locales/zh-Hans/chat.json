@@ -48,6 +48,106 @@
     "label": "代码仓库",
     "none": "无代码仓库"
   },
+  "pages": {
+    "chats": {
+      "title": "对话",
+      "new_chat": "新对话",
+      "loose": "Loose",
+      "empty_title": "暂无零散对话",
+      "empty_description": "创建一个不关联项目的对话。"
+    },
+    "new": {
+      "title": "要一起做什么？",
+      "project_title": "要在 {{project}} 中做什么？",
+      "placeholder": "向 Multica 提问",
+      "select_agent": "选择智能体",
+      "no_agents": "暂无智能体",
+      "no_agent_error": "开始对话前需要选择智能体。",
+      "start_failed": "创建对话失败",
+      "submit": "发送"
+    },
+    "session": {
+      "untitled": "无标题",
+      "archived": "已归档",
+      "send": "发送",
+      "send_failed": "发送失败",
+      "placeholder": "回复此对话",
+      "archived_placeholder": "此会话已归档",
+      "empty_chat_title": "暂无消息",
+      "empty_chat_description": "发送第一条消息来开始这个会话。",
+      "issues_title": "Issues",
+      "outputs_title": "Outputs",
+      "empty_issues_title": "暂无 issue 提案",
+      "empty_issues_description": "这个对话生成的 issue 提案会显示在这里。",
+      "empty_proposals_description": "这个对话暂无待处理的 issue 提案。",
+      "created_issues_title": "已创建 issue",
+      "empty_created_issues_description": "确认提案后，会在这里创建 backlog issue。",
+      "proposals_title": "提案",
+      "empty_outputs_title": "暂无输出",
+      "empty_outputs_description": "这个对话产生的 artifact 和 output metadata 会显示在这里。",
+      "proposal_items": "{{count}} 个拟创建 issue",
+      "inline_proposal_summary": "{{count}} 个拟创建 issue",
+      "approve_selected": "创建 {{count}} 个",
+      "dismiss": "忽略",
+      "restore": "恢复",
+      "save_item": "保存",
+      "no_selected_items": "请至少选择一个拟创建 issue。",
+      "approve_success": "已创建 {{count}} 个 issue",
+      "approve_failed": "创建 issue 失败",
+      "dismiss_success": "已忽略提案",
+      "dismiss_failed": "忽略提案失败",
+      "restore_success": "已恢复提案项",
+      "restore_failed": "恢复提案项失败",
+      "save_success": "已保存提案项",
+      "save_failed": "保存提案项失败",
+      "title_required": "标题不能为空。",
+      "assignee_required": "请选择负责人。",
+      "issue_title_label": "issue 标题",
+      "issue_description_label": "issue 描述",
+      "labels_placeholder": "标签，用逗号分隔",
+      "select_assignee": "选择负责人",
+      "no_assignee": "无负责人",
+      "no_assignee_options": "暂无可选项",
+      "priority": {
+        "none": "无优先级",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "urgent": "Urgent"
+      },
+      "assignee_type": {
+        "none": "未分配",
+        "member": "成员",
+        "agent": "智能体"
+      },
+      "output_source": {
+        "chat_task": "对话 task",
+        "issue_task": "issue task"
+      },
+      "proposal_status": {
+        "pending": "待确认",
+        "accepted": "已确认",
+        "dismissed": "已忽略",
+        "partially_accepted": "部分确认"
+      },
+      "item_status": {
+        "pending": "待确认",
+        "created": "已创建",
+        "skipped": "已跳过"
+      },
+      "tabs": {
+        "chat": "Chat",
+        "issues": "Issues",
+        "outputs": "Outputs"
+      }
+    },
+    "project_chats": {
+      "title": "对话",
+      "new_chat": "新对话",
+      "empty_title": "暂无项目对话",
+      "empty_description": "从项目中创建对话，会自动保留项目上下文。"
+    }
+  },
   "window": {
     "new_chat_tooltip": "新对话",
     "restore_tooltip": "还原",

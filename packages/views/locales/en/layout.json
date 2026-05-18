@@ -4,6 +4,7 @@
     "my_issues": "My Issues",
     "issues": "Issues",
     "projects": "Projects",
+    "chats": "Chats",
     "autopilots": "Autopilot",
     "agents": "Agents",
     "squads": "Squads",
@@ -37,6 +38,14 @@
     "pinned_label": "Pinned",
     "workspace_group": "Workspace",
     "configure_group": "Configure",
-    "unread_overflow": "99+"
+    "unread_overflow": "99+",
+    "open_projects_tooltip": "Open all projects",
+    "open_project_tooltip": "Open project",
+    "new_project_chat_tooltip": "New project chat",
+    "open_chats_tooltip": "Open all chats",
+    "new_loose_chat_tooltip": "New loose chat",
+    "loose_chats_label": "Loose",
+    "no_recent_chats": "No recent chats",
+    "untitled_chat": "Untitled"
   }
 }

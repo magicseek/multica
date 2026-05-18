@@ -88,6 +88,9 @@ vi.mock("@multica/core/paths", () => ({
     myIssues: () => "/acme/my-issues",
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
+    chats: () => "/acme/chats",
+    chatNew: (projectId?: string | null) => projectId ? `/acme/chats/new?project_id=${projectId}` : "/acme/chats/new",
+    chatSession: (id: string) => `/acme/chats/${id}`,
     autopilots: () => "/acme/autopilots",
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
@@ -101,6 +104,7 @@ vi.mock("@multica/core/paths", () => ({
   }),
 }));
 vi.mock("@multica/core/api", async (importOriginal) => ({ ...(await importOriginal<typeof import("@multica/core/api")>()), api: {} }));
+vi.mock("@multica/core/chat/queries", () => ({ chatSidebarOptions: () => ({ queryKey: ["chat-sidebar"] }) }));
 vi.mock("@multica/core/inbox/queries", () => ({ deduplicateInboxItems: (items: unknown[]) => items, inboxKeys: { list: () => ["inbox"] } }));
 vi.mock("@multica/core/issues/queries", () => ({ issueDetailOptions: () => ({ queryKey: ["issue"] }) }));
 vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
@@ -124,6 +128,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
+    if (queryKey[0] === "chat-sidebar") return { data: { projects: [], loose: [] } };
     return { data: [] };
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),

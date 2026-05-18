@@ -51,6 +51,106 @@
     "label": "Repository",
     "none": "No repository"
   },
+  "pages": {
+    "chats": {
+      "title": "Chats",
+      "new_chat": "New chat",
+      "loose": "Loose",
+      "empty_title": "No loose chats",
+      "empty_description": "Start a chat that is not tied to a project."
+    },
+    "new": {
+      "title": "What should we work on?",
+      "project_title": "What should we work on in {{project}}?",
+      "placeholder": "Ask Multica anything",
+      "select_agent": "Select agent",
+      "no_agents": "No agents",
+      "no_agent_error": "Select an agent before starting the chat.",
+      "start_failed": "Failed to start chat",
+      "submit": "Send"
+    },
+    "session": {
+      "untitled": "Untitled",
+      "archived": "Archived",
+      "send": "Send",
+      "send_failed": "Failed to send message",
+      "placeholder": "Reply to this chat",
+      "archived_placeholder": "This session is archived",
+      "empty_chat_title": "No messages yet",
+      "empty_chat_description": "Send the first message to start this session.",
+      "issues_title": "Issues",
+      "outputs_title": "Outputs",
+      "empty_issues_title": "No issue proposals",
+      "empty_issues_description": "Issue proposals created from this chat will appear here.",
+      "empty_proposals_description": "No pending issue proposals from this chat.",
+      "created_issues_title": "Created issues",
+      "empty_created_issues_description": "Approved proposals will create backlog issues here.",
+      "proposals_title": "Proposals",
+      "empty_outputs_title": "No outputs",
+      "empty_outputs_description": "Artifact and output metadata from this chat will appear here.",
+      "proposal_items": "{{count}} proposed issues",
+      "inline_proposal_summary": "{{count}} proposed issues",
+      "approve_selected": "Create {{count}}",
+      "dismiss": "Dismiss",
+      "restore": "Restore",
+      "save_item": "Save",
+      "no_selected_items": "Select at least one proposed issue.",
+      "approve_success": "Created {{count}} issues",
+      "approve_failed": "Failed to create issues",
+      "dismiss_success": "Proposal dismissed",
+      "dismiss_failed": "Failed to dismiss proposal",
+      "restore_success": "Proposal item restored",
+      "restore_failed": "Failed to restore proposal item",
+      "save_success": "Proposal item saved",
+      "save_failed": "Failed to save proposal item",
+      "title_required": "Title is required.",
+      "assignee_required": "Select an assignee.",
+      "issue_title_label": "Issue title",
+      "issue_description_label": "Issue description",
+      "labels_placeholder": "Labels, separated by commas",
+      "select_assignee": "Select assignee",
+      "no_assignee": "No assignee",
+      "no_assignee_options": "No options",
+      "priority": {
+        "none": "No priority",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "urgent": "Urgent"
+      },
+      "assignee_type": {
+        "none": "Unassigned",
+        "member": "Member",
+        "agent": "Agent"
+      },
+      "output_source": {
+        "chat_task": "Chat task",
+        "issue_task": "Issue task"
+      },
+      "proposal_status": {
+        "pending": "Pending",
+        "accepted": "Accepted",
+        "dismissed": "Dismissed",
+        "partially_accepted": "Partial"
+      },
+      "item_status": {
+        "pending": "Pending",
+        "created": "Created",
+        "skipped": "Skipped"
+      },
+      "tabs": {
+        "chat": "Chat",
+        "issues": "Issues",
+        "outputs": "Outputs"
+      }
+    },
+    "project_chats": {
+      "title": "Chats",
+      "new_chat": "New chat",
+      "empty_title": "No project chats",
+      "empty_description": "Start a chat from this project to keep its context attached."
+    }
+  },
   "window": {
     "new_chat_tooltip": "New chat",
     "restore_tooltip": "Restore",

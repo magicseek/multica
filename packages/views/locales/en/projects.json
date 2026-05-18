@@ -57,6 +57,10 @@
     "empty_issues_title": "No issues linked",
     "empty_issues_hint": "Create a new issue or assign existing ones to this project.",
     "empty_issues_new_button": "New Issue",
+    "tabs": {
+      "issues": "Issues",
+      "chats": "Chats"
+    },
     "toast_link_copied": "Link copied",
     "toast_project_deleted": "Project deleted",
     "toast_move_issue_failed": "Failed to move issue"

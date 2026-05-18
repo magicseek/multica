@@ -36,6 +36,7 @@ import { ListView } from "../../issues/components/list-view";
 import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
@@ -69,6 +70,7 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n";
+import { ProjectChatsSurface } from "../../chat/components/chat-pages";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
@@ -310,6 +312,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [progressOpen, setProgressOpen] = useState(true);
   const [descriptionOpen, setDescriptionOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState<"issues" | "chats">("issues");
 
   // Sidebar panel
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -605,6 +608,12 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <ChevronRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
               <span className="truncate">{project.title}</span>
             </div>
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value === "chats" ? "chats" : "issues")}>
+              <TabsList>
+                <TabsTrigger value="issues">{t(($) => $.detail.tabs.issues)}</TabsTrigger>
+                <TabsTrigger value="chats">{t(($) => $.detail.tabs.chats)}</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <div className="flex items-center gap-1 shrink-0">
               <Button
                 variant="ghost"
@@ -674,13 +683,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
             </div>
           </PageHeader>
 
-          <ViewStoreProvider store={projectViewStore}>
+          {activeTab === "issues" ? (
+            <ViewStoreProvider store={projectViewStore}>
               <ProjectIssuesSurface
                 projectId={projectId}
                 scope={projectScope}
                 filter={projectFilter}
               />
             </ViewStoreProvider>
+          ) : (
+            <ProjectChatsSurface projectId={projectId} />
+          )}
           </div>
         </ResizablePanel>
         {!isMobile && <ResizableHandle />}

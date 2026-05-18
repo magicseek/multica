@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { Fragment, useState, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -42,12 +42,15 @@ interface ChatMessageListProps {
   pendingTask: ChatPendingTask | null | undefined;
   /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
   availability: AgentAvailability | undefined;
+  /** Optional per-message extension point for session-level artifacts such as issue proposals. */
+  renderAfterMessage?: (message: ChatMessage) => ReactNode;
 }
 
 export function ChatMessageList({
   messages,
   pendingTask,
   availability,
+  renderAfterMessage,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
@@ -82,11 +85,13 @@ export function ChatMessageList({
        *  than issue-detail's px-8 because the chat window can be narrow. */}
       <div className="mx-auto w-full max-w-4xl px-5 py-4 space-y-4">
         {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
-          />
+          <Fragment key={msg.id}>
+            <MessageBubble
+              message={msg}
+              isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
+            />
+            {renderAfterMessage?.(msg)}
+          </Fragment>
         ))}
         {hasLive && (
           <div className="w-full space-y-1.5">
@@ -593,4 +598,3 @@ function ErrorRow({ item }: { item: ChatTimelineItem }) {
 }
 
 // ─── Shared ──────────────────────────────────────────────────────────────
-
