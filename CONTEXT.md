@@ -19,6 +19,30 @@ _Avoid_: Global path, shared local path
 A planning container for related issues, similar to a Linear project or Jira epic.
 _Avoid_: Repository, Codebase
 
+**Chat Session**:
+A private, creator-owned multi-turn conversation between one user and one agent.
+_Avoid_: Team chat, shared project conversation
+
+**Project-Associated Chat Session**:
+A private **Chat Session** grouped under a **Project** for organization without changing who can see it.
+_Avoid_: Project chat
+
+**Chat-Originated Issue**:
+An **Issue** created as an output of a **Chat Session**.
+_Avoid_: Project issue by implication
+
+**Chat Issue Proposal**:
+A set of candidate issues proposed inside a **Chat Session** and awaiting user approval.
+_Avoid_: Auto-created issues
+
+**Chat Issue Proposal Item**:
+One candidate issue inside a **Chat Issue Proposal**.
+_Avoid_: Draft issue
+
+**Proposal Artifact**:
+A structured output from a chat agent that records a **Chat Issue Proposal** separately from prose.
+_Avoid_: Markdown issue list
+
 **Lead Agent**:
 The agent selected to bootstrap, coordinate, or own work when a repository starts without an existing Git remote or user-selected local directory.
 
@@ -29,7 +53,53 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 
 - A **Workspace** contains zero or more **Repositories**
 - A **Workspace** contains zero or more **Projects**
+- A **Workspace** contains zero or more **Chat Sessions**
 - A **Project** may reference one or more **Repositories**
+- A **Project** may group zero or more **Project-Associated Chat Sessions**
+- A **Project-Associated Chat Session** remains visible only to its creator
+- A **Project-Associated Chat Session** is discovered through **Projects** navigation and the owning **Project** detail page
+- A **Project-Associated Chat Session** may be started from the Project navigation row action or from the owning **Project** detail page
+- A **Project-Associated Chat Session** remains as private history if its associated **Project** is archived or deleted
+- A **Project-Associated Chat Session** stores a creation-time **Project** snapshot so deleted Projects can still be represented in chat history
+- A loose **Chat Session** is discovered through the workspace **Chats** navigation entry
+- A loose **Chat Session** may be started from the top-level New Chat action
+- A **Chat Session** is opened as a page-level workspace route rather than a global floating window
+- A **Chat Session** title may start from the first user message as a fallback
+- A **Chat Session** title may be updated after the first agent execution using an agent-provided summary title
+- A user-edited **Chat Session** title is not overwritten by an agent-provided summary title
+- Archiving or deleting a **Chat Session** does not delete its **Chat-Originated Issues** or **Output Metadata**
+- The workspace sidebar shows only active **Chat Sessions** updated in the last five days as a quick-access tree
+- A **Project-Associated Chat Session** provides the default **Project** for new **Chat-Originated Issues**
+- A **Chat-Originated Issue** keeps an explicit link to its source **Chat Session**
+- A **Chat-Originated Issue** is created after explicit user approval from a **Chat Issue Proposal** or issue creation flow
+- **Chat-Originated Issues** created from a **Chat Issue Proposal** default to backlog status
+- A **Chat Issue Proposal** is persisted before approval
+- A **Chat Issue Proposal** contains one or more **Chat Issue Proposal Items**
+- A **Chat Session** may contain multiple **Chat Issue Proposals**
+- A **Proposal Artifact** is the source of truth for a **Chat Issue Proposal**
+- A **Proposal Artifact** uses a minimal versioned schema with `version` and `proposals`
+- A **Chat Issue Proposal Item** may include issue draft fields such as `title`, `description`, optional `priority`, optional `labels`, and optional `assignee_id`
+- A **Chat Issue Proposal** appears inline in the **Chat Session** conversation after the proposing agent message
+- The **Chat Session** Issues view shows the same **Chat Issue Proposal** objects for review and follow-up management
+- A **Chat Session** has `Chat`, `Issues`, and `Outputs` page tabs
+- The **Chat Session** `Issues` tab count reflects created **Chat-Originated Issues**, not pending **Chat Issue Proposal Items**
+- The **Chat Session** `Outputs` tab count reflects available **Output Metadata** records
+- A **Chat Issue Proposal Item** may become zero or one **Chat-Originated Issue**
+- A member may edit **Chat Issue Proposal Items** before approving issue creation
+- A member may not edit the target **Project** of a **Chat Issue Proposal Item** before approval
+- A **Chat Issue Proposal Item** keeps an approval-time snapshot of the content used to create its **Chat-Originated Issue**
+- A partially approved **Chat Issue Proposal** records unapproved selected-out items as skipped
+- A skipped **Chat Issue Proposal Item** can be restored to pending before later approval
+- The approving member is the creator of a **Chat-Originated Issue**
+- The proposing agent remains provenance for a **Chat Issue Proposal**, not the issue creator
+- A **Chat Issue Proposal** records detailed provenance such as source chat message, source task, and proposing agent
+- A **Chat-Originated Issue** keeps a lightweight origin link to the source **Chat Session**
+- Approving multiple **Chat Issue Proposal Items** creates issues in one transaction; validation failure creates no partial batch
+- A created **Chat Session** does not move between **Projects**
+- **Chat-Originated Issues** follow normal workspace and project visibility
+- **Output Metadata** from a **Chat Session** inherits the **Chat Session** privacy boundary until explicitly attached to a shared issue, project, or published artifact
+- A **Chat Session** output view contains **Output Metadata**, not **Chat Issue Proposals**
+- A **Chat Session** output view aggregates **Output Metadata** from the session's own chat tasks and from agent tasks on issues created from that session
 - A chat may select or reference a **Repository**, but does not own it
 - A **Repository** is a first-class workspace entity, not only JSON embedded in workspace settings
 - A **Repository** may have zero or more **Repository Bindings**
@@ -48,6 +118,38 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 ## Flagged Ambiguities
 
 - "Project" was used to mean both a planning container and a codebase. Resolved: **Project** remains the issue-planning container; **Repository** is the code working target.
+- "Project chat" can imply a shared team conversation. Resolved: use **Project-Associated Chat Session** for private chats grouped under a project.
+- The primary **Chats** navigation entry can imply every chat in the workspace. Resolved: **Chats** is the total entry for loose **Chat Sessions**; **Project-Associated Chat Sessions** are found through **Projects** navigation and Project detail.
+- Starting a **Project-Associated Chat Session** from different surfaces should not create different flows. Resolved: Project navigation row actions and Project detail `Chats` use the same new-chat route with the selected Project context, and the actual session is created when the first message is sent.
+- Starting a loose **Chat Session** uses the top-level New Chat action and a new-chat route without Project context. The first send requires an explicit agent selection.
+- The old global Chat floating action button and floating window are replaced by page-level Chat routes as the primary workspace chat experience.
+- **Chat Session** titles should not repeat Project names because navigation already provides that hierarchy. The initial title may fall back to the first user message, then the first agent execution may provide a more accurate summary title.
+- Title generation needs an explicit source or user-edited marker so agent-generated summary titles do not overwrite a title the user already changed.
+- Agent-provided **Chat Session** summary titles travel through the same task completion metadata handoff as other structured chat outputs, and the backend applies them only when the user has not edited the title.
+- A chat task may produce multiple structured outputs, such as summary title metadata, **Chat Issue Proposals**, and **Output Metadata**
+- The daemon may read multiple fixed local manifests for structured chat outputs, but uploads them together in one task completion payload for backend processing
+- The sidebar's five-day chat window is a quick-access filter only. Complete loose chat history remains available from **Chats**, and complete project-associated chat history remains available from the owning **Project** detail `Chats` view.
+- If a **Project** is archived or deleted, its associated **Chat Sessions** are not shown under the active **Projects** sidebar tree. The **Chat Session** page shows an archived or deleted Project context chip, and already created issues keep their normal issue state and provenance.
+- If the underlying **Project** row is deleted, a **Project-Associated Chat Session** does not become a loose **Chat Session**. It retains its creation-time Project snapshot for historical display.
+- Data model should not infer loose chat status from `project_id IS NULL` alone. A deleted Project may also leave `project_id` null, so the session needs an explicit project association marker plus a creation-time Project snapshot.
+- If a **Chat Session** is archived or deleted, its created issues and output metadata are retained. The session's issue provenance remains readable even if the conversation is no longer active.
+- A **Project-Associated Chat Session** records the project context chosen at session creation, not a mutable label. **Chat-Originated Issues** keep their own source link.
+- Issues merely sharing the same **Project** as a **Chat Session** are not **Chat-Originated Issues** unless the explicit source link is present.
+- A **Chat Issue Proposal** is not an **Issue** until a user approves creation.
+- A **Chat Issue Proposal Item** is not an **Issue** and should not appear on issue boards before approval.
+- A Markdown checklist in a chat reply is not a **Chat Issue Proposal** unless it is backed by a **Proposal Artifact**.
+- A **Proposal Artifact** does not let the proposing agent choose issue status. Created issues use backlog status from backend rules.
+- **Chat Issue Proposal Item** Project assignment is derived from the source **Chat Session** context. Project reassignment happens later through normal issue editing, not inside proposal approval.
+- Inline proposal controls in the chat transcript and proposal controls in the **Chat Session** Issues view operate on the same persisted **Chat Issue Proposal**, not duplicated draft state.
+- Pending **Chat Issue Proposals** are presented inside the **Chat Session** `Issues` tab without increasing the created issue count.
+- **Chat Issue Proposals** belong with issue creation workflow, not the **Output Metadata** view.
+- The **Chat Session** output view is scoped to outputs produced by the chat and by issues that were explicitly created from that chat; unrelated issues in the same Project are excluded.
+- The member approval action, not the agent proposal, is the authorization boundary for creating **Chat-Originated Issues**.
+- Detailed proposal provenance belongs on **Chat Issue Proposal** records. The created **Issue** keeps only the lightweight source **Chat Session** origin link and can reach proposal/item details through the proposal tables.
+- Batch approval for **Chat Issue Proposal Items** is atomic. If any selected item fails validation, no issues are created and the user edits the proposal before retrying.
+- **Chat Issue Proposal Items** keep approval-time snapshots so later issue edits do not erase what was approved from the proposal.
+- Partial approval sets the **Chat Issue Proposal** to a partially accepted state, marks unapproved items as skipped, and allows skipped items to be restored later from the **Chat Session** `Issues` tab.
+- The **Chat Session** `Issues` tab groups by **Chat Issue Proposal**, shows pending proposals first, and then orders proposal groups by creation time.
 - **Repository** ownership is workspace-level. **Project** and chat flows reference repositories but do not own them.
 - **Repository** is a first-class entity. Workspace settings may expose repositories, but they are not only an embedded JSON list.
 - Repository management belongs under **Workspace** settings rather than the primary workspace navigation.

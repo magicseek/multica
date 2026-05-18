@@ -1,0 +1,13 @@
+{"file": "CONTEXT.md", "reason": "Verify implementation preserves the domain glossary and resolved boundaries."}
+{"file": "docs/adr/0002-private-project-associated-chat-sessions-and-issue-proposals.md", "reason": "Check code against the accepted architecture tradeoffs."}
+{"file": "docs/project-associated-chat-sessions-plan.md", "reason": "Check implementation coverage against the full handoff plan and test matrix."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review cross-layer data and state consistency."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Review reuse and avoid duplicated Chat state or unnecessary abstractions."}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Backend verification gates."}
+{"file": ".trellis/spec/server/backend/daemon-runtime-contracts.md", "reason": "Verify daemon completion payload and structured output handling."}
+{"file": ".trellis/spec/server/backend/repository-contracts.md", "reason": "Verify output metadata privacy and aggregation behavior."}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Verify core package state and React Query boundaries."}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Verify shared view implementation boundaries and UI quality."}
+{"file": ".trellis/spec/web/frontend/index.md", "reason": "Verify web route integration."}
+{"file": ".trellis/spec/desktop/frontend/index.md", "reason": "Verify desktop route/tab integration."}
+{"file": ".trellis/tasks/05-18-project-associated-chat-sessions/research/development-slices.md", "reason": "Check implementation and verification coverage against the planned slices."}

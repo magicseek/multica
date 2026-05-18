@@ -1,0 +1,13 @@
+{"file": "CONTEXT.md", "reason": "Domain glossary and private Project-associated Chat Session decisions."}
+{"file": "docs/adr/0002-private-project-associated-chat-sessions-and-issue-proposals.md", "reason": "Accepted architecture decision for private Project-associated chats and user-approved issue proposals."}
+{"file": "docs/project-associated-chat-sessions-plan.md", "reason": "Primary implementation plan covering DB, API, daemon handoff, routes, UI, and tests."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature spans database, backend service, daemon, core types, realtime, shared views, web, and desktop."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Implementation should reuse existing chat, project, issue, query, route, and UI patterns before adding abstractions."}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Backend quality gates for migrations, handlers, services, sqlc, and tests."}
+{"file": ".trellis/spec/server/backend/daemon-runtime-contracts.md", "reason": "Daemon task completion and runtime contract context for structured output handoff."}
+{"file": ".trellis/spec/server/backend/repository-contracts.md", "reason": "Existing output metadata contract and repository/task output privacy guidance."}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core package state, query, type, and API client boundaries."}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Shared views package UI and navigation boundaries."}
+{"file": ".trellis/spec/web/frontend/index.md", "reason": "Web App Router integration requirements."}
+{"file": ".trellis/spec/desktop/frontend/index.md", "reason": "Desktop memory router and tab integration requirements."}
+{"file": ".trellis/tasks/05-18-project-associated-chat-sessions/research/development-slices.md", "reason": "First Trellis planning pass that splits the handoff into implementation slices."}

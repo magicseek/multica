@@ -1,0 +1,30 @@
+{
+  "id": "project-associated-chat-sessions",
+  "name": "project-associated-chat-sessions",
+  "title": "Project-associated Chat Sessions",
+  "description": "Plan and implement page-level private Chat Sessions with optional Project association, issue proposal approval, and Chat/Issues/Outputs tabs.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "troy",
+  "assignee": "troy",
+  "createdAt": "2026-05-18",
+  "completedAt": null,
+  "branch": "trellis/project-associated-chat-sessions",
+  "base_branch": "trellis/repository-start-modes",
+  "worktree_path": "/Users/troy.huang/workspace/AI/multica-project-associated-chat-sessions",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "CONTEXT.md",
+    "docs/adr/0002-private-project-associated-chat-sessions-and-issue-proposals.md",
+    "docs/project-associated-chat-sessions-plan.md"
+  ],
+  "notes": "Created from the 2026-05-18 design handoff. Use the dedicated worktree and split the implementation plan into Trellis-sized development slices before coding.",
+  "meta": {}
+}
