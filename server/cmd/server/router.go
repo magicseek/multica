@@ -598,10 +598,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeleteChatSession)
 					r.Post("/messages", h.SendChatMessage)
 					r.Get("/messages", h.ListChatMessages)
+					r.Get("/issue-proposals", h.ListChatIssueProposals)
+					r.Get("/issues", h.ListChatIssues)
+					r.Get("/outputs", h.ListChatOutputs)
 					r.Get("/pending-task", h.GetPendingChatTask)
 					r.Post("/read", h.MarkChatSessionRead)
 				})
 			})
+			r.Route("/api/chat/issue-proposals/{proposalId}", func(r chi.Router) {
+				r.Post("/approve", h.ApproveChatIssueProposal)
+				r.Post("/dismiss", h.DismissChatIssueProposal)
+				r.Patch("/items/{itemId}", h.UpdateChatIssueProposalItem)
+				r.Post("/items/{itemId}/restore", h.RestoreChatIssueProposalItem)
+			})
+			r.Get("/api/chat/sidebar", h.ListChatSidebar)
 			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
 
 			// Inbox

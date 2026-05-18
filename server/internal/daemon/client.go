@@ -180,7 +180,7 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, structured *StructuredTaskOutputs) error {
 	body := map[string]any{"output": output}
 	if branchName != "" {
 		body["branch_name"] = branchName
@@ -190,6 +190,9 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	}
 	if workDir != "" {
 		body["work_dir"] = workDir
+	}
+	if structured != nil {
+		body["structured_outputs"] = structured
 	}
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil)
 }
@@ -391,9 +394,8 @@ type ChatSessionGCStatus struct {
 }
 
 // GetChatSessionGCCheck returns the status of a chat session for GC decisions.
-// A 404 from this endpoint indicates the session row was hard-deleted (the
-// user explicitly removed it), which the caller treats as an immediate-clean
-// signal.
+// Archived rows return status='archived'; a 404 means the row is gone and can
+// be treated as an immediate-clean signal.
 func (c *Client) GetChatSessionGCCheck(ctx context.Context, sessionID string) (*ChatSessionGCStatus, error) {
 	var resp ChatSessionGCStatus
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/chat-sessions/%s/gc-check", sessionID), &resp); err != nil {

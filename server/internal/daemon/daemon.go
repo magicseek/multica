@@ -2054,14 +2054,17 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
-		if err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir); err != nil {
+		structuredOutputs := loadStructuredTaskOutputs(result.WorkDir, taskLog)
+		if err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, structuredOutputs); err != nil {
 			taskLog.Error("complete task failed, falling back to fail", "error", err)
 			if failErr := d.client.FailTask(ctx, taskID, fmt.Sprintf("complete task failed: %s", err.Error()), result.SessionID, result.WorkDir, "agent_error"); failErr != nil {
 				taskLog.Error("fail task fallback also failed", "error", failErr)
 			}
 			return
 		}
-		d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
+		if structuredOutputs == nil || structuredOutputs.Outputs == nil {
+			d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
+		}
 	default:
 		failureReason := result.FailureReason
 		if failureReason == "" {

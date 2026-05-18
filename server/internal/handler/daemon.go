@@ -1753,10 +1753,11 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL     string `json:"pr_url"`
-	Output    string `json:"output"`
-	SessionID string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir   string `json:"work_dir"`   // working directory used during execution
+	PRURL             string                        `json:"pr_url"`
+	Output            string                        `json:"output"`
+	SessionID         string                        `json:"session_id"` // Claude session ID for future resumption
+	WorkDir           string                        `json:"work_dir"`   // working directory used during execution
+	StructuredOutputs *TaskStructuredOutputsRequest `json:"structured_outputs"`
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -1781,6 +1782,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.processTaskStructuredOutputs(r, *task, req.StructuredOutputs)
 	h.emitIssueExecutedOnFirstCompletion(r, task)
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
@@ -2245,10 +2247,8 @@ func (h *Handler) GetIssueGCCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetChatSessionGCCheck returns the status and updated_at of a chat session
-// for the daemon GC loop. A 404 here means the session was hard-deleted
-// (DeleteChatSession in chat.go runs a real DELETE), which the daemon treats
-// as an immediate-clean signal — the user's explicit delete is the strongest
-// reclaim authorization we can get.
+// for the daemon GC loop. Archived sessions return status='archived'; a 404
+// means the row is gone and can be treated as an immediate-clean signal.
 //
 // Same anti-enumeration shape as GetIssueGCCheck: workspace mismatch returns
 // the same 404 so a scoped daemon token can't probe other workspaces.

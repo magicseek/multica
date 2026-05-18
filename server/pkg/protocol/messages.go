@@ -94,6 +94,12 @@ type ChatSessionReadPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
 }
 
+// ChatSessionArchivedPayload is broadcast when a chat session is soft-deleted.
+// The row and transcript remain durable, but active lists should drop it.
+type ChatSessionArchivedPayload struct {
+	ChatSessionID string `json:"chat_session_id"`
+}
+
 // ChatSessionDeletedPayload is broadcast when a chat session is hard-deleted
 // so other tabs/devices drop it from their session lists and reset the active
 // pointer if it referenced the deleted session.

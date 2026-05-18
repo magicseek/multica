@@ -102,6 +102,74 @@ func TestTaskOutputMetadataUploadAndList(t *testing.T) {
 	}
 }
 
+func TestListTaskOutputMetadata_ChatTaskRequiresChatSessionAccess(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, ownerID, memberID := privateAgentTestFixture(t)
+	repo := createHandlerTestRepository(t, "Private chat task output repo", "https://github.com/multica-ai/private-chat-task-output.git")
+
+	var sessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
+		VALUES ($1, $2, $3, 'private output session', 'active')
+		RETURNING id
+	`, testWorkspaceID, agentID, ownerID).Scan(&sessionID); err != nil {
+		t.Fatalf("create chat session: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
+	})
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'running', 0)
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t), sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("create chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	uploadW := httptest.NewRecorder()
+	uploadReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/outputs", map[string]any{
+		"outputs": []map[string]any{
+			{
+				"repository_id": repo.ID,
+				"relative_path": "docs/private-chat-output.md",
+				"kind":          "doc",
+			},
+		},
+	}, testWorkspaceID, "private-chat-output-daemon")
+	uploadReq = withURLParam(uploadReq, "taskId", taskID)
+	testHandler.UploadTaskOutputMetadata(uploadW, uploadReq)
+	if uploadW.Code != http.StatusOK {
+		t.Fatalf("UploadTaskOutputMetadata: expected 200, got %d: %s", uploadW.Code, uploadW.Body.String())
+	}
+
+	ownerW := httptest.NewRecorder()
+	ownerReq := newRequestAs(ownerID, "GET", "/api/tasks/"+taskID+"/outputs", nil)
+	ownerReq = withURLParam(ownerReq, "taskId", taskID)
+	ownerReq = withChatTestWorkspaceCtxAs(t, ownerReq, ownerID)
+	testHandler.ListTaskOutputMetadata(ownerW, ownerReq)
+	if ownerW.Code != http.StatusOK {
+		t.Fatalf("ListTaskOutputMetadata as chat owner: expected 200, got %d: %s", ownerW.Code, ownerW.Body.String())
+	}
+
+	memberW := httptest.NewRecorder()
+	memberReq := newRequestAs(memberID, "GET", "/api/tasks/"+taskID+"/outputs", nil)
+	memberReq = withURLParam(memberReq, "taskId", taskID)
+	memberReq = withChatTestWorkspaceCtxAs(t, memberReq, memberID)
+	testHandler.ListTaskOutputMetadata(memberW, memberReq)
+	if memberW.Code != http.StatusForbidden {
+		t.Fatalf("ListTaskOutputMetadata as unrelated member: expected 403, got %d: %s", memberW.Code, memberW.Body.String())
+	}
+}
+
 func TestTaskOutputMetadataRejectsUnsafeManifest(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

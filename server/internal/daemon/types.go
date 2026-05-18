@@ -2,7 +2,11 @@ package daemon
 
 import "encoding/json"
 
-const TaskOutputManifestRelativePath = ".multica/outputs.json"
+const (
+	TaskChatSummaryManifestRelativePath    = ".multica/chat-summary.json"
+	TaskIssueProposalsManifestRelativePath = ".multica/issue-proposals.json"
+	TaskOutputManifestRelativePath         = ".multica/outputs.json"
+)
 
 // AgentEntry describes a single available agent CLI.
 type AgentEntry struct {
@@ -200,6 +204,39 @@ type TaskUsageEntry struct {
 
 type TaskOutputManifest struct {
 	Outputs []TaskOutputMetadata `json:"outputs"`
+}
+
+type StructuredTaskOutputs struct {
+	ChatSummary    *ChatSummaryManifest    `json:"chat_summary,omitempty"`
+	IssueProposals *IssueProposalsManifest `json:"issue_proposals,omitempty"`
+	Outputs        *TaskOutputManifest     `json:"outputs,omitempty"`
+}
+
+type ChatSummaryManifest struct {
+	Version int    `json:"version"`
+	Title   string `json:"title"`
+}
+
+type IssueProposalsManifest struct {
+	Version   int                     `json:"version"`
+	Proposals []IssueProposalManifest `json:"proposals"`
+}
+
+type IssueProposalManifest struct {
+	Title   string                      `json:"title"`
+	Summary *string                     `json:"summary,omitempty"`
+	Items   []IssueProposalItemManifest `json:"items"`
+	Status  json.RawMessage             `json:"status,omitempty"`
+}
+
+type IssueProposalItemManifest struct {
+	Title        string          `json:"title"`
+	Description  string          `json:"description,omitempty"`
+	Priority     *string         `json:"priority,omitempty"`
+	Labels       []string        `json:"labels,omitempty"`
+	AssigneeType *string         `json:"assignee_type,omitempty"`
+	AssigneeID   *string         `json:"assignee_id,omitempty"`
+	Status       json.RawMessage `json:"status,omitempty"`
 }
 
 type TaskOutputMetadata struct {

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -17,7 +19,10 @@ import (
 
 // chatSessionTitleMaxLen caps the rename input. Long enough to fit a
 // meaningful summary, short enough to keep the dropdown row scannable.
-const chatSessionTitleMaxLen = 200
+const (
+	chatSessionTitleMaxLen             = 200
+	chatSessionFirstMessageTitleMaxLen = 80
+)
 
 // ---------------------------------------------------------------------------
 // Chat Sessions
@@ -27,6 +32,7 @@ type CreateChatSessionRequest struct {
 	AgentID             string  `json:"agent_id"`
 	Title               string  `json:"title"`
 	DefaultRepositoryID *string `json:"default_repository_id"`
+	ProjectID           *string `json:"project_id"`
 }
 
 func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
@@ -93,12 +99,55 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		defaultRepositoryID = repoUUID
 	}
 
+	projectContextKind := "loose"
+	var projectID pgtype.UUID
+	var projectSnapshot []byte
+	if req.ProjectID != nil && strings.TrimSpace(*req.ProjectID) != "" {
+		projectUUID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(*req.ProjectID), "project_id")
+		if !ok {
+			return
+		}
+		project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
+			ID:          projectUUID,
+			WorkspaceID: workspaceUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "project not found")
+			return
+		}
+		projectContextKind = "project"
+		projectID = projectUUID
+		snapshot, err := json.Marshal(ProjectContextSnapshot{
+			ID:          uuidToString(project.ID),
+			Title:       project.Title,
+			Icon:        textToPtr(project.Icon),
+			Status:      project.Status,
+			CapturedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+			WorkspaceID: uuidToString(project.WorkspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to capture project context")
+			return
+		}
+		projectSnapshot = snapshot
+	}
+
+	title := strings.TrimSpace(req.Title)
+	titleSource := "legacy"
+	if title != "" {
+		titleSource = "first_message"
+	}
+
 	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID:         workspaceUUID,
 		AgentID:             agentID,
 		CreatorID:           parseUUID(userID),
-		Title:               req.Title,
+		Title:               title,
 		DefaultRepositoryID: defaultRepositoryID,
+		ProjectID:           projectID,
+		ProjectContextKind:  projectContextKind,
+		ProjectSnapshot:     projectSnapshot,
+		TitleSource:         titleSource,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
@@ -132,15 +181,18 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
+	filters, ok := parseChatSessionListFilters(w, r)
+	if !ok {
+		return
+	}
 
-	// Two call sites → two row types with identical shape. Collect into a
-	// common response slice via small per-branch loops.
 	var resp []ChatSessionResponse
-	if status == "all" {
-		rows, err := h.Queries.ListAllChatSessionsByCreator(r.Context(), db.ListAllChatSessionsByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
+	if filters.status == "all" {
+		rows, err := h.Queries.ListAllChatSessionsByCreatorFiltered(r.Context(), db.ListAllChatSessionsByCreatorFilteredParams{
+			WorkspaceID: filters.workspaceID,
 			CreatorID:   parseUUID(userID),
+			Scope:       filters.scope,
+			ProjectID:   filters.projectID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
@@ -151,23 +203,14 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
 				continue
 			}
-			resp = append(resp, ChatSessionResponse{
-				ID:                  uuidToString(s.ID),
-				WorkspaceID:         uuidToString(s.WorkspaceID),
-				AgentID:             uuidToString(s.AgentID),
-				CreatorID:           uuidToString(s.CreatorID),
-				Title:               s.Title,
-				Status:              s.Status,
-				DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
-				HasUnread:           s.HasUnread,
-				CreatedAt:           timestampToString(s.CreatedAt),
-				UpdatedAt:           timestampToString(s.UpdatedAt),
-			})
+			resp = append(resp, chatSessionListAllFilteredRowToResponse(s))
 		}
 	} else {
-		rows, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
+		rows, err := h.Queries.ListChatSessionsByCreatorFiltered(r.Context(), db.ListChatSessionsByCreatorFilteredParams{
+			WorkspaceID: filters.workspaceID,
 			CreatorID:   parseUUID(userID),
+			Scope:       filters.scope,
+			ProjectID:   filters.projectID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
@@ -178,21 +221,145 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
 				continue
 			}
-			resp = append(resp, ChatSessionResponse{
-				ID:                  uuidToString(s.ID),
-				WorkspaceID:         uuidToString(s.WorkspaceID),
-				AgentID:             uuidToString(s.AgentID),
-				CreatorID:           uuidToString(s.CreatorID),
-				Title:               s.Title,
-				Status:              s.Status,
-				DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
-				HasUnread:           s.HasUnread,
-				CreatedAt:           timestampToString(s.CreatedAt),
-				UpdatedAt:           timestampToString(s.UpdatedAt),
-			})
+			resp = append(resp, chatSessionListFilteredRowToResponse(s))
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type chatSessionListFilters struct {
+	workspaceID pgtype.UUID
+	scope       pgtype.Text
+	projectID   pgtype.UUID
+	status      string
+}
+
+func parseChatSessionListFilters(w http.ResponseWriter, r *http.Request) (chatSessionListFilters, bool) {
+	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return chatSessionListFilters{}, false
+	}
+	filters := chatSessionListFilters{
+		workspaceID: workspaceUUID,
+		status:      r.URL.Query().Get("status"),
+	}
+	if filters.status == "" {
+		filters.status = "active"
+	}
+	if filters.status != "active" && filters.status != "all" {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return chatSessionListFilters{}, false
+	}
+
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		return filters, true
+	}
+	if scope != "loose" && scope != "project" {
+		writeError(w, http.StatusBadRequest, "invalid scope")
+		return chatSessionListFilters{}, false
+	}
+	filters.scope = pgtype.Text{String: scope, Valid: true}
+	if scope == "project" {
+		projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+		if projectID == "" {
+			writeError(w, http.StatusBadRequest, "project_id is required")
+			return chatSessionListFilters{}, false
+		}
+		projectUUID, ok := parseUUIDOrBadRequest(w, projectID, "project_id")
+		if !ok {
+			return chatSessionListFilters{}, false
+		}
+		filters.projectID = projectUUID
+	}
+	return filters, true
+}
+
+func (h *Handler) ListChatSidebar(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return
+	}
+
+	recentDays := int32(5)
+	if raw := strings.TrimSpace(r.URL.Query().Get("recent_days")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 30 {
+			writeError(w, http.StatusBadRequest, "recent_days must be between 1 and 30")
+			return
+		}
+		recentDays = int32(n)
+	}
+
+	params := db.ListRecentProjectChatSessionsByCreatorParams{
+		WorkspaceID: parseUUID(workspaceID),
+		CreatorID:   parseUUID(userID),
+		RecentDays:  recentDays,
+	}
+	projectRows, err := h.Queries.ListRecentProjectChatSessionsByCreator(r.Context(), params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
+		return
+	}
+	looseRows, err := h.Queries.ListRecentLooseChatSessionsByCreator(r.Context(), db.ListRecentLooseChatSessionsByCreatorParams{
+		WorkspaceID: parseUUID(workspaceID),
+		CreatorID:   parseUUID(userID),
+		RecentDays:  recentDays,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
+		return
+	}
+
+	projectIndex := make(map[string]int)
+	projects := make([]ChatSidebarProjectGroup, 0)
+	for _, row := range projectRows {
+		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
+			continue
+		}
+		projectID := uuidToString(row.GroupProjectID)
+		idx, exists := projectIndex[projectID]
+		if !exists {
+			idx = len(projects)
+			projectIndex[projectID] = idx
+			projects = append(projects, ChatSidebarProjectGroup{
+				Project: ChatSidebarProject{
+					ID:     projectID,
+					Title:  row.GroupProjectTitle,
+					Icon:   textToPtr(row.GroupProjectIcon),
+					Status: row.GroupProjectStatus,
+				},
+				Sessions: []ChatSessionResponse{},
+			})
+		}
+		projects[idx].Sessions = append(projects[idx].Sessions, chatSessionRecentProjectRowToResponse(row))
+	}
+
+	loose := make([]ChatSessionResponse, 0, len(looseRows))
+	for _, row := range looseRows {
+		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
+			continue
+		}
+		loose = append(loose, chatSessionRecentLooseRowToResponse(row))
+	}
+
+	writeJSON(w, http.StatusOK, ChatSidebarResponse{
+		Projects: projects,
+		Loose:    loose,
+	})
 }
 
 func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
@@ -282,6 +449,14 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	titleRaw, titleProvided := rawFields["title"]
 	repoRaw, repoProvided := rawFields["default_repository_id"]
+	if _, provided := rawFields["project_id"]; provided {
+		writeError(w, http.StatusBadRequest, "project_id cannot be updated")
+		return
+	}
+	if _, provided := rawFields["agent_id"]; provided {
+		writeError(w, http.StatusBadRequest, "agent_id cannot be updated")
+		return
+	}
 	if !titleProvided && !repoProvided {
 		writeError(w, http.StatusBadRequest, "no supported fields provided")
 		return
@@ -351,11 +526,10 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, chatSessionToResponse(updated))
 }
 
-// DeleteChatSession hard-deletes a chat session owned by the caller. The
-// row lock + cancel + delete run inside a single tx so a concurrent
-// SendChatMessage cannot enqueue a task that would later be orphaned by
-// the FK ON DELETE SET NULL on agent_task_queue.chat_session_id. Cancel
-// failure aborts the delete; events fire only after commit.
+// DeleteChatSession archives a chat session owned by the caller. The row lock,
+// cancel, and archive run inside a single tx so a concurrent SendChatMessage
+// cannot enqueue new work while the session is being removed from active
+// lists. The row stays durable for proposal, issue, and output provenance.
 func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -379,8 +553,8 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 
 	// FOR UPDATE on the chat_session row blocks any concurrent INSERT into
 	// agent_task_queue that references it (the FK validation needs a
-	// KEY SHARE lock). After we commit the delete, the blocked INSERT
-	// fails its FK check, so it can't land an orphaned task.
+	// KEY SHARE lock). The blocked sender resumes after commit and then sees
+	// status='archived' before it can enqueue durable work.
 	if _, err := qtx.LockChatSessionForDelete(r.Context(), session.ID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Already gone — treat as idempotent success.
@@ -397,14 +571,14 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := qtx.DeleteChatSession(r.Context(), session.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete chat session")
+	if err := qtx.ArchiveChatSession(r.Context(), session.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive chat session")
 		return
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("commit chat session delete failed", "session_id", sessionID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to commit chat session delete")
+		slog.Warn("commit chat session archive failed", "session_id", sessionID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to commit chat session archive")
 		return
 	}
 
@@ -413,7 +587,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	h.TaskService.BroadcastCancelledTasks(r.Context(), cancelled)
 
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
+	h.publishChat(protocol.EventChatSessionArchived, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionArchivedPayload{
 		ChatSessionID: resolvedSessionID,
 	})
 
@@ -495,6 +669,23 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if title := firstMessageChatTitle(req.Content); title != "" {
+		updated, err := h.Queries.SetChatSessionFirstMessageTitle(r.Context(), db.SetChatSessionFirstMessageTitleParams{
+			ID:    session.ID,
+			Title: title,
+		})
+		if err == nil {
+			resolvedSessionID := uuidToString(updated.ID)
+			h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
+				ChatSessionID: resolvedSessionID,
+				Title:         updated.Title,
+				UpdatedAt:     timestampToString(updated.UpdatedAt),
+			})
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("failed to set first-message chat title", "session_id", sessionID, "error", err)
+		}
+	}
+
 	// Back-fill chat_message_id on attachments that were uploaded against
 	// this session while the user was composing. The query only touches rows
 	// where chat_session_id matches AND chat_message_id IS NULL, so it cannot
@@ -549,6 +740,18 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		TaskID:    uuidToString(task.ID),
 		CreatedAt: timestampToString(task.CreatedAt),
 	})
+}
+
+func firstMessageChatTitle(content string) string {
+	title := strings.Join(strings.Fields(content), " ")
+	if title == "" {
+		return ""
+	}
+	runes := []rune(title)
+	if len(runes) > chatSessionFirstMessageTitleMaxLen {
+		return string(runes[:chatSessionFirstMessageTitleMaxLen])
+	}
+	return title
 }
 
 func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
@@ -731,6 +934,84 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) ListChatIssueProposals(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+
+	proposals, err := h.Queries.ListChatIssueProposalsBySession(r.Context(), db.ListChatIssueProposalsBySessionParams{
+		WorkspaceID:   workspaceUUID,
+		ChatSessionID: session.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list issue proposals")
+		return
+	}
+	items, err := h.Queries.ListChatIssueProposalItemsBySession(r.Context(), db.ListChatIssueProposalItemsBySessionParams{
+		WorkspaceID:   workspaceUUID,
+		ChatSessionID: session.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list issue proposals")
+		return
+	}
+
+	itemsByProposal := make(map[string][]ChatIssueProposalItemResponse, len(proposals))
+	for _, item := range items {
+		proposalID := uuidToString(item.ProposalID)
+		itemsByProposal[proposalID] = append(itemsByProposal[proposalID], chatIssueProposalItemToResponse(item))
+	}
+
+	resp := make([]ChatIssueProposalResponse, 0, len(proposals))
+	for _, proposal := range proposals {
+		proposalID := uuidToString(proposal.ID)
+		resp = append(resp, chatIssueProposalToResponse(proposal, itemsByProposal[proposalID]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"proposals": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListChatOutputs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	sessionID := chi.URLParam(r, "sessionId")
+
+	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	if !ok {
+		return
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+
+	rows, err := h.Queries.ListChatSessionOutputMetadata(r.Context(), db.ListChatSessionOutputMetadataParams{
+		WorkspaceID:   workspaceUUID,
+		ChatSessionID: session.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat outputs")
+		return
+	}
+	prefix := h.getIssuePrefix(r.Context(), workspaceUUID)
+	resp := chatOutputMetadataResponses(rows, prefix)
+	writeJSON(w, http.StatusOK, map[string]any{"outputs": resp, "total": len(resp)})
+}
+
 // ---------------------------------------------------------------------------
 // Task cancellation (user-facing, with ownership check)
 // ---------------------------------------------------------------------------
@@ -795,17 +1076,79 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type ChatSessionResponse struct {
-	ID                  string  `json:"id"`
-	WorkspaceID         string  `json:"workspace_id"`
-	AgentID             string  `json:"agent_id"`
-	CreatorID           string  `json:"creator_id"`
-	Title               string  `json:"title"`
-	Status              string  `json:"status"`
-	DefaultRepositoryID *string `json:"default_repository_id"`
+	ID                  string          `json:"id"`
+	WorkspaceID         string          `json:"workspace_id"`
+	AgentID             string          `json:"agent_id"`
+	CreatorID           string          `json:"creator_id"`
+	Title               string          `json:"title"`
+	Status              string          `json:"status"`
+	DefaultRepositoryID *string         `json:"default_repository_id"`
+	ProjectID           *string         `json:"project_id"`
+	ProjectContextKind  string          `json:"project_context_kind"`
+	ProjectSnapshot     json.RawMessage `json:"project_snapshot,omitempty"`
+	TitleSource         string          `json:"title_source"`
 	// Only populated by list endpoints — single-session fetches return false.
 	HasUnread bool   `json:"has_unread"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+type ProjectContextSnapshot struct {
+	ID          string  `json:"id"`
+	WorkspaceID string  `json:"workspace_id"`
+	Title       string  `json:"title"`
+	Icon        *string `json:"icon"`
+	Status      string  `json:"status"`
+	CapturedAt  string  `json:"captured_at"`
+}
+
+type ChatSidebarResponse struct {
+	Projects []ChatSidebarProjectGroup `json:"projects"`
+	Loose    []ChatSessionResponse     `json:"loose"`
+}
+
+type ChatSidebarProjectGroup struct {
+	Project  ChatSidebarProject    `json:"project"`
+	Sessions []ChatSessionResponse `json:"sessions"`
+}
+
+type ChatSidebarProject struct {
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Icon   *string `json:"icon"`
+	Status string  `json:"status"`
+}
+
+type ChatIssueProposalResponse struct {
+	ID                  string                          `json:"id"`
+	WorkspaceID         string                          `json:"workspace_id"`
+	ChatSessionID       string                          `json:"chat_session_id"`
+	SourceChatMessageID *string                         `json:"source_chat_message_id"`
+	SourceTaskID        *string                         `json:"source_task_id"`
+	ProposerAgentID     *string                         `json:"proposer_agent_id"`
+	Title               string                          `json:"title"`
+	Summary             *string                         `json:"summary"`
+	Status              string                          `json:"status"`
+	Items               []ChatIssueProposalItemResponse `json:"items"`
+	CreatedAt           string                          `json:"created_at"`
+	UpdatedAt           string                          `json:"updated_at"`
+}
+
+type ChatIssueProposalItemResponse struct {
+	ID               string          `json:"id"`
+	ProposalID       string          `json:"proposal_id"`
+	Position         int32           `json:"position"`
+	Title            string          `json:"title"`
+	Description      string          `json:"description"`
+	Priority         *string         `json:"priority"`
+	Labels           json.RawMessage `json:"labels"`
+	AssigneeType     *string         `json:"assignee_type"`
+	AssigneeID       *string         `json:"assignee_id"`
+	Status           string          `json:"status"`
+	IssueID          *string         `json:"issue_id"`
+	ApprovedSnapshot json.RawMessage `json:"approved_snapshot,omitempty"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
 }
 
 type ChatMessageResponse struct {
@@ -830,17 +1173,191 @@ type ChatMessageResponse struct {
 }
 
 func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
-	return ChatSessionResponse{
-		ID:                  uuidToString(s.ID),
-		WorkspaceID:         uuidToString(s.WorkspaceID),
-		AgentID:             uuidToString(s.AgentID),
-		CreatorID:           uuidToString(s.CreatorID),
-		Title:               s.Title,
-		Status:              s.Status,
-		DefaultRepositoryID: uuidToPtr(s.DefaultRepositoryID),
-		CreatedAt:           timestampToString(s.CreatedAt),
-		UpdatedAt:           timestampToString(s.UpdatedAt),
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		false,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionListFilteredRowToResponse(s db.ListChatSessionsByCreatorFilteredRow) ChatSessionResponse {
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		s.HasUnread,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionListAllFilteredRowToResponse(s db.ListAllChatSessionsByCreatorFilteredRow) ChatSessionResponse {
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		s.HasUnread,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionRecentProjectRowToResponse(s db.ListRecentProjectChatSessionsByCreatorRow) ChatSessionResponse {
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		s.HasUnread,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionRecentLooseRowToResponse(s db.ListRecentLooseChatSessionsByCreatorRow) ChatSessionResponse {
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		s.HasUnread,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionResponseFromFields(
+	id pgtype.UUID,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	creatorID pgtype.UUID,
+	title string,
+	status string,
+	defaultRepositoryID pgtype.UUID,
+	projectID pgtype.UUID,
+	projectContextKind string,
+	projectSnapshot []byte,
+	titleSource string,
+	hasUnread bool,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) ChatSessionResponse {
+	if projectContextKind == "" {
+		projectContextKind = "loose"
 	}
+	if titleSource == "" {
+		titleSource = "legacy"
+	}
+	return ChatSessionResponse{
+		ID:                  uuidToString(id),
+		WorkspaceID:         uuidToString(workspaceID),
+		AgentID:             uuidToString(agentID),
+		CreatorID:           uuidToString(creatorID),
+		Title:               title,
+		Status:              status,
+		DefaultRepositoryID: uuidToPtr(defaultRepositoryID),
+		ProjectID:           uuidToPtr(projectID),
+		ProjectContextKind:  projectContextKind,
+		ProjectSnapshot:     nullableJSONRawMessage(projectSnapshot),
+		TitleSource:         titleSource,
+		HasUnread:           hasUnread,
+		CreatedAt:           timestampToString(createdAt),
+		UpdatedAt:           timestampToString(updatedAt),
+	}
+}
+
+func nullableJSONRawMessage(raw []byte) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+func chatIssueProposalToResponse(row db.ChatIssueProposal, items []ChatIssueProposalItemResponse) ChatIssueProposalResponse {
+	if items == nil {
+		items = []ChatIssueProposalItemResponse{}
+	}
+	return ChatIssueProposalResponse{
+		ID:                  uuidToString(row.ID),
+		WorkspaceID:         uuidToString(row.WorkspaceID),
+		ChatSessionID:       uuidToString(row.ChatSessionID),
+		SourceChatMessageID: uuidToPtr(row.SourceChatMessageID),
+		SourceTaskID:        uuidToPtr(row.SourceTaskID),
+		ProposerAgentID:     uuidToPtr(row.ProposerAgentID),
+		Title:               row.Title,
+		Summary:             textToPtr(row.Summary),
+		Status:              row.Status,
+		Items:               items,
+		CreatedAt:           timestampToString(row.CreatedAt),
+		UpdatedAt:           timestampToString(row.UpdatedAt),
+	}
+}
+
+func chatIssueProposalItemToResponse(row db.ChatIssueProposalItem) ChatIssueProposalItemResponse {
+	return ChatIssueProposalItemResponse{
+		ID:               uuidToString(row.ID),
+		ProposalID:       uuidToString(row.ProposalID),
+		Position:         row.Position,
+		Title:            row.Title,
+		Description:      row.Description,
+		Priority:         textToPtr(row.Priority),
+		Labels:           jsonArrayOrEmpty(row.Labels),
+		AssigneeType:     textToPtr(row.AssigneeType),
+		AssigneeID:       uuidToPtr(row.AssigneeID),
+		Status:           row.Status,
+		IssueID:          uuidToPtr(row.IssueID),
+		ApprovedSnapshot: nullableJSONRawMessage(row.ApprovedSnapshot),
+		CreatedAt:        timestampToString(row.CreatedAt),
+		UpdatedAt:        timestampToString(row.UpdatedAt),
+	}
+}
+
+func jsonArrayOrEmpty(raw []byte) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(raw)
 }
 
 func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) ChatMessageResponse {

@@ -61,3 +61,69 @@ func TestLoadTaskOutputManifestRejectsLargeManifest(t *testing.T) {
 		t.Fatal("expected oversized manifest error")
 	}
 }
+
+func TestLoadStructuredTaskOutputsReadsAllManifests(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workDir, ".multica"), 0o755); err != nil {
+		t.Fatalf("create manifest dir: %v", err)
+	}
+	files := map[string]string{
+		TaskChatSummaryManifestRelativePath:    `{"version":1,"title":"Structured title"}`,
+		TaskIssueProposalsManifestRelativePath: `{"version":1,"proposals":[{"title":"Follow-ups","items":[{"title":"Create review flow","description":"Review proposed issues","priority":"medium","labels":["chat"]}]}]}`,
+		TaskOutputManifestRelativePath:         `{"outputs":[{"relative_path":"docs/chat.md","kind":"doc"}]}`,
+	}
+	for relativePath, content := range files {
+		if err := os.WriteFile(filepath.Join(workDir, relativePath), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+
+	structured := loadStructuredTaskOutputs(workDir, nil)
+	if structured == nil {
+		t.Fatal("structured outputs = nil")
+	}
+	if structured.ChatSummary == nil || structured.ChatSummary.Title != "Structured title" {
+		t.Fatalf("chat summary = %+v", structured.ChatSummary)
+	}
+	if structured.IssueProposals == nil || len(structured.IssueProposals.Proposals) != 1 {
+		t.Fatalf("issue proposals = %+v", structured.IssueProposals)
+	}
+	if got := structured.IssueProposals.Proposals[0].Items[0].Labels; len(got) != 1 || got[0] != "chat" {
+		t.Fatalf("proposal labels = %v", got)
+	}
+	if structured.Outputs == nil || len(structured.Outputs.Outputs) != 1 {
+		t.Fatalf("outputs = %+v", structured.Outputs)
+	}
+}
+
+func TestLoadStructuredTaskOutputsIgnoresInvalidManifestIndividually(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workDir, ".multica"), 0o755); err != nil {
+		t.Fatalf("create manifest dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workDir, TaskChatSummaryManifestRelativePath),
+		[]byte(`{"version":1,"title":"Still valid"}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write summary manifest: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workDir, TaskIssueProposalsManifestRelativePath),
+		[]byte(`{"version":1,"proposals":[`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write invalid proposals manifest: %v", err)
+	}
+
+	structured := loadStructuredTaskOutputs(workDir, nil)
+	if structured == nil {
+		t.Fatal("structured outputs = nil")
+	}
+	if structured.ChatSummary == nil || structured.ChatSummary.Title != "Still valid" {
+		t.Fatalf("chat summary = %+v", structured.ChatSummary)
+	}
+	if structured.IssueProposals != nil {
+		t.Fatalf("invalid issue proposals should be ignored, got %+v", structured.IssueProposals)
+	}
+}

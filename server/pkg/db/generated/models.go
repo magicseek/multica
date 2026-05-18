@@ -165,6 +165,37 @@ type AutopilotTrigger struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ChatIssueProposal struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	SourceChatMessageID pgtype.UUID        `json:"source_chat_message_id"`
+	SourceTaskID        pgtype.UUID        `json:"source_task_id"`
+	ProposerAgentID     pgtype.UUID        `json:"proposer_agent_id"`
+	Title               string             `json:"title"`
+	Summary             pgtype.Text        `json:"summary"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ChatIssueProposalItem struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProposalID       pgtype.UUID        `json:"proposal_id"`
+	Position         int32              `json:"position"`
+	Title            string             `json:"title"`
+	Description      string             `json:"description"`
+	Priority         pgtype.Text        `json:"priority"`
+	Labels           []byte             `json:"labels"`
+	AssigneeType     pgtype.Text        `json:"assignee_type"`
+	AssigneeID       pgtype.UUID        `json:"assignee_id"`
+	Status           string             `json:"status"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	ApprovedSnapshot []byte             `json:"approved_snapshot"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ChatMessage struct {
 	ID            pgtype.UUID        `json:"id"`
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
@@ -190,6 +221,10 @@ type ChatSession struct {
 	UnreadSince         pgtype.Timestamptz `json:"unread_since"`
 	RuntimeID           pgtype.UUID        `json:"runtime_id"`
 	DefaultRepositoryID pgtype.UUID        `json:"default_repository_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	ProjectContextKind  string             `json:"project_context_kind"`
+	ProjectSnapshot     []byte             `json:"project_snapshot"`
+	TitleSource         string             `json:"title_source"`
 }
 
 type Comment struct {

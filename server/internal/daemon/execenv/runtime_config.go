@@ -415,6 +415,15 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("{\"outputs\":[{\"relative_path\":\"docs/design.md\",\"kind\":\"doc\",\"size_bytes\":18342,\"mime_type\":\"text/markdown\"}]}\n")
 	b.WriteString("```\n\n")
 
+	b.WriteString("## Chat Structured Output Manifests\n\n")
+	b.WriteString("For chat tasks, the backend can ingest optional structured handoff files from `.multica/` when your run completes. ")
+	b.WriteString("Use these files only for metadata and proposals; do not create issues directly unless the user explicitly asks through the normal issue workflow.\n\n")
+	b.WriteString("- `.multica/chat-summary.json` updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n")
+	b.WriteString("- `.multica/issue-proposals.json` proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n")
+	b.WriteString("```json\n")
+	b.WriteString("{\"version\":1,\"proposals\":[{\"title\":\"Implementation follow-ups\",\"summary\":\"Suggested issues from this chat.\",\"items\":[{\"title\":\"Add chat issue proposal review flow\",\"description\":\"Let users edit and accept proposed issues.\",\"priority\":\"medium\",\"labels\":[\"chat\"]}]}]}\n")
+	b.WriteString("```\n\n")
+
 	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
 	b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
 	b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")

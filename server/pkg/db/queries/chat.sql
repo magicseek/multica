@@ -1,6 +1,28 @@
 -- name: CreateChatSession :one
-INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, runtime_id, default_repository_id)
-VALUES ($1, $2, $3, $4, (SELECT runtime_id FROM agent WHERE id = $2), sqlc.narg('default_repository_id'))
+INSERT INTO chat_session (
+    workspace_id,
+    agent_id,
+    creator_id,
+    title,
+    runtime_id,
+    default_repository_id,
+    project_id,
+    project_context_kind,
+    project_snapshot,
+    title_source
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    (SELECT runtime_id FROM agent WHERE id = $2),
+    sqlc.narg('default_repository_id'),
+    sqlc.narg('project_id'),
+    sqlc.arg('project_context_kind'),
+    sqlc.narg('project_snapshot'),
+    sqlc.arg('title_source')
+)
 RETURNING *;
 
 -- name: GetChatSession :one
@@ -28,14 +50,106 @@ FROM chat_session cs
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
 ORDER BY cs.updated_at DESC;
 
+-- name: ListChatSessionsByCreatorFiltered :many
+-- Complete list variant for route-owned chat views. `scope` narrows to loose
+-- sessions or one Project's sessions; absent scope preserves the old active
+-- list behavior.
+SELECT cs.*,
+       (cs.unread_since IS NOT NULL)::bool AS has_unread
+FROM chat_session cs
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND (
+      sqlc.narg('scope')::text IS NULL
+      OR (sqlc.narg('scope')::text = 'loose' AND cs.project_context_kind = 'loose')
+      OR (
+          sqlc.narg('scope')::text = 'project'
+          AND cs.project_context_kind = 'project'
+          AND cs.project_id = sqlc.narg('project_id')::uuid
+      )
+  )
+ORDER BY cs.updated_at DESC;
+
+-- name: ListAllChatSessionsByCreatorFiltered :many
+SELECT cs.*,
+       (cs.unread_since IS NOT NULL)::bool AS has_unread
+FROM chat_session cs
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND (
+      sqlc.narg('scope')::text IS NULL
+      OR (sqlc.narg('scope')::text = 'loose' AND cs.project_context_kind = 'loose')
+      OR (
+          sqlc.narg('scope')::text = 'project'
+          AND cs.project_context_kind = 'project'
+          AND cs.project_id = sqlc.narg('project_id')::uuid
+      )
+  )
+ORDER BY cs.updated_at DESC;
+
+-- name: ListRecentProjectChatSessionsByCreator :many
+-- Sidebar quick-access tree: active, private sessions updated within the
+-- requested rolling window, grouped by active Projects.
+SELECT
+    cs.*,
+    (cs.unread_since IS NOT NULL)::bool AS has_unread,
+    p.id AS group_project_id,
+    p.title AS group_project_title,
+    p.icon AS group_project_icon,
+    p.status AS group_project_status
+FROM chat_session cs
+JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND cs.project_context_kind = 'project'
+  AND cs.updated_at >= now() - (sqlc.arg('recent_days')::int * interval '1 day')
+  AND p.status NOT IN ('completed', 'cancelled')
+ORDER BY p.updated_at DESC, p.title ASC, cs.updated_at DESC;
+
+-- name: ListRecentLooseChatSessionsByCreator :many
+SELECT cs.*,
+       (cs.unread_since IS NOT NULL)::bool AS has_unread
+FROM chat_session cs
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND cs.project_context_kind = 'loose'
+  AND cs.updated_at >= now() - (sqlc.arg('recent_days')::int * interval '1 day')
+ORDER BY cs.updated_at DESC;
+
 -- name: UpdateChatSessionTitle :one
-UPDATE chat_session SET title = $2, updated_at = now()
+UPDATE chat_session SET title = $2, title_source = $3, updated_at = now()
 WHERE id = $1
+RETURNING *;
+
+-- name: SetChatSessionFirstMessageTitle :one
+UPDATE chat_session
+SET title = $2,
+    title_source = 'first_message',
+    updated_at = now()
+WHERE id = $1
+  AND btrim(title) = ''
+  AND title_source = 'legacy'
+RETURNING *;
+
+-- name: SetChatSessionAgentSummaryTitle :one
+UPDATE chat_session
+SET title = $2,
+    title_source = 'agent_summary',
+    updated_at = now()
+WHERE id = $1
+  AND title_source <> 'user'
 RETURNING *;
 
 -- name: UpdateChatSessionFields :one
 UPDATE chat_session SET
     title = COALESCE(sqlc.narg('title'), title),
+    title_source = CASE
+        WHEN sqlc.narg('title')::text IS NOT NULL THEN 'user'
+        ELSE title_source
+    END,
     default_repository_id = CASE
         WHEN sqlc.arg('set_default_repository_id')::bool THEN sqlc.narg('default_repository_id')
         ELSE default_repository_id
@@ -69,15 +183,14 @@ SELECT id FROM chat_session
 WHERE id = $1
 FOR UPDATE;
 
--- name: DeleteChatSession :exec
--- Hard delete. chat_message rows cascade via FK ON DELETE CASCADE; the
--- chat_session_id on agent_task_queue is set NULL by FK so completed/failed
--- task history survives the session being removed. Callers MUST run inside
--- the same transaction that holds LockChatSessionForDelete and that has
--- already cancelled any in-flight tasks (see CancelAgentTasksByChatSession)
--- so the daemon does not keep running work whose result has nowhere to
--- land.
-DELETE FROM chat_session WHERE id = $1;
+-- name: ArchiveChatSession :exec
+-- Soft-delete/archive. Keep the session row, messages, proposal provenance,
+-- chat-originated issue links, and output metadata discoverable while hiding
+-- the session from normal active lists.
+UPDATE chat_session
+SET status = 'archived',
+    updated_at = now()
+WHERE id = $1;
 
 -- name: TouchChatSession :exec
 UPDATE chat_session SET updated_at = now()
@@ -96,6 +209,14 @@ ORDER BY created_at ASC;
 -- name: GetChatMessage :one
 SELECT * FROM chat_message
 WHERE id = $1;
+
+-- name: GetAssistantChatMessageByTask :one
+SELECT * FROM chat_message
+WHERE chat_session_id = $1
+  AND task_id = $2
+  AND role = 'assistant'
+ORDER BY created_at DESC
+LIMIT 1;
 
 -- name: CreateChatTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id)
@@ -149,3 +270,187 @@ WHERE id = $1;
 -- unread boundary stable across multiple incoming replies.
 UPDATE chat_session SET unread_since = now()
 WHERE id = $1 AND unread_since IS NULL;
+
+-- name: CreateChatIssueProposal :one
+INSERT INTO chat_issue_proposal (
+    workspace_id,
+    chat_session_id,
+    source_chat_message_id,
+    source_task_id,
+    proposer_agent_id,
+    title,
+    summary
+) VALUES (
+    $1,
+    $2,
+    sqlc.narg('source_chat_message_id'),
+    sqlc.narg('source_task_id'),
+    sqlc.narg('proposer_agent_id'),
+    $3,
+    sqlc.narg('summary')
+) RETURNING *;
+
+-- name: DeleteChatIssueProposalsForTask :exec
+DELETE FROM chat_issue_proposal
+WHERE chat_session_id = $1
+  AND source_task_id = $2;
+
+-- name: ListChatIssueProposalItemsForTaskForUpdate :many
+SELECT cip.status AS proposal_status,
+       cipi.status AS item_status
+FROM chat_issue_proposal cip
+JOIN chat_issue_proposal_item cipi ON cipi.proposal_id = cip.id
+WHERE cip.chat_session_id = $1
+  AND cip.source_task_id = $2
+ORDER BY cip.created_at ASC, cipi.position ASC, cipi.created_at ASC
+FOR UPDATE OF cip, cipi;
+
+-- name: CreateChatIssueProposalItem :one
+INSERT INTO chat_issue_proposal_item (
+    proposal_id,
+    position,
+    title,
+    description,
+    priority,
+    labels,
+    assignee_type,
+    assignee_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    sqlc.narg('priority'),
+    sqlc.arg('labels'),
+    sqlc.narg('assignee_type'),
+    sqlc.narg('assignee_id')
+) RETURNING *;
+
+-- name: GetChatIssueProposal :one
+SELECT *
+FROM chat_issue_proposal
+WHERE id = $1;
+
+-- name: ListChatIssueProposalItemsByProposal :many
+SELECT *
+FROM chat_issue_proposal_item
+WHERE proposal_id = $1
+ORDER BY position ASC, created_at ASC;
+
+-- name: ListChatIssueProposalItemsByProposalForUpdate :many
+SELECT *
+FROM chat_issue_proposal_item
+WHERE proposal_id = $1
+ORDER BY position ASC, created_at ASC
+FOR UPDATE;
+
+-- name: UpdateChatIssueProposalItemDraft :one
+UPDATE chat_issue_proposal_item
+SET title = $3,
+    description = $4,
+    priority = sqlc.narg('priority'),
+    labels = sqlc.arg('labels'),
+    assignee_type = sqlc.narg('assignee_type'),
+    assignee_id = sqlc.narg('assignee_id'),
+    updated_at = now()
+WHERE id = $1
+  AND proposal_id = $2
+  AND status <> 'created'
+RETURNING *;
+
+-- name: MarkChatIssueProposalItemCreated :one
+UPDATE chat_issue_proposal_item
+SET status = 'created',
+    issue_id = $3,
+    approved_snapshot = $4,
+    updated_at = now()
+WHERE id = $1
+  AND proposal_id = $2
+  AND status = 'pending'
+RETURNING *;
+
+-- name: MarkUnselectedPendingChatIssueProposalItemsSkipped :exec
+UPDATE chat_issue_proposal_item
+SET status = 'skipped',
+    updated_at = now()
+WHERE proposal_id = $1
+  AND status = 'pending'
+  AND NOT (id = ANY(sqlc.arg('item_ids')::uuid[]));
+
+-- name: RestoreChatIssueProposalItem :one
+UPDATE chat_issue_proposal_item
+SET status = 'pending',
+    issue_id = NULL,
+    approved_snapshot = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND proposal_id = $2
+  AND status = 'skipped'
+RETURNING *;
+
+-- name: SkipPendingChatIssueProposalItems :exec
+UPDATE chat_issue_proposal_item
+SET status = 'skipped',
+    updated_at = now()
+WHERE proposal_id = $1
+  AND status = 'pending';
+
+-- name: SetChatIssueProposalStatus :one
+UPDATE chat_issue_proposal
+SET status = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: ListChatIssueProposalsBySession :many
+SELECT *
+FROM chat_issue_proposal
+WHERE workspace_id = $1
+  AND chat_session_id = $2
+ORDER BY
+  CASE status
+    WHEN 'pending' THEN 0
+    WHEN 'partially_accepted' THEN 1
+    WHEN 'accepted' THEN 2
+    ELSE 3
+  END,
+  created_at ASC;
+
+-- name: ListChatIssueProposalItemsBySession :many
+SELECT cipi.*
+FROM chat_issue_proposal_item cipi
+JOIN chat_issue_proposal cip ON cip.id = cipi.proposal_id
+WHERE cip.workspace_id = $1
+  AND cip.chat_session_id = $2
+ORDER BY cip.created_at ASC, cipi.position ASC, cipi.created_at ASC;
+
+-- name: ListChatSessionIssues :many
+SELECT *
+FROM issue
+WHERE workspace_id = $1
+  AND origin_type = 'chat_session'
+  AND origin_id = $2
+ORDER BY created_at ASC;
+
+-- name: ListChatSessionOutputMetadata :many
+SELECT
+  tom.*,
+  CASE
+    WHEN atq.chat_session_id = $2 THEN 'chat_task'::text
+    ELSE 'issue_task'::text
+  END AS source_type,
+  source_issue.id AS source_issue_id,
+  source_issue.title AS source_issue_title,
+  source_issue.number AS source_issue_number
+FROM task_output_metadata tom
+JOIN agent_task_queue atq ON atq.id = tom.task_id
+LEFT JOIN issue source_issue ON source_issue.id = atq.issue_id
+  AND source_issue.workspace_id = $1
+  AND source_issue.origin_type = 'chat_session'
+  AND source_issue.origin_id = $2
+WHERE tom.workspace_id = $1
+  AND (
+      atq.chat_session_id = $2
+      OR source_issue.id IS NOT NULL
+  )
+ORDER BY tom.created_at ASC, tom.filename ASC;

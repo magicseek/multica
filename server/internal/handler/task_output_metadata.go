@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,17 +31,21 @@ var validTaskOutputMetadataKinds = map[string]bool{
 }
 
 type TaskOutputMetadataResponse struct {
-	ID           string          `json:"id"`
-	WorkspaceID  string          `json:"workspace_id"`
-	RepositoryID *string         `json:"repository_id"`
-	TaskID       string          `json:"task_id"`
-	RelativePath string          `json:"relative_path"`
-	Filename     string          `json:"filename"`
-	Kind         string          `json:"kind"`
-	SizeBytes    *int64          `json:"size_bytes"`
-	MimeType     *string         `json:"mime_type"`
-	Metadata     json.RawMessage `json:"metadata"`
-	CreatedAt    string          `json:"created_at"`
+	ID                    string          `json:"id"`
+	WorkspaceID           string          `json:"workspace_id"`
+	RepositoryID          *string         `json:"repository_id"`
+	TaskID                string          `json:"task_id"`
+	RelativePath          string          `json:"relative_path"`
+	Filename              string          `json:"filename"`
+	Kind                  string          `json:"kind"`
+	SizeBytes             *int64          `json:"size_bytes"`
+	MimeType              *string         `json:"mime_type"`
+	Metadata              json.RawMessage `json:"metadata"`
+	CreatedAt             string          `json:"created_at"`
+	SourceType            *string         `json:"source_type,omitempty"`
+	SourceIssueID         *string         `json:"source_issue_id,omitempty"`
+	SourceIssueIdentifier *string         `json:"source_issue_identifier,omitempty"`
+	SourceIssueTitle      *string         `json:"source_issue_title,omitempty"`
 }
 
 type TaskOutputMetadataManifestRequest struct {
@@ -82,6 +87,42 @@ func taskOutputMetadataResponses(rows []db.TaskOutputMetadatum) []TaskOutputMeta
 	return out
 }
 
+func chatOutputMetadataToResponse(row db.ListChatSessionOutputMetadataRow, issuePrefix string) TaskOutputMetadataResponse {
+	resp := TaskOutputMetadataResponse{
+		ID:           uuidToString(row.ID),
+		WorkspaceID:  uuidToString(row.WorkspaceID),
+		RepositoryID: uuidToPtr(row.RepositoryID),
+		TaskID:       uuidToString(row.TaskID),
+		RelativePath: row.RelativePath,
+		Filename:     row.Filename,
+		Kind:         row.Kind,
+		SizeBytes:    int8ToPtr(row.SizeBytes),
+		MimeType:     textToPtr(row.MimeType),
+		Metadata:     jsonObjectOrEmpty(row.Metadata),
+		CreatedAt:    timestampToString(row.CreatedAt),
+		SourceType:   &row.SourceType,
+	}
+	if row.SourceIssueID.Valid {
+		resp.SourceIssueID = uuidToPtr(row.SourceIssueID)
+	}
+	if row.SourceIssueTitle.Valid {
+		resp.SourceIssueTitle = &row.SourceIssueTitle.String
+	}
+	if row.SourceIssueNumber.Valid {
+		identifier := fmt.Sprintf("%s-%d", issuePrefix, row.SourceIssueNumber.Int32)
+		resp.SourceIssueIdentifier = &identifier
+	}
+	return resp
+}
+
+func chatOutputMetadataResponses(rows []db.ListChatSessionOutputMetadataRow, issuePrefix string) []TaskOutputMetadataResponse {
+	out := make([]TaskOutputMetadataResponse, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, chatOutputMetadataToResponse(row, issuePrefix))
+	}
+	return out
+}
+
 func (h *Handler) taskWorkspaceUUIDForResponse(w http.ResponseWriter, r *http.Request, task db.AgentTaskQueue) (pgtype.UUID, string, bool) {
 	workspaceID := h.TaskService.ResolveTaskWorkspaceID(r.Context(), task)
 	if workspaceID == "" {
@@ -96,6 +137,10 @@ func (h *Handler) taskWorkspaceUUIDForResponse(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) ListTaskOutputMetadata(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	taskID := chi.URLParam(r, "taskId")
 	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task id")
 	if !ok {
@@ -112,6 +157,11 @@ func (h *Handler) ListTaskOutputMetadata(w http.ResponseWriter, r *http.Request)
 	}
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return
+	}
+	if task.ChatSessionID.Valid {
+		if _, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, uuidToString(task.ChatSessionID)); !ok {
+			return
+		}
 	}
 	rows, err := h.Queries.ListTaskOutputMetadata(r.Context(), db.ListTaskOutputMetadataParams{
 		TaskID:      taskUUID,
@@ -146,53 +196,89 @@ func (h *Handler) UploadTaskOutputMetadata(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	taskUUID := parseUUID(taskID)
+	rows, err := h.replaceTaskOutputMetadata(r, workspaceUUID, parseUUID(taskID), req)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errTaskOutputMetadataInvalid) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	resp := taskOutputMetadataResponses(rows)
+	chatSessionID := h.chatSessionIDForTaskOutputEvent(r.Context(), workspaceUUID, task)
+	h.publishTask(protocol.EventTaskOutputsUpdated, workspaceID, "daemon", "", taskID, map[string]any{
+		"task_id":         taskID,
+		"issue_id":        uuidToString(task.IssueID),
+		"chat_session_id": chatSessionID,
+		"count":           len(resp),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"outputs": resp, "total": len(resp)})
+}
+
+func (h *Handler) chatSessionIDForTaskOutputEvent(ctx context.Context, workspaceUUID pgtype.UUID, task db.AgentTaskQueue) string {
+	if task.ChatSessionID.Valid {
+		return uuidToString(task.ChatSessionID)
+	}
+	if !task.IssueID.Valid {
+		return ""
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          task.IssueID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		return ""
+	}
+	if !issue.OriginType.Valid || issue.OriginType.String != "chat_session" || !issue.OriginID.Valid {
+		return ""
+	}
+	return uuidToString(issue.OriginID)
+}
+
+var errTaskOutputMetadataInvalid = errors.New("invalid task output metadata")
+
+func (h *Handler) replaceTaskOutputMetadata(r *http.Request, workspaceUUID, taskUUID pgtype.UUID, req TaskOutputMetadataManifestRequest) ([]db.TaskOutputMetadatum, error) {
+	if len(req.Outputs) > maxTaskOutputMetadataItems {
+		return nil, fmt.Errorf("%w: outputs is limited to %d items", errTaskOutputMetadataInvalid, maxTaskOutputMetadataItems)
+	}
+
 	prepared := make([]db.CreateTaskOutputMetadataParams, 0, len(req.Outputs))
 	for i, item := range req.Outputs {
 		params, err := h.prepareTaskOutputMetadataParams(r, workspaceUUID, taskUUID, item)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("outputs[%d]: %s", i, err.Error()))
-			return
+			return nil, fmt.Errorf("%w: outputs[%d]: %s", errTaskOutputMetadataInvalid, i, err.Error())
 		}
 		prepared = append(prepared, params)
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
-		return
+		return nil, fmt.Errorf("failed to start task output metadata transaction: %w", err)
 	}
 	defer tx.Rollback(r.Context())
+
 	qtx := h.Queries.WithTx(tx)
 	if err := qtx.DeleteTaskOutputMetadataForTask(r.Context(), db.DeleteTaskOutputMetadataForTaskParams{
 		TaskID:      taskUUID,
 		WorkspaceID: workspaceUUID,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to replace task output metadata")
-		return
+		return nil, fmt.Errorf("failed to replace task output metadata: %w", err)
 	}
+
 	rows := make([]db.TaskOutputMetadatum, 0, len(prepared))
 	for _, params := range prepared {
 		row, err := qtx.CreateTaskOutputMetadata(r.Context(), params)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create task output metadata")
-			return
+			return nil, fmt.Errorf("failed to create task output metadata: %w", err)
 		}
 		rows = append(rows, row)
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit task output metadata")
-		return
+		return nil, fmt.Errorf("failed to commit task output metadata: %w", err)
 	}
-
-	resp := taskOutputMetadataResponses(rows)
-	h.publishTask(protocol.EventTaskOutputsUpdated, workspaceID, "daemon", "", taskID, map[string]any{
-		"task_id":         taskID,
-		"issue_id":        uuidToString(task.IssueID),
-		"chat_session_id": uuidToString(task.ChatSessionID),
-		"count":           len(resp),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{"outputs": resp, "total": len(resp)})
+	return rows, nil
 }
 
 func (h *Handler) prepareTaskOutputMetadataParams(r *http.Request, workspaceID, taskID pgtype.UUID, item TaskOutputMetadataManifestItem) (db.CreateTaskOutputMetadataParams, error) {

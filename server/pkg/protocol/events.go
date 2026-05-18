@@ -67,11 +67,14 @@ const (
 	EventSkillDeleted = "skill:deleted"
 
 	// Chat events
-	EventChatMessage        = "chat:message"
-	EventChatDone           = "chat:done"
-	EventChatSessionRead    = "chat:session_read"
-	EventChatSessionDeleted = "chat:session_deleted"
-	EventChatSessionUpdated = "chat:session_updated"
+	EventChatMessage               = "chat:message"
+	EventChatDone                  = "chat:done"
+	EventChatSessionRead           = "chat:session_read"
+	EventChatSessionArchived       = "chat:session_archived"
+	EventChatSessionDeleted        = "chat:session_deleted"
+	EventChatSessionUpdated        = "chat:session_updated"
+	EventChatIssueProposalsUpdated = "chat:issue_proposals_updated"
+	EventChatIssuesUpdated         = "chat:issues_updated"
 
 	// Project events
 	EventProjectCreated         = "project:created"
