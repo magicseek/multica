@@ -29,8 +29,10 @@ The complete product and architecture handoff is in these documents:
 - `CONTEXT.md`
 - `docs/adr/0002-private-project-associated-chat-sessions-and-issue-proposals.md`
 - `docs/project-associated-chat-sessions-plan.md`
+- `.trellis/tasks/05-18-project-associated-chat-sessions/sidebar-proposed-settings-plan.md`
 
 Treat `docs/project-associated-chat-sessions-plan.md` as the implementation plan. Treat the ADR as the durable architectural decision record. Treat `CONTEXT.md` as the glossary and domain boundary source of truth.
+Treat `sidebar-proposed-settings-plan.md` as the post-QA handoff for Chat Issues `Proposed`, sidebar IA, Recents pagination, and Settings Configure relocation.
 
 ## Scope
 
@@ -42,6 +44,9 @@ Major work areas:
 - add Project-associated Chat Session data model and sidebar navigation
 - add Project detail `Issues` / `Chats` tabs
 - add Chat Session `Chat` / `Issues` / `Outputs` tabs
+- present pending Chat Issue Proposal Items in a Chat Session `Issues` `Proposed` lane before Backlog without adding an Issue status
+- update sidebar IA with flat primary navigation, Projects, Recents, fixed bottom Settings, and inline loose-chat pagination
+- move Runtimes, Workflows, and Skills discovery into Settings under Configure while preserving direct URLs
 - let agents submit structured issue proposals through task completion metadata
 - let users edit and approve proposal items to create backlog issues atomically
 - aggregate output metadata from the chat task and from issues created by that chat

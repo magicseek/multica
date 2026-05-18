@@ -88,25 +88,59 @@ WHERE cs.workspace_id = $1
   )
 ORDER BY cs.updated_at DESC;
 
+-- name: ListSidebarProjects :many
+-- Sidebar Projects tree: active Projects are visible even when they have no
+-- recent Project-associated Chat Sessions.
+SELECT id, title, icon, status
+FROM project
+WHERE workspace_id = $1
+  AND status NOT IN ('completed', 'cancelled')
+ORDER BY updated_at DESC, title ASC, id DESC;
+
 -- name: ListRecentProjectChatSessionsByCreator :many
 -- Sidebar quick-access tree: active, private sessions updated within the
--- requested rolling window, grouped by active Projects.
+-- requested rolling window, capped per active Project.
 SELECT
-    cs.*,
-    (cs.unread_since IS NOT NULL)::bool AS has_unread,
-    p.id AS group_project_id,
-    p.title AS group_project_title,
-    p.icon AS group_project_icon,
-    p.status AS group_project_status
-FROM chat_session cs
-JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
-WHERE cs.workspace_id = $1
-  AND cs.creator_id = $2
-  AND cs.status = 'active'
-  AND cs.project_context_kind = 'project'
-  AND cs.updated_at >= now() - (sqlc.arg('recent_days')::int * interval '1 day')
-  AND p.status NOT IN ('completed', 'cancelled')
-ORDER BY p.updated_at DESC, p.title ASC, cs.updated_at DESC;
+    ranked.id,
+    ranked.workspace_id,
+    ranked.agent_id,
+    ranked.creator_id,
+    ranked.title,
+    ranked.status,
+    ranked.session_id,
+    ranked.work_dir,
+    ranked.runtime_id,
+    ranked.default_repository_id,
+    ranked.project_id,
+    ranked.project_context_kind,
+    ranked.project_snapshot,
+    ranked.title_source,
+    ranked.unread_since,
+    ranked.created_at,
+    ranked.updated_at,
+    ranked.has_unread,
+    ranked.group_project_id
+FROM (
+    SELECT
+        cs.*,
+        (cs.unread_since IS NOT NULL)::bool AS has_unread,
+        p.id AS group_project_id,
+        row_number() OVER (
+            PARTITION BY p.id
+            ORDER BY cs.updated_at DESC, cs.id DESC
+        ) AS project_session_rank
+    FROM chat_session cs
+    JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+    WHERE cs.workspace_id = $1
+      AND cs.creator_id = $2
+      AND cs.status = 'active'
+      AND cs.project_context_kind = 'project'
+      AND cs.agent_id = ANY(sqlc.arg('agent_ids')::uuid[])
+      AND cs.updated_at >= now() - (sqlc.arg('recent_days')::int * interval '1 day')
+      AND p.status NOT IN ('completed', 'cancelled')
+) ranked
+WHERE ranked.project_session_rank <= sqlc.arg('project_chat_limit')::int
+ORDER BY ranked.group_project_id, ranked.updated_at DESC, ranked.id DESC;
 
 -- name: ListRecentLooseChatSessionsByCreator :many
 SELECT cs.*,
@@ -116,8 +150,29 @@ WHERE cs.workspace_id = $1
   AND cs.creator_id = $2
   AND cs.status = 'active'
   AND cs.project_context_kind = 'loose'
+  AND cs.agent_id = ANY(sqlc.arg('agent_ids')::uuid[])
   AND cs.updated_at >= now() - (sqlc.arg('recent_days')::int * interval '1 day')
-ORDER BY cs.updated_at DESC;
+ORDER BY cs.updated_at DESC, cs.id DESC;
+
+-- name: ListOlderLooseChatSessionsByCreator :many
+SELECT cs.*,
+       (cs.unread_since IS NOT NULL)::bool AS has_unread
+FROM chat_session cs
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND cs.project_context_kind = 'loose'
+  AND cs.agent_id = ANY(sqlc.arg('agent_ids')::uuid[])
+  AND (
+      sqlc.narg('before_updated_at')::timestamptz IS NULL
+      OR cs.updated_at < sqlc.narg('before_updated_at')::timestamptz
+      OR (
+          cs.updated_at = sqlc.narg('before_updated_at')::timestamptz
+          AND cs.id < sqlc.narg('before_id')::uuid
+      )
+  )
+ORDER BY cs.updated_at DESC, cs.id DESC
+LIMIT sqlc.arg('limit')::int;
 
 -- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, title_source = $3, updated_at = now()

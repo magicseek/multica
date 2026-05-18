@@ -11,10 +11,16 @@ import {
   FlaskConical,
   Bell,
   Plug,
+  Monitor,
+  Workflow,
+  BookOpenText,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useNavigation } from "../../navigation";
+import { RuntimesPage } from "../../runtimes";
+import { WorkflowsPage } from "../../workflows";
+import { SkillsPage } from "../../skills";
 import { AccountTab } from "./account-tab";
 import { PreferencesTab } from "./preferences-tab";
 import { TokensTab } from "./tokens-tab";
@@ -32,6 +38,13 @@ const ACCOUNT_TAB_ICONS = {
   preferences: SlidersHorizontal,
   notifications: Bell,
   tokens: Key,
+} as const;
+
+const CONFIGURE_TAB_KEYS = ["runtimes", "workflows", "skills"] as const;
+const CONFIGURE_TAB_ICONS = {
+  runtimes: Monitor,
+  workflows: Workflow,
+  skills: BookOpenText,
 } as const;
 
 const WORKSPACE_TAB_KEYS = ["general", "repositories", "integrations", "labs", "members"] as const;
@@ -77,6 +90,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     () =>
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
+        ...CONFIGURE_TAB_KEYS,
         ...Object.values(WORKSPACE_TAB_VALUES),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
@@ -126,6 +140,20 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
             </TabsTrigger>
           ))}
 
+          {/* Configure group */}
+          <span className="px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground">
+            {t(($) => $.page.configure)}
+          </span>
+          {CONFIGURE_TAB_KEYS.map((key) => {
+            const Icon = CONFIGURE_TAB_ICONS[key];
+            return (
+              <TabsTrigger key={key} value={key}>
+                <Icon className="h-4 w-4" />
+                {t(($) => $.page.tabs[key])}
+              </TabsTrigger>
+            );
+          })}
+
           {/* Workspace group */}
           <span className="px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground truncate">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
@@ -144,11 +172,14 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
 
       {/* Right content */}
       <div className="flex-1 min-w-0 md:overflow-y-auto">
-        <div className="w-full max-w-3xl mx-auto p-4 md:p-6">
+        <div className="w-full max-w-6xl mx-auto p-4 md:p-6">
           <TabsContent value="profile"><AccountTab /></TabsContent>
           <TabsContent value="preferences"><PreferencesTab /></TabsContent>
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
           <TabsContent value="tokens"><TokensTab /></TabsContent>
+          <TabsContent value="runtimes"><RuntimesPage /></TabsContent>
+          <TabsContent value="workflows"><WorkflowsPage /></TabsContent>
+          <TabsContent value="skills"><SkillsPage /></TabsContent>
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
           <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
           <TabsContent value="integrations"><IntegrationsTab /></TabsContent>

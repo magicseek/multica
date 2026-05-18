@@ -9,6 +9,7 @@ import type {
   ChatIssueProposalItem,
   ChatSessionIssuesResponse,
   ChatSession,
+  ChatSidebarRecentsResponse,
   ChatSidebarResponse,
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
@@ -638,11 +639,27 @@ const ChatSidebarProjectGroupSchema = z.object({
 export const ChatSidebarResponseSchema = z.object({
   projects: z.array(ChatSidebarProjectGroupSchema).default([]),
   loose: z.array(ChatSessionSchema).default([]),
+  loose_next_cursor: z.string().nullable().default(null),
+  loose_has_more: z.boolean().default(false),
 }).loose();
 
 export const EMPTY_CHAT_SIDEBAR_RESPONSE: ChatSidebarResponse = {
   projects: [],
   loose: [],
+  loose_next_cursor: null,
+  loose_has_more: false,
+};
+
+export const ChatSidebarRecentsResponseSchema = z.object({
+  sessions: z.array(ChatSessionSchema).default([]),
+  next_cursor: z.string().nullable().default(null),
+  has_more: z.boolean().default(false),
+}).loose();
+
+export const EMPTY_CHAT_SIDEBAR_RECENTS_RESPONSE: ChatSidebarRecentsResponse = {
+  sessions: [],
+  next_cursor: null,
+  has_more: false,
 };
 
 export const ChatIssueProposalItemSchema = z.object({

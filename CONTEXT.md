@@ -58,6 +58,9 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - A **Project** may group zero or more **Project-Associated Chat Sessions**
 - A **Project-Associated Chat Session** remains visible only to its creator
 - A **Project-Associated Chat Session** is discovered through **Projects** navigation and the owning **Project** detail page
+- The **Projects** sidebar tree may show a small recent subset of **Project-Associated Chat Sessions** under each **Project**
+- The **Projects** sidebar tree lists all active **Projects**, even when a **Project** has no recent **Project-Associated Chat Sessions**
+- An expanded **Project** sidebar row shows at most three recent **Project-Associated Chat Sessions**
 - A **Project-Associated Chat Session** may be started from the Project navigation row action or from the owning **Project** detail page
 - A **Project-Associated Chat Session** remains as private history if its associated **Project** is archived or deleted
 - A **Project-Associated Chat Session** stores a creation-time **Project** snapshot so deleted Projects can still be represented in chat history
@@ -69,6 +72,17 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - A user-edited **Chat Session** title is not overwritten by an agent-provided summary title
 - Archiving or deleting a **Chat Session** does not delete its **Chat-Originated Issues** or **Output Metadata**
 - The workspace sidebar shows only active **Chat Sessions** updated in the last five days as a quick-access tree
+- The workspace sidebar may label loose **Chat Session** quick access as **Recents** while the full product concept remains **Chats**
+- The **Recents** sidebar section lists loose **Chat Sessions** only, not **Project-Associated Chat Sessions**
+- **Recents** initially shows active loose **Chat Sessions** updated in the last five days, then loads older active loose **Chat Sessions** in pages
+- **Recents** groups loose **Chat Sessions** by recency labels such as today, yesterday, the last five days, and older
+- **Recents** loads older loose **Chat Sessions** inline in the sidebar rather than navigating to the full **Chats** archive
+- Primary workspace navigation groups **Inbox**, **My Issues**, **Issues**, **Projects**, **Agents**, **Squads**, **Autopilot**, **Usage**, and **Recents** without a separate **Workspace** heading
+- **Runtimes**, **Workflows**, and **Skills** are **Configure** surfaces inside **Settings**, not primary workspace navigation entries
+- **Settings** groups its middle navigation as **Account**, **Configure**, and **Workspace**
+- The **Configure** settings group contains **Runtimes**, **Workflows**, and **Skills**
+- The workspace sidebar exposes **Settings** as one fixed bottom entry; settings subsections are discovered inside the **Settings** page
+- The workspace sidebar keeps **Settings** fixed at the bottom while the main navigation and expandable **Projects** and **Recents** lists scroll independently above it
 - A **Project-Associated Chat Session** provides the default **Project** for new **Chat-Originated Issues**
 - A **Chat-Originated Issue** keeps an explicit link to its source **Chat Session**
 - A **Chat-Originated Issue** is created after explicit user approval from a **Chat Issue Proposal** or issue creation flow
@@ -81,6 +95,11 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - A **Chat Issue Proposal Item** may include issue draft fields such as `title`, `description`, optional `priority`, optional `labels`, and optional `assignee_id`
 - A **Chat Issue Proposal** appears inline in the **Chat Session** conversation after the proposing agent message
 - The **Chat Session** Issues view shows the same **Chat Issue Proposal** objects for review and follow-up management
+- The **Chat Session** Issues view may present pending **Chat Issue Proposal Items** in a **Proposed** review lane before the normal **Backlog** issue lane
+- The **Chat Session** Issues view orders its Kanban lanes as **Proposed**, **Backlog**, and then the normal issue workflow lanes
+- A **Chat Issue Proposal Item** in the **Proposed** lane uses proposal review controls rather than normal issue drag-and-drop
+- Approving a **Chat Issue Proposal Item** removes it from **Proposed** and creates a real **Issue** in **Backlog**
+- Batch approval from the **Chat Session** Issues view defaults to all selected pending **Chat Issue Proposal Items** in that **Chat Session**, while preserving proposal grouping for context
 - A **Chat Session** has `Chat`, `Issues`, and `Outputs` page tabs
 - The **Chat Session** `Issues` tab count reflects created **Chat-Originated Issues**, not pending **Chat Issue Proposal Items**
 - The **Chat Session** `Outputs` tab count reflects available **Output Metadata** records
@@ -120,6 +139,15 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - "Project" was used to mean both a planning container and a codebase. Resolved: **Project** remains the issue-planning container; **Repository** is the code working target.
 - "Project chat" can imply a shared team conversation. Resolved: use **Project-Associated Chat Session** for private chats grouped under a project.
 - The primary **Chats** navigation entry can imply every chat in the workspace. Resolved: **Chats** is the total entry for loose **Chat Sessions**; **Project-Associated Chat Sessions** are found through **Projects** navigation and Project detail.
+- **Recents** is a sidebar quick-access label for recent loose **Chat Sessions**, not a replacement term for **Chat Session** or the full **Chats** archive.
+- The five-day **Recents** window is the initial quick-access window only; pagination can continue beyond five days through older active loose **Chat Sessions**.
+- **Recents** date grouping is a presentation aid and does not create a new **Chat Session** category.
+- The old **Workspace** sidebar section heading is removed; primary workspace navigation remains flat until expandable **Projects** and **Recents** sections.
+- Existing direct URLs for **Runtimes**, **Workflows**, and **Skills** remain addressable, but sidebar discovery moves under **Settings**.
+- Older **Project-Associated Chat Sessions** are recovered through the owning **Project** detail `Chats` view, not through **Recents**.
+- The owning **Project** detail `Chats` view remains the complete history surface for that **Project**'s **Project-Associated Chat Sessions**.
+- When a **Project** has more associated chat history than the sidebar subset, the sidebar links to the owning **Project** detail `Chats` view for the full list.
+- Project visibility in the **Projects** sidebar tree is based on active **Project** status, not on recent chat activity.
 - Starting a **Project-Associated Chat Session** from different surfaces should not create different flows. Resolved: Project navigation row actions and Project detail `Chats` use the same new-chat route with the selected Project context, and the actual session is created when the first message is sent.
 - Starting a loose **Chat Session** uses the top-level New Chat action and a new-chat route without Project context. The first send requires an explicit agent selection.
 - The old global Chat floating action button and floating window are replaced by page-level Chat routes as the primary workspace chat experience.
@@ -137,6 +165,7 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - Issues merely sharing the same **Project** as a **Chat Session** are not **Chat-Originated Issues** unless the explicit source link is present.
 - A **Chat Issue Proposal** is not an **Issue** until a user approves creation.
 - A **Chat Issue Proposal Item** is not an **Issue** and should not appear on issue boards before approval.
+- **Proposed** is a review lane for pending **Chat Issue Proposal Items** inside a **Chat Session** Issues view, not an **Issue** status.
 - A Markdown checklist in a chat reply is not a **Chat Issue Proposal** unless it is backed by a **Proposal Artifact**.
 - A **Proposal Artifact** does not let the proposing agent choose issue status. Created issues use backlog status from backend rules.
 - **Chat Issue Proposal Item** Project assignment is derived from the source **Chat Session** context. Project reassignment happens later through normal issue editing, not inside proposal approval.

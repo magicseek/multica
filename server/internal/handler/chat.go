@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -22,6 +23,10 @@ import (
 const (
 	chatSessionTitleMaxLen             = 200
 	chatSessionFirstMessageTitleMaxLen = 80
+	chatSidebarRecentDaysDefault       = int32(5)
+	chatSidebarProjectChatLimit        = int32(3)
+	chatSidebarRecentsLimitDefault     = int32(10)
+	chatSidebarRecentsLimitMax         = int32(50)
 )
 
 // ---------------------------------------------------------------------------
@@ -277,24 +282,12 @@ func parseChatSessionListFilters(w http.ResponseWriter, r *http.Request) (chatSe
 }
 
 func (h *Handler) ListChatSidebar(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := h.loadChatSidebarScope(w, r)
 	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-
-	member, ok := h.workspaceMember(w, r, workspaceID)
-	if !ok {
-		return
-	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
 
-	recentDays := int32(5)
+	recentDays := chatSidebarRecentDaysDefault
 	if raw := strings.TrimSpace(r.URL.Query().Get("recent_days")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > 30 {
@@ -304,62 +297,229 @@ func (h *Handler) ListChatSidebar(w http.ResponseWriter, r *http.Request) {
 		recentDays = int32(n)
 	}
 
-	params := db.ListRecentProjectChatSessionsByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
-		RecentDays:  recentDays,
-	}
-	projectRows, err := h.Queries.ListRecentProjectChatSessionsByCreator(r.Context(), params)
+	projectRows, err := h.Queries.ListSidebarProjects(r.Context(), scope.workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
 		return
 	}
-	looseRows, err := h.Queries.ListRecentLooseChatSessionsByCreator(r.Context(), db.ListRecentLooseChatSessionsByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
-		RecentDays:  recentDays,
+
+	projectGroups := make([]ChatSidebarProjectGroup, 0, len(projectRows))
+	projectIndex := make(map[string]int, len(projectRows))
+	for _, row := range projectRows {
+		projectID := uuidToString(row.ID)
+		projectIndex[projectID] = len(projectGroups)
+		projectGroups = append(projectGroups, ChatSidebarProjectGroup{
+			Project: ChatSidebarProject{
+				ID:     projectID,
+				Title:  row.Title,
+				Icon:   textToPtr(row.Icon),
+				Status: row.Status,
+			},
+			Sessions: []ChatSessionResponse{},
+		})
+	}
+
+	projectSessionRows, err := h.Queries.ListRecentProjectChatSessionsByCreator(r.Context(), db.ListRecentProjectChatSessionsByCreatorParams{
+		WorkspaceID:      scope.workspaceID,
+		CreatorID:        scope.creatorID,
+		AgentIds:         scope.allowedAgentIDs,
+		RecentDays:       recentDays,
+		ProjectChatLimit: chatSidebarProjectChatLimit,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
 		return
 	}
 
-	projectIndex := make(map[string]int)
-	projects := make([]ChatSidebarProjectGroup, 0)
-	for _, row := range projectRows {
-		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
-			continue
-		}
+	for _, row := range projectSessionRows {
 		projectID := uuidToString(row.GroupProjectID)
 		idx, exists := projectIndex[projectID]
 		if !exists {
-			idx = len(projects)
-			projectIndex[projectID] = idx
-			projects = append(projects, ChatSidebarProjectGroup{
-				Project: ChatSidebarProject{
-					ID:     projectID,
-					Title:  row.GroupProjectTitle,
-					Icon:   textToPtr(row.GroupProjectIcon),
-					Status: row.GroupProjectStatus,
-				},
-				Sessions: []ChatSessionResponse{},
-			})
+			continue
 		}
-		projects[idx].Sessions = append(projects[idx].Sessions, chatSessionRecentProjectRowToResponse(row))
+		projectGroups[idx].Sessions = append(projectGroups[idx].Sessions, chatSessionRecentProjectRowToResponse(row))
+	}
+
+	looseRows, err := h.Queries.ListRecentLooseChatSessionsByCreator(r.Context(), db.ListRecentLooseChatSessionsByCreatorParams{
+		WorkspaceID: scope.workspaceID,
+		CreatorID:   scope.creatorID,
+		AgentIds:    scope.allowedAgentIDs,
+		RecentDays:  recentDays,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
+		return
 	}
 
 	loose := make([]ChatSessionResponse, 0, len(looseRows))
 	for _, row := range looseRows {
-		if _, ok := allowed[uuidToString(row.AgentID)]; !ok {
-			continue
-		}
 		loose = append(loose, chatSessionRecentLooseRowToResponse(row))
 	}
 
-	writeJSON(w, http.StatusOK, ChatSidebarResponse{
-		Projects: projects,
-		Loose:    loose,
+	var looseNextCursor *string
+	var beforeUpdatedAt pgtype.Timestamptz
+	var beforeID pgtype.UUID
+	if len(looseRows) > 0 {
+		lastLoose := looseRows[len(looseRows)-1]
+		looseNextCursor = chatSidebarCursor(lastLoose.UpdatedAt, lastLoose.ID)
+		beforeUpdatedAt = lastLoose.UpdatedAt
+		beforeID = lastLoose.ID
+	}
+	moreLooseRows, err := h.Queries.ListOlderLooseChatSessionsByCreator(r.Context(), db.ListOlderLooseChatSessionsByCreatorParams{
+		WorkspaceID:     scope.workspaceID,
+		CreatorID:       scope.creatorID,
+		AgentIds:        scope.allowedAgentIDs,
+		BeforeUpdatedAt: beforeUpdatedAt,
+		BeforeID:        beforeID,
+		Limit:           1,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat sidebar")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ChatSidebarResponse{
+		Projects:        projectGroups,
+		Loose:           loose,
+		LooseNextCursor: looseNextCursor,
+		LooseHasMore:    len(moreLooseRows) > 0,
+	})
+}
+
+func (h *Handler) ListChatSidebarRecents(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.loadChatSidebarScope(w, r)
+	if !ok {
+		return
+	}
+
+	limit := chatSidebarRecentsLimitDefault
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > int(chatSidebarRecentsLimitMax) {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 50")
+			return
+		}
+		limit = int32(n)
+	}
+
+	var beforeUpdatedAt pgtype.Timestamptz
+	var beforeID pgtype.UUID
+	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
+		beforeUpdatedAt, beforeID, ok = parseChatSidebarCursor(w, raw)
+		if !ok {
+			return
+		}
+	}
+
+	rows, err := h.Queries.ListOlderLooseChatSessionsByCreator(r.Context(), db.ListOlderLooseChatSessionsByCreatorParams{
+		WorkspaceID:     scope.workspaceID,
+		CreatorID:       scope.creatorID,
+		AgentIds:        scope.allowedAgentIDs,
+		BeforeUpdatedAt: beforeUpdatedAt,
+		BeforeID:        beforeID,
+		Limit:           limit + 1,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat recents")
+		return
+	}
+
+	hasMore := int32(len(rows)) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+
+	sessions := make([]ChatSessionResponse, 0, len(rows))
+	for _, row := range rows {
+		sessions = append(sessions, chatSessionOlderLooseRowToResponse(row))
+	}
+
+	var nextCursor *string
+	if hasMore && len(rows) > 0 {
+		lastRow := rows[len(rows)-1]
+		nextCursor = chatSidebarCursor(lastRow.UpdatedAt, lastRow.ID)
+	}
+
+	writeJSON(w, http.StatusOK, ChatSidebarRecentsResponse{
+		Sessions:   sessions,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	})
+}
+
+type chatSidebarScope struct {
+	workspaceID     pgtype.UUID
+	creatorID       pgtype.UUID
+	allowedAgentIDs []pgtype.UUID
+}
+
+func (h *Handler) loadChatSidebarScope(w http.ResponseWriter, r *http.Request) (chatSidebarScope, bool) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return chatSidebarScope{}, false
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return chatSidebarScope{}, false
+	}
+
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return chatSidebarScope{}, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return chatSidebarScope{}, false
+	}
+
+	return chatSidebarScope{
+		workspaceID:     workspaceUUID,
+		creatorID:       parseUUID(userID),
+		allowedAgentIDs: allowedAgentUUIDs(allowed),
+	}, true
+}
+
+func allowedAgentUUIDs(allowed map[string]struct{}) []pgtype.UUID {
+	ids := make([]pgtype.UUID, 0, len(allowed))
+	for id := range allowed {
+		ids = append(ids, parseUUID(id))
+	}
+	return ids
+}
+
+func chatSidebarCursor(updatedAt pgtype.Timestamptz, id pgtype.UUID) *string {
+	if !updatedAt.Valid {
+		return nil
+	}
+	raw := updatedAt.Time.UTC().Format(time.RFC3339Nano) + "|" + uuidToString(id)
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(raw))
+	return &encoded
+}
+
+func parseChatSidebarCursor(w http.ResponseWriter, raw string) (pgtype.Timestamptz, pgtype.UUID, bool) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cursor")
+		return pgtype.Timestamptz{}, pgtype.UUID{}, false
+	}
+	timestampRaw, idRaw, ok := strings.Cut(string(decoded), "|")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid cursor")
+		return pgtype.Timestamptz{}, pgtype.UUID{}, false
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, timestampRaw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid cursor")
+		return pgtype.Timestamptz{}, pgtype.UUID{}, false
+	}
+	id, ok := parseUUIDOrBadRequest(w, idRaw, "cursor")
+	if !ok {
+		return pgtype.Timestamptz{}, pgtype.UUID{}, false
+	}
+	return pgtype.Timestamptz{Time: updatedAt, Valid: true}, id, true
 }
 
 func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
@@ -1103,8 +1263,16 @@ type ProjectContextSnapshot struct {
 }
 
 type ChatSidebarResponse struct {
-	Projects []ChatSidebarProjectGroup `json:"projects"`
-	Loose    []ChatSessionResponse     `json:"loose"`
+	Projects        []ChatSidebarProjectGroup `json:"projects"`
+	Loose           []ChatSessionResponse     `json:"loose"`
+	LooseNextCursor *string                   `json:"loose_next_cursor"`
+	LooseHasMore    bool                      `json:"loose_has_more"`
+}
+
+type ChatSidebarRecentsResponse struct {
+	Sessions   []ChatSessionResponse `json:"sessions"`
+	NextCursor *string               `json:"next_cursor"`
+	HasMore    bool                  `json:"has_more"`
 }
 
 type ChatSidebarProjectGroup struct {
@@ -1249,6 +1417,25 @@ func chatSessionRecentProjectRowToResponse(s db.ListRecentProjectChatSessionsByC
 }
 
 func chatSessionRecentLooseRowToResponse(s db.ListRecentLooseChatSessionsByCreatorRow) ChatSessionResponse {
+	return chatSessionResponseFromFields(
+		s.ID,
+		s.WorkspaceID,
+		s.AgentID,
+		s.CreatorID,
+		s.Title,
+		s.Status,
+		s.DefaultRepositoryID,
+		s.ProjectID,
+		s.ProjectContextKind,
+		s.ProjectSnapshot,
+		s.TitleSource,
+		s.HasUnread,
+		s.CreatedAt,
+		s.UpdatedAt,
+	)
+}
+
+func chatSessionOlderLooseRowToResponse(s db.ListOlderLooseChatSessionsByCreatorRow) ChatSessionResponse {
 	return chatSessionResponseFromFields(
 		s.ID,
 		s.WorkspaceID,

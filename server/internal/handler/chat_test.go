@@ -409,8 +409,12 @@ func TestDeleteChatSession_ArchivesInsteadOfHardDeleting(t *testing.T) {
 func TestListChatSidebar_FiltersRecentActiveProjectAndLooseSessions(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatSidebarAgent", []byte("[]"))
 	activeProjectID := createHandlerTestProject(t, "Sidebar Active Project", "planned")
+	emptyProjectID := createHandlerTestProject(t, "Sidebar Empty Project", "planned")
 	completedProjectID := createHandlerTestProject(t, "Sidebar Completed Project", "completed")
-	projectSessionID := createProjectChatSessionRow(t, agentID, activeProjectID, "Recent project chat", "now")
+	projectSessionID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, activeProjectID, "Recent project chat", "now()")
+	projectSession2ID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, activeProjectID, "Recent project chat 2", "now() - interval '1 hour'")
+	projectSession3ID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, activeProjectID, "Recent project chat 3", "now() - interval '2 hours'")
+	projectSession4ID := createProjectChatSessionRowWithUpdatedExpr(t, agentID, activeProjectID, "Recent project chat 4", "now() - interval '3 hours'")
 	looseSessionID := createLooseChatSessionRow(t, agentID, "Recent loose chat", "now")
 	staleSessionID := createLooseChatSessionRow(t, agentID, "Stale loose chat", "stale")
 	completedProjectSessionID := createProjectChatSessionRow(t, agentID, completedProjectID, "Completed project chat", "now")
@@ -427,16 +431,33 @@ func TestListChatSidebar_FiltersRecentActiveProjectAndLooseSessions(t *testing.T
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode sidebar response: %v", err)
 	}
-	if len(resp.Projects) != 1 {
-		t.Fatalf("expected one active project group, got %d: %+v", len(resp.Projects), resp.Projects)
+	if len(resp.Projects) != 2 {
+		t.Fatalf("expected two active project groups, got %d: %+v", len(resp.Projects), resp.Projects)
 	}
-	if resp.Projects[0].Project.ID != activeProjectID {
-		t.Fatalf("project group id: want %s, got %s", activeProjectID, resp.Projects[0].Project.ID)
+	activeGroup, ok := chatSidebarProjectGroup(resp.Projects, activeProjectID)
+	if !ok {
+		t.Fatalf("active project group missing from sidebar")
 	}
-	if !chatSessionListContains(resp.Projects[0].Sessions, projectSessionID) {
+	emptyGroup, ok := chatSidebarProjectGroup(resp.Projects, emptyProjectID)
+	if !ok {
+		t.Fatalf("empty active project group missing from sidebar")
+	}
+	if len(emptyGroup.Sessions) != 0 {
+		t.Fatalf("empty project should not have sessions, got %+v", emptyGroup.Sessions)
+	}
+	if len(activeGroup.Sessions) != 3 {
+		t.Fatalf("active project sessions should be capped at 3, got %d: %+v", len(activeGroup.Sessions), activeGroup.Sessions)
+	}
+	if !chatSessionListContains(activeGroup.Sessions, projectSessionID) {
 		t.Fatalf("active project session missing from sidebar")
 	}
-	if chatSessionListContains(resp.Projects[0].Sessions, completedProjectSessionID) {
+	if !chatSessionListContains(activeGroup.Sessions, projectSession2ID) || !chatSessionListContains(activeGroup.Sessions, projectSession3ID) {
+		t.Fatalf("expected top three project sessions in sidebar")
+	}
+	if chatSessionListContains(activeGroup.Sessions, projectSession4ID) {
+		t.Fatalf("fourth project session should be hidden by sidebar cap")
+	}
+	if chatSessionListContains(activeGroup.Sessions, completedProjectSessionID) {
 		t.Fatalf("completed project session should not be in active project sidebar")
 	}
 	if !chatSessionListContains(resp.Loose, looseSessionID) {
@@ -444,6 +465,59 @@ func TestListChatSidebar_FiltersRecentActiveProjectAndLooseSessions(t *testing.T
 	}
 	if chatSessionListContains(resp.Loose, staleSessionID) {
 		t.Fatalf("stale loose session should not be in five-day sidebar")
+	}
+	if !resp.LooseHasMore || resp.LooseNextCursor == nil {
+		t.Fatalf("sidebar should expose a cursor when older loose chats exist: %+v", resp)
+	}
+}
+
+func TestListChatSidebarRecents_PaginatesLooseOnly(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatSidebarRecentsAgent", []byte("[]"))
+	projectID := createHandlerTestProject(t, "Sidebar Recents Project", "planned")
+	loose1ID := createLooseChatSessionRowWithUpdatedExpr(t, agentID, "Loose newest", "now()")
+	_ = createProjectChatSessionRowWithUpdatedExpr(t, agentID, projectID, "Project chat should be excluded", "now() - interval '30 minutes'")
+	loose2ID := createLooseChatSessionRowWithUpdatedExpr(t, agentID, "Loose second", "now() - interval '1 day'")
+	loose3ID := createLooseChatSessionRowWithUpdatedExpr(t, agentID, "Loose third", "now() - interval '6 days'")
+
+	req := newRequest("GET", "/api/chat/sidebar/recents?limit=2", nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.ListChatSidebarRecents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListChatSidebarRecents first page: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var firstPage ChatSidebarRecentsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &firstPage); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if len(firstPage.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions on first page, got %d: %+v", len(firstPage.Sessions), firstPage.Sessions)
+	}
+	if firstPage.Sessions[0].ID != loose1ID || firstPage.Sessions[1].ID != loose2ID {
+		t.Fatalf("first page order should include newest loose chats only, got %+v", firstPage.Sessions)
+	}
+	if !firstPage.HasMore || firstPage.NextCursor == nil {
+		t.Fatalf("first page should report more loose chats: %+v", firstPage)
+	}
+
+	req = newRequest("GET", "/api/chat/sidebar/recents?limit=2&cursor="+*firstPage.NextCursor, nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	w = httptest.NewRecorder()
+	testHandler.ListChatSidebarRecents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListChatSidebarRecents second page: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var secondPage ChatSidebarRecentsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &secondPage); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if len(secondPage.Sessions) != 1 || secondPage.Sessions[0].ID != loose3ID {
+		t.Fatalf("second page should contain the remaining loose chat, got %+v", secondPage.Sessions)
+	}
+	if secondPage.HasMore || secondPage.NextCursor != nil {
+		t.Fatalf("second page should be terminal: %+v", secondPage)
 	}
 }
 
@@ -497,6 +571,11 @@ func createProjectChatSessionRow(t *testing.T, agentID, projectID, title, recenc
 	if recency == "stale" {
 		updatedExpr = "now() - interval '6 days'"
 	}
+	return createProjectChatSessionRowWithUpdatedExpr(t, agentID, projectID, title, updatedExpr)
+}
+
+func createProjectChatSessionRowWithUpdatedExpr(t *testing.T, agentID, projectID, title, updatedExpr string) string {
+	t.Helper()
 	var projectTitle string
 	if err := testPool.QueryRow(context.Background(), `SELECT title FROM project WHERE id = $1`, projectID).Scan(&projectTitle); err != nil {
 		t.Fatalf("load project title: %v", err)
@@ -527,6 +606,11 @@ func createLooseChatSessionRow(t *testing.T, agentID, title, recency string) str
 	if recency == "stale" {
 		updatedExpr = "now() - interval '6 days'"
 	}
+	return createLooseChatSessionRowWithUpdatedExpr(t, agentID, title, updatedExpr)
+}
+
+func createLooseChatSessionRowWithUpdatedExpr(t *testing.T, agentID, title, updatedExpr string) string {
+	t.Helper()
 	var sessionID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO chat_session (
@@ -542,6 +626,15 @@ func createLooseChatSessionRow(t *testing.T, agentID, title, recency string) str
 		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
 	})
 	return sessionID
+}
+
+func chatSidebarProjectGroup(groups []ChatSidebarProjectGroup, projectID string) (ChatSidebarProjectGroup, bool) {
+	for _, group := range groups {
+		if group.Project.ID == projectID {
+			return group, true
+		}
+	}
+	return ChatSidebarProjectGroup{}, false
 }
 
 func chatSessionListContains(sessions []ChatSessionResponse, sessionID string) bool {

@@ -4,6 +4,7 @@
     "my_issues": "My Issues",
     "issues": "Issues",
     "projects": "Projects",
+    "recents": "Recents",
     "chats": "Chats",
     "autopilots": "Autopilot",
     "agents": "Agents",
@@ -46,6 +47,12 @@
     "new_loose_chat_tooltip": "New loose chat",
     "loose_chats_label": "Loose",
     "no_recent_chats": "No recent chats",
+    "show_more_recents": "Show more",
+    "loading_more_recents": "Loading...",
+    "recents_today": "Today",
+    "recents_yesterday": "Yesterday",
+    "recents_last_five_days": "Last 5 days",
+    "recents_older": "Older",
     "untitled_chat": "Untitled"
   }
 }

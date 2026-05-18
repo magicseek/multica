@@ -17,14 +17,20 @@
   "worktree_path": "/Users/troy.huang/workspace/AI/multica-project-associated-chat-sessions",
   "commit": null,
   "pr_url": null,
-  "subtasks": [],
+  "subtasks": [
+    "Define sidebar data shape and loose Recents pagination",
+    "Implement flat sidebar IA with Projects, Recents, and fixed Settings",
+    "Move Runtimes, Workflows, and Skills into Settings Configure",
+    "Render Chat Issues Kanban with a non-status Proposed lane"
+  ],
   "children": [],
   "parent": null,
   "relatedFiles": [
     "CONTEXT.md",
     "docs/adr/0002-private-project-associated-chat-sessions-and-issue-proposals.md",
-    "docs/project-associated-chat-sessions-plan.md"
+    "docs/project-associated-chat-sessions-plan.md",
+    ".trellis/tasks/05-18-project-associated-chat-sessions/sidebar-proposed-settings-plan.md"
   ],
-  "notes": "Created from the 2026-05-18 design handoff. Use the dedicated worktree and split the implementation plan into Trellis-sized development slices before coding.",
+  "notes": "Created from the 2026-05-18 design handoff. Post-QA grill decisions are captured in sidebar-proposed-settings-plan.md. Trellis owns implementation; split into the listed slices before coding.",
   "meta": {}
 }

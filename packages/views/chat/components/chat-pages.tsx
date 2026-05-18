@@ -5,15 +5,11 @@ import {
   Bot,
   Check,
   ChevronDown,
-  ExternalLink,
   FileText,
   FolderKanban,
   MessageSquare,
   Plus,
-  RotateCcw,
-  Save,
   Sparkles,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +21,10 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { BOARD_STATUSES } from "@multica/core/issues/config";
+import { useUpdateIssue } from "@multica/core/issues/mutations";
+import { createIssueViewStore } from "@multica/core/issues/stores/view-store";
+import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import {
   chatIssueProposalsOptions,
   chatIssuesOptions,
@@ -38,9 +38,6 @@ import {
 import {
   useApproveChatIssueProposal,
   useCreateChatSession,
-  useDismissChatIssueProposal,
-  useRestoreChatIssueProposalItem,
-  useUpdateChatIssueProposalItem,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
 import { projectDetailOptions } from "@multica/core/projects/queries";
@@ -53,8 +50,9 @@ import type {
   ChatPendingTask,
   ChatSession,
   Issue,
-  MemberWithUser,
+  IssueStatus,
   TaskOutputMetadata,
+  UpdateIssueRequest,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -65,26 +63,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
-import { Input } from "@multica/ui/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@multica/ui/components/ui/select";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
-import { Textarea } from "@multica/ui/components/ui/textarea";
-import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useNavigation } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { TitleEditor } from "../../editor";
 import { ChatInput } from "./chat-input";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
+import { BoardView } from "../../issues/components/board-view";
 
 type ChatTab = "chat" | "issues" | "outputs";
+
+const chatIssuesViewStore = createIssueViewStore("chat_session_issues_view");
+const EMPTY_CHAT_PROPOSALS: ChatIssueProposal[] = [];
+const EMPTY_CHAT_ISSUES: Issue[] = [];
 
 export function ChatsPage() {
   const { t } = useT("chat");
@@ -429,60 +422,106 @@ export function ProjectChatsSurface({ projectId }: { projectId: string }) {
 
 function ChatIssuesPanel({ sessionId }: { sessionId: string }) {
   const { t } = useT("chat");
-  const wsId = useWorkspaceId();
-  const { data: proposals = [], isLoading: proposalsLoading } = useQuery(chatIssueProposalsOptions(sessionId));
+  const { data: proposals = EMPTY_CHAT_PROPOSALS, isLoading: proposalsLoading } = useQuery(chatIssueProposalsOptions(sessionId));
   const { data: issueData, isLoading: issuesLoading } = useQuery(chatIssuesOptions(sessionId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const issues = issueData?.issues ?? [];
+  const queryClient = useQueryClient();
+  const updateIssue = useUpdateIssue();
+  const approveProposal = useApproveChatIssueProposal(sessionId);
+  const issues = issueData?.issues ?? EMPTY_CHAT_ISSUES;
   const isLoading = proposalsLoading || issuesLoading;
+  const pendingProposalItems = useMemo(
+    () =>
+      proposals.flatMap((proposal) =>
+        proposal.items
+          .filter((item) => item.status === "pending")
+          .map((item) => ({ proposal, item })),
+      ),
+    [proposals],
+  );
+  const [selectedProposalItemIds, setSelectedProposalItemIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setSelectedProposalItemIds(new Set(pendingProposalItems.map(({ item }) => item.id)));
+  }, [pendingProposalItems]);
+
+  const handleSelectProposalItem = useCallback((itemId: string, checked: boolean) => {
+    setSelectedProposalItemIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(itemId);
+      else next.delete(itemId);
+      return next;
+    });
+  }, []);
+
+  const handleApproveSelected = useCallback(async () => {
+    const grouped = new Map<string, string[]>();
+    for (const { proposal, item } of pendingProposalItems) {
+      if (!selectedProposalItemIds.has(item.id)) continue;
+      const ids = grouped.get(proposal.id) ?? [];
+      ids.push(item.id);
+      grouped.set(proposal.id, ids);
+    }
+    if (grouped.size === 0) return;
+
+    try {
+      const selectedCount = [...grouped.values()].reduce((sum, itemIds) => sum + itemIds.length, 0);
+      await Promise.all(
+        [...grouped.entries()].map(([proposalId, itemIds]) =>
+          approveProposal.mutateAsync({ proposalId, itemIds }),
+        ),
+      );
+      toast.success(t(($) => $.pages.session.approve_success, { count: selectedCount }));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.approve_failed));
+    }
+  }, [approveProposal, pendingProposalItems, selectedProposalItemIds, t]);
+
+  const handleMoveIssue = useCallback(
+    (issueId: string, updates: Pick<UpdateIssueRequest, "status" | "assignee_type" | "assignee_id" | "position">) => {
+      updateIssue.mutate(
+        { id: issueId, ...updates },
+        {
+          onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: chatKeys.issues(sessionId) });
+          },
+        },
+      );
+    },
+    [queryClient, sessionId, updateIssue],
+  );
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6 px-5 py-5">
-      <section>
-        <SectionTitle title={t(($) => $.pages.session.proposals_title)} />
-        {isLoading ? (
+    <div className="flex h-full min-h-0 flex-col">
+      {isLoading ? (
+        <div className="mx-auto w-full max-w-4xl px-5 py-5">
           <ChatSessionListSkeleton />
-        ) : proposals.length === 0 && issues.length === 0 ? (
+        </div>
+      ) : proposals.length === 0 && issues.length === 0 ? (
+        <div className="mx-auto w-full max-w-4xl px-5 py-5">
           <EmptyState
             icon={<FolderKanban className="size-4" />}
             title={t(($) => $.pages.session.empty_issues_title)}
             description={t(($) => $.pages.session.empty_issues_description)}
           />
-        ) : proposals.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
-            {t(($) => $.pages.session.empty_proposals_description)}
-          </p>
-        ) : (
-          <div className="space-y-3">
-            {proposals.map((proposal) => (
-              <ProposalCard
-                key={proposal.id}
-                sessionId={sessionId}
-                proposal={proposal}
-                agents={agents}
-                members={members}
+        </div>
+      ) : (
+        <ViewStoreProvider store={chatIssuesViewStore}>
+          <BoardView
+            issues={issues}
+            visibleStatuses={BOARD_STATUSES as IssueStatus[]}
+            hiddenStatuses={[]}
+            onMoveIssue={handleMoveIssue}
+            leadingColumn={
+              <ProposedIssuesColumn
+                items={pendingProposalItems}
+                selectedIds={selectedProposalItemIds}
+                isApproving={approveProposal.isPending}
+                onSelectItem={handleSelectProposalItem}
+                onApproveSelected={handleApproveSelected}
               />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {(issues.length > 0 || proposals.length > 0) && (
-        <section>
-          <SectionTitle title={t(($) => $.pages.session.created_issues_title)} />
-          {issues.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
-              {t(($) => $.pages.session.empty_created_issues_description)}
-            </p>
-          ) : (
-            <div className="divide-y rounded-lg border">
-              {issues.map((issue) => (
-                <CreatedIssueRow key={issue.id} issue={issue} />
-              ))}
-            </div>
-          )}
-        </section>
+            }
+          />
+        </ViewStoreProvider>
       )}
     </div>
   );
@@ -632,6 +671,101 @@ function AgentPicker({
   );
 }
 
+type PendingProposalItem = {
+  proposal: ChatIssueProposal;
+  item: ChatIssueProposalItem;
+};
+
+function ProposedIssuesColumn({
+  items,
+  selectedIds,
+  isApproving,
+  onSelectItem,
+  onApproveSelected,
+}: {
+  items: PendingProposalItem[];
+  selectedIds: Set<string>;
+  isApproving: boolean;
+  onSelectItem: (itemId: string, checked: boolean) => void;
+  onApproveSelected: () => void;
+}) {
+  const { t } = useT("chat");
+  const selectedCount = items.filter(({ item }) => selectedIds.has(item.id)).length;
+
+  return (
+    <div className="flex w-[280px] shrink-0 flex-col rounded-xl bg-brand/5 p-2 ring-1 ring-brand/15">
+      <div className="mb-2 flex items-center justify-between gap-2 px-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-background text-brand">
+            <Sparkles className="size-3.5" />
+          </span>
+          <span className="truncate text-sm font-medium">{t(($) => $.pages.session.proposed_lane_title)}</span>
+          <span className="shrink-0 rounded-full bg-background px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+            {items.length}
+          </span>
+        </div>
+      </div>
+      <div className="min-h-[200px] flex-1 space-y-2 overflow-y-auto rounded-lg p-1">
+        {items.length === 0 ? (
+          <p className="py-8 text-center text-xs text-muted-foreground">
+            {t(($) => $.pages.session.empty_proposed_lane)}
+          </p>
+        ) : (
+          items.map(({ proposal, item }) => (
+            <div key={item.id} className="rounded-lg border bg-background p-3 text-sm shadow-xs">
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  checked={selectedIds.has(item.id)}
+                  onCheckedChange={(checked) => onSelectItem(item.id, checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 font-medium">{item.title}</div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{proposal.title}</div>
+                </div>
+              </div>
+              {item.description && (
+                <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{item.description}</p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-1">
+                {item.priority && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {item.priority}
+                  </Badge>
+                )}
+                {proposalLabelsToString(item.labels)
+                  .split(",")
+                  .map((label) => label.trim())
+                  .filter(Boolean)
+                  .slice(0, 3)
+                  .map((label) => (
+                    <Badge key={label} variant="secondary" className="max-w-full truncate text-[10px]">
+                      {label}
+                    </Badge>
+                  ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="mt-2 px-1">
+          <Button
+            type="button"
+            className="w-full"
+            size="sm"
+            disabled={selectedCount === 0 || isApproving}
+            onClick={onApproveSelected}
+          >
+            <Check className="size-3.5" />
+            {t(($) => $.pages.session.approve_selected, { count: selectedCount })}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function useVisibleChatAgents(): Agent[] {
   const wsId = useWorkspaceId();
   const userId = useAuthStore((s) => s.user?.id);
@@ -653,362 +787,6 @@ function useVisibleChatAgents(): Agent[] {
   );
 }
 
-function ProposalCard({
-  sessionId,
-  proposal,
-  agents,
-  members,
-}: {
-  sessionId: string;
-  proposal: ChatIssueProposal;
-  agents: Agent[];
-  members: MemberWithUser[];
-}) {
-  const { t } = useT("chat");
-  const pendingItemIds = useMemo(
-    () => proposal.items.filter((item) => item.status === "pending").map((item) => item.id),
-    [proposal.items],
-  );
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set(pendingItemIds));
-  const approveProposal = useApproveChatIssueProposal(sessionId);
-  const dismissProposal = useDismissChatIssueProposal(sessionId);
-  const hasPendingItems = pendingItemIds.length > 0;
-  const selectedCount = pendingItemIds.filter((id) => selectedIds.has(id)).length;
-
-  useEffect(() => {
-    setSelectedIds(new Set(pendingItemIds));
-  }, [pendingItemIds]);
-
-  const toggleItem = (itemId: string, checked: boolean) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(itemId);
-      else next.delete(itemId);
-      return next;
-    });
-  };
-
-  const handleApprove = () => {
-    const itemIds = pendingItemIds.filter((id) => selectedIds.has(id));
-    if (itemIds.length === 0) {
-      toast.error(t(($) => $.pages.session.no_selected_items));
-      return;
-    }
-    approveProposal.mutate(
-      { proposalId: proposal.id, itemIds },
-      {
-        onSuccess: (result) => {
-          toast.success(t(($) => $.pages.session.approve_success, { count: result.issues.length }));
-        },
-        onError: (err) => {
-          toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.approve_failed));
-        },
-      },
-    );
-  };
-
-  const handleDismiss = () => {
-    dismissProposal.mutate(proposal.id, {
-      onSuccess: () => toast.success(t(($) => $.pages.session.dismiss_success)),
-      onError: (err) => {
-        toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.dismiss_failed));
-      },
-    });
-  };
-
-  return (
-    <div className="rounded-lg border bg-card text-sm">
-      <div className="flex flex-col gap-3 border-b px-3 py-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2">
-            <Sparkles className="size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1 truncate font-medium">{proposal.title}</div>
-            <ProposalStatusBadge status={proposal.status} />
-          </div>
-          {proposal.summary && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{proposal.summary}</p>}
-          <p className="mt-2 text-xs text-muted-foreground">
-            {t(($) => $.pages.session.proposal_items, { count: proposal.items.length })}
-          </p>
-        </div>
-        {hasPendingItems && (
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleDismiss}
-              disabled={dismissProposal.isPending || approveProposal.isPending}
-            >
-              <X className="size-3.5" />
-              {t(($) => $.pages.session.dismiss)}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleApprove}
-              disabled={approveProposal.isPending || selectedCount === 0}
-            >
-              <Check className="size-3.5" />
-              {t(($) => $.pages.session.approve_selected, { count: selectedCount })}
-            </Button>
-          </div>
-        )}
-      </div>
-      <div className="divide-y">
-        {proposal.items.map((item) => (
-          <ProposalItemEditor
-            key={item.id}
-            sessionId={sessionId}
-            proposalId={proposal.id}
-            item={item}
-            agents={agents}
-            members={members}
-            selected={selectedIds.has(item.id)}
-            onSelectedChange={(checked) => toggleItem(item.id, checked)}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ProposalItemEditor({
-  sessionId,
-  proposalId,
-  item,
-  agents,
-  members,
-  selected,
-  onSelectedChange,
-}: {
-  sessionId: string;
-  proposalId: string;
-  item: ChatIssueProposalItem;
-  agents: Agent[];
-  members: MemberWithUser[];
-  selected: boolean;
-  onSelectedChange: (checked: boolean) => void;
-}) {
-  const { t } = useT("chat");
-  const wsPaths = useWorkspacePaths();
-  const updateItem = useUpdateChatIssueProposalItem(sessionId);
-  const restoreItem = useRestoreChatIssueProposalItem(sessionId);
-  const [title, setTitle] = useState(item.title);
-  const [description, setDescription] = useState(item.description);
-  const [priority, setPriority] = useState(item.priority ?? "none");
-  const [labels, setLabels] = useState(proposalLabelsToString(item.labels));
-  const [assigneeType, setAssigneeType] = useState<"none" | "member" | "agent">(
-    item.assignee_type === "member" || item.assignee_type === "agent" ? item.assignee_type : "none",
-  );
-  const [assigneeId, setAssigneeId] = useState(item.assignee_id ?? "");
-  const canEdit = item.status === "pending";
-  const assigneeOptions = assigneeType === "member"
-    ? members.map((member) => ({ id: member.user_id, label: member.name || member.email }))
-    : assigneeType === "agent"
-      ? agents.filter((agent) => !agent.archived_at).map((agent) => ({ id: agent.id, label: agent.name }))
-      : [];
-  const dirty =
-    title !== item.title ||
-    description !== item.description ||
-    priority !== (item.priority ?? "none") ||
-    labels !== proposalLabelsToString(item.labels) ||
-    assigneeType !== (item.assignee_type === "member" || item.assignee_type === "agent" ? item.assignee_type : "none") ||
-    assigneeId !== (item.assignee_id ?? "");
-
-  useEffect(() => {
-    setTitle(item.title);
-    setDescription(item.description);
-    setPriority(item.priority ?? "none");
-    setLabels(proposalLabelsToString(item.labels));
-    setAssigneeType(item.assignee_type === "member" || item.assignee_type === "agent" ? item.assignee_type : "none");
-    setAssigneeId(item.assignee_id ?? "");
-  }, [item]);
-
-  const handleAssigneeTypeChange = (value: string | null) => {
-    const nextType = value === "member" || value === "agent" ? value : "none";
-    setAssigneeType(nextType);
-    if (nextType === "none") {
-      setAssigneeId("");
-      return;
-    }
-    const options = nextType === "member"
-      ? members.map((member) => member.user_id)
-      : agents.filter((agent) => !agent.archived_at).map((agent) => agent.id);
-    setAssigneeId(options[0] ?? "");
-  };
-
-  const handleSave = () => {
-    const trimmedTitle = title.trim();
-    if (!trimmedTitle) {
-      toast.error(t(($) => $.pages.session.title_required));
-      return;
-    }
-    const normalizedAssigneeType = assigneeType === "none" ? null : assigneeType;
-    const normalizedAssigneeId = normalizedAssigneeType ? assigneeId : null;
-    if (normalizedAssigneeType && !normalizedAssigneeId) {
-      toast.error(t(($) => $.pages.session.assignee_required));
-      return;
-    }
-    updateItem.mutate(
-      {
-        proposalId,
-        itemId: item.id,
-        patch: {
-          title: trimmedTitle,
-          description: description.trim(),
-          priority: priority || null,
-          labels: splitProposalLabels(labels),
-          assignee_type: normalizedAssigneeType,
-          assignee_id: normalizedAssigneeId,
-        },
-      },
-      {
-        onSuccess: () => toast.success(t(($) => $.pages.session.save_success)),
-        onError: (err) => {
-          toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.save_failed));
-        },
-      },
-    );
-  };
-
-  const handleRestore = () => {
-    restoreItem.mutate(
-      { proposalId, itemId: item.id },
-      {
-        onSuccess: () => toast.success(t(($) => $.pages.session.restore_success)),
-        onError: (err) => {
-          toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.restore_failed));
-        },
-      },
-    );
-  };
-
-  return (
-    <div className={cn("px-3 py-3", item.status !== "pending" && "bg-muted/20")}>
-      <div className="flex items-start gap-3">
-        <Checkbox
-          checked={selected}
-          disabled={!canEdit}
-          onCheckedChange={(checked) => onSelectedChange(checked === true)}
-          className="mt-2"
-        />
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={!canEdit}
-              aria-label={t(($) => $.pages.session.issue_title_label)}
-              className="font-medium"
-            />
-            <div className="flex shrink-0 items-center gap-2">
-              <ProposalItemStatusBadge status={item.status} />
-              {item.issue_id && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  render={<AppLink href={wsPaths.issueDetail(item.issue_id)} />}
-                >
-                  <ExternalLink className="size-3.5" />
-                </Button>
-              )}
-            </div>
-          </div>
-          <Textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            disabled={!canEdit}
-            aria-label={t(($) => $.pages.session.issue_description_label)}
-            className="min-h-20 resize-y text-sm"
-          />
-          <div className="grid gap-2 sm:grid-cols-[160px_160px_minmax(0,1fr)]">
-            <Select value={priority} onValueChange={(value) => value && setPriority(value)} disabled={!canEdit}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PRIORITY_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {t(($) => $.pages.session.priority[option])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={assigneeType} onValueChange={handleAssigneeTypeChange} disabled={!canEdit}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{t(($) => $.pages.session.assignee_type.none)}</SelectItem>
-                <SelectItem value="member">{t(($) => $.pages.session.assignee_type.member)}</SelectItem>
-                <SelectItem value="agent">{t(($) => $.pages.session.assignee_type.agent)}</SelectItem>
-              </SelectContent>
-            </Select>
-            {assigneeType === "none" ? (
-              <Input value="" disabled placeholder={t(($) => $.pages.session.no_assignee)} />
-            ) : (
-              <Select value={assigneeId} onValueChange={(value) => setAssigneeId(value ?? "")} disabled={!canEdit}>
-                <SelectTrigger className="w-full">
-                  <SelectValue>
-                    {assigneeOptions.find((option) => option.id === assigneeId)?.label ??
-                      t(($) => $.pages.session.select_assignee)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {assigneeOptions.length === 0 ? (
-                    <SelectItem value="__none" disabled>
-                      {t(($) => $.pages.session.no_assignee_options)}
-                    </SelectItem>
-                  ) : (
-                    assigneeOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.label}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          <Input
-            value={labels}
-            onChange={(event) => setLabels(event.target.value)}
-            disabled={!canEdit}
-            placeholder={t(($) => $.pages.session.labels_placeholder)}
-          />
-          <div className="flex justify-end gap-2">
-            {item.status === "skipped" && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleRestore}
-                disabled={restoreItem.isPending}
-              >
-                <RotateCcw className="size-3.5" />
-                {t(($) => $.pages.session.restore)}
-              </Button>
-            )}
-            {canEdit && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleSave}
-                disabled={!dirty || updateItem.isPending}
-              >
-                <Save className="size-3.5" />
-                {t(($) => $.pages.session.save_item)}
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ProposalStatusBadge({ status }: { status: ChatIssueProposal["status"] }) {
   const { t } = useT("chat");
   const label =
@@ -1023,39 +801,6 @@ function ProposalStatusBadge({ status }: { status: ChatIssueProposal["status"] }
     <Badge variant="outline" className="text-muted-foreground">
       {label}
     </Badge>
-  );
-}
-
-function ProposalItemStatusBadge({ status }: { status: ChatIssueProposalItem["status"] }) {
-  const { t } = useT("chat");
-  const variant = status === "created" ? "default" : status === "skipped" ? "secondary" : "outline";
-  return (
-    <Badge variant={variant} className={status === "pending" ? "text-muted-foreground" : undefined}>
-      {status === "created"
-        ? t(($) => $.pages.session.item_status.created)
-        : status === "skipped"
-          ? t(($) => $.pages.session.item_status.skipped)
-          : t(($) => $.pages.session.item_status.pending)}
-    </Badge>
-  );
-}
-
-function CreatedIssueRow({ issue }: { issue: Issue }) {
-  const wsPaths = useWorkspacePaths();
-  return (
-    <AppLink
-      href={wsPaths.issueDetail(issue.id)}
-      className="flex min-h-12 items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-accent/40"
-    >
-      <FolderKanban className="size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{issue.title}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {issue.identifier} · {issue.status} · {issue.priority}
-        </div>
-      </div>
-      <ExternalLink className="size-3.5 shrink-0 text-muted-foreground" />
-    </AppLink>
   );
 }
 
@@ -1099,8 +844,6 @@ function InlineProposalCard({ proposal, href }: { proposal: ChatIssueProposal; h
   );
 }
 
-const PRIORITY_OPTIONS = ["none", "low", "medium", "high", "urgent"] as const;
-
 function proposalLabelsToString(labels: unknown[]): string {
   return labels
     .map((label) => {
@@ -1113,13 +856,6 @@ function proposalLabelsToString(labels: unknown[]): string {
     })
     .filter(Boolean)
     .join(", ");
-}
-
-function splitProposalLabels(value: string): string[] {
-  return value
-    .split(",")
-    .map((label) => label.trim())
-    .filter(Boolean);
 }
 
 function SectionTitle({ title }: { title: string }) {

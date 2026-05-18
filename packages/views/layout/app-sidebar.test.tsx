@@ -128,7 +128,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "pins") return { data: pins.current };
     if (queryKey[0] === "issue") return detail.current;
-    if (queryKey[0] === "chat-sidebar") return { data: { projects: [], loose: [] } };
+    if (queryKey[0] === "chat-sidebar") {
+      return { data: { projects: [], loose: [], loose_next_cursor: null, loose_has_more: false } };
+    }
     return { data: [] };
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),

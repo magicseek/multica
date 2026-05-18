@@ -64,6 +64,7 @@ import type {
   ChatSessionIssuesResponse,
   ChatSessionListParams,
   ChatSessionOutputsResponse,
+  ChatSidebarRecentsResponse,
   ChatSidebarResponse,
   ChatMessage,
   ChatPendingTask,
@@ -143,6 +144,7 @@ import {
   ChatSessionIssuesResponseSchema,
   ChatSessionListSchema,
   ChatSessionSchema,
+  ChatSidebarRecentsResponseSchema,
   ChatSidebarResponseSchema,
   ChildIssuesResponseSchema,
   CommentsListSchema,
@@ -159,6 +161,7 @@ import {
   EMPTY_CHAT_ISSUE_PROPOSALS,
   EMPTY_CHAT_SESSION,
   EMPTY_CHAT_SESSION_ISSUES_RESPONSE,
+  EMPTY_CHAT_SIDEBAR_RECENTS_RESPONSE,
   EMPTY_CHAT_SIDEBAR_RESPONSE,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
@@ -1436,6 +1439,17 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/chat/sidebar");
     return parseWithFallback(raw, ChatSidebarResponseSchema, EMPTY_CHAT_SIDEBAR_RESPONSE, {
       endpoint: "GET /api/chat/sidebar",
+    });
+  }
+
+  async listChatSidebarRecents(params?: { limit?: number; cursor?: string | null }): Promise<ChatSidebarRecentsResponse> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.cursor) search.set("cursor", params.cursor);
+    const query = search.toString() ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/chat/sidebar/recents${query}`);
+    return parseWithFallback(raw, ChatSidebarRecentsResponseSchema, EMPTY_CHAT_SIDEBAR_RECENTS_RESPONSE, {
+      endpoint: "GET /api/chat/sidebar/recents",
     });
   }
 

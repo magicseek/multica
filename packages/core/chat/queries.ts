@@ -2,6 +2,11 @@ import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type { ChatSessionListParams } from "../types";
 
+export interface ChatSidebarRecentsParams {
+  limit?: number;
+  cursor?: string | null;
+}
+
 // NOTE on workspace scoping:
 // `wsId` is used only as part of queryKey for cache isolation per workspace.
 // The actual workspace context comes from ApiClient's X-Workspace-Slug header,
@@ -17,6 +22,10 @@ export const chatKeys = {
       ? [...chatKeys.all(wsId), "sessions", normalizeChatSessionListParams(params)] as const
       : [...chatKeys.all(wsId), "sessions"] as const,
   sidebar: (wsId: string) => [...chatKeys.all(wsId), "sidebar"] as const,
+  sidebarRecents: (wsId: string, params?: ChatSidebarRecentsParams) =>
+    params
+      ? [...chatKeys.all(wsId), "sidebar-recents", normalizeChatSidebarRecentsParams(params)] as const
+      : [...chatKeys.all(wsId), "sidebar-recents"] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
   messages: (sessionId: string) => ["chat", "messages", sessionId] as const,
   issueProposals: (sessionId: string) => ["chat", "issue-proposals", sessionId] as const,
@@ -37,6 +46,13 @@ function normalizeChatSessionListParams(params: ChatSessionListParams) {
   };
 }
 
+function normalizeChatSidebarRecentsParams(params: ChatSidebarRecentsParams) {
+  return {
+    limit: params.limit ?? 10,
+    cursor: params.cursor ?? null,
+  };
+}
+
 export function chatSessionsOptions(wsId: string, params?: ChatSessionListParams) {
   const resolvedParams = params ?? { status: "all" as const };
   return queryOptions({
@@ -51,6 +67,15 @@ export function chatSidebarOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.sidebar(wsId),
     queryFn: () => api.listChatSidebar(),
+    enabled: !!wsId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatSidebarRecentsOptions(wsId: string, params?: ChatSidebarRecentsParams) {
+  return queryOptions({
+    queryKey: chatKeys.sidebarRecents(wsId, params),
+    queryFn: () => api.listChatSidebarRecents(params),
     enabled: !!wsId,
     staleTime: Infinity,
   });

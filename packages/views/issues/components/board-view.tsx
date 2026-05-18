@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -223,6 +223,7 @@ export function BoardView({
   myIssuesScope,
   myIssuesFilter,
   projectId,
+  leadingColumn,
 }: {
   issues: Issue[];
   assigneeGroups?: IssueAssigneeGroup[];
@@ -237,6 +238,8 @@ export function BoardView({
   myIssuesFilter?: MyIssuesFilter;
   /** When set, the per-column "+" pre-fills the project on the create form. */
   projectId?: string;
+  /** Optional non-draggable lane rendered before the normal board groups. */
+  leadingColumn?: ReactNode;
 }) {
   const { t } = useT("issues");
   const sortBy = useViewStore((s) => s.sortBy);
@@ -468,6 +471,7 @@ export function BoardView({
       onDragEnd={handleDragEnd}
     >
       <div className="flex flex-1 min-h-0 gap-4 overflow-x-auto p-4">
+        {leadingColumn}
         {groups.length === 0 ? (
           <div className="flex min-w-full flex-1 items-center justify-center text-sm text-muted-foreground">
             {t(($) => $.board.empty_grouping)}

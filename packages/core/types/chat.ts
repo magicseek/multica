@@ -53,6 +53,14 @@ export interface ChatSidebarProjectGroup {
 export interface ChatSidebarResponse {
   projects: ChatSidebarProjectGroup[];
   loose: ChatSession[];
+  loose_next_cursor: string | null;
+  loose_has_more: boolean;
+}
+
+export interface ChatSidebarRecentsResponse {
+  sessions: ChatSession[];
+  next_cursor: string | null;
+  has_more: boolean;
 }
 
 export type ChatIssueProposalStatus = "pending" | "accepted" | "partially_accepted" | "dismissed";

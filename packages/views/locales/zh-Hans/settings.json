@@ -16,12 +16,16 @@
   "page": {
     "title": "设置",
     "my_account": "我的账号",
+    "configure": "配置",
     "workspace_fallback": "工作区",
     "tabs": {
       "profile": "个人资料",
       "preferences": "偏好设置",
       "notifications": "通知",
       "tokens": "API Token",
+      "runtimes": "运行时",
+      "workflows": "Workflow",
+      "skills": "Skill",
       "general": "通用",
       "repositories": "代码仓库",
       "integrations": "集成",

@@ -76,6 +76,7 @@ export type {
   ChatSessionTitleSource,
   ChatSidebarProject,
   ChatSidebarProjectGroup,
+  ChatSidebarRecentsResponse,
   ChatSidebarResponse,
   ChatMessage,
   ApproveChatIssueProposalResponse,

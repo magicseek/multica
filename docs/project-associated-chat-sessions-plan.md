@@ -4,6 +4,12 @@
 > Date: 2026-05-18
 > Scope: Chat session navigation, Project association, chat-originated issues, proposal approval, chat outputs, daemon structured output handoff
 
+> Post-QA addendum: the Trellis handoff in
+> `.trellis/tasks/05-18-project-associated-chat-sessions/sidebar-proposed-settings-plan.md`
+> supersedes the earlier Sidebar and Chat Session Issues details where it
+> specifies `Proposed`, `Recents`, fixed bottom `Settings`, and Settings
+> `Configure` relocation.
+
 ## TL;DR
 
 Multica should move Chat from the global floating panel into page-level workspace routes.

@@ -83,6 +83,8 @@
       "created_issues_title": "已创建 issue",
       "empty_created_issues_description": "确认提案后，会在这里创建 backlog issue。",
       "proposals_title": "提案",
+      "proposed_lane_title": "Proposed",
+      "empty_proposed_lane": "暂无拟创建 issue",
       "empty_outputs_title": "暂无输出",
       "empty_outputs_description": "这个对话产生的 artifact 和 output metadata 会显示在这里。",
       "proposal_items": "{{count}} 个拟创建 issue",

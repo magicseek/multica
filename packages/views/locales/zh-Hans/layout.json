@@ -4,6 +4,7 @@
     "my_issues": "我的 Issue",
     "issues": "Issue",
     "projects": "项目",
+    "recents": "最近",
     "chats": "对话",
     "autopilots": "自动化",
     "agents": "智能体",
@@ -46,6 +47,12 @@
     "new_loose_chat_tooltip": "新建零散对话",
     "loose_chats_label": "Loose",
     "no_recent_chats": "最近没有对话",
+    "show_more_recents": "查看更多",
+    "loading_more_recents": "加载中...",
+    "recents_today": "今天",
+    "recents_yesterday": "昨天",
+    "recents_last_five_days": "最近 5 天",
+    "recents_older": "更早",
     "untitled_chat": "无标题"
   }
 }

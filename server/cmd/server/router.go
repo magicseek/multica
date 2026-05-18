@@ -612,6 +612,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/items/{itemId}/restore", h.RestoreChatIssueProposalItem)
 			})
 			r.Get("/api/chat/sidebar", h.ListChatSidebar)
+			r.Get("/api/chat/sidebar/recents", h.ListChatSidebarRecents)
 			r.Get("/api/chat/pending-tasks", h.ListPendingChatTasks)
 
 			// Inbox

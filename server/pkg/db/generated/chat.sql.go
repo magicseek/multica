@@ -1259,6 +1259,103 @@ func (q *Queries) ListChatSessionsByCreatorFiltered(ctx context.Context, arg Lis
 	return items, nil
 }
 
+const listOlderLooseChatSessionsByCreator = `-- name: ListOlderLooseChatSessionsByCreator :many
+SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.default_repository_id, cs.project_id, cs.project_context_kind, cs.project_snapshot, cs.title_source,
+       (cs.unread_since IS NOT NULL)::bool AS has_unread
+FROM chat_session cs
+WHERE cs.workspace_id = $1
+  AND cs.creator_id = $2
+  AND cs.status = 'active'
+  AND cs.project_context_kind = 'loose'
+  AND cs.agent_id = ANY($3::uuid[])
+  AND (
+      $4::timestamptz IS NULL
+      OR cs.updated_at < $4::timestamptz
+      OR (
+          cs.updated_at = $4::timestamptz
+          AND cs.id < $5::uuid
+      )
+  )
+ORDER BY cs.updated_at DESC, cs.id DESC
+LIMIT $6::int
+`
+
+type ListOlderLooseChatSessionsByCreatorParams struct {
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	CreatorID       pgtype.UUID        `json:"creator_id"`
+	AgentIds        []pgtype.UUID      `json:"agent_ids"`
+	BeforeUpdatedAt pgtype.Timestamptz `json:"before_updated_at"`
+	BeforeID        pgtype.UUID        `json:"before_id"`
+	Limit           int32              `json:"limit"`
+}
+
+type ListOlderLooseChatSessionsByCreatorRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	CreatorID           pgtype.UUID        `json:"creator_id"`
+	Title               string             `json:"title"`
+	SessionID           pgtype.Text        `json:"session_id"`
+	WorkDir             pgtype.Text        `json:"work_dir"`
+	Status              string             `json:"status"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	UnreadSince         pgtype.Timestamptz `json:"unread_since"`
+	RuntimeID           pgtype.UUID        `json:"runtime_id"`
+	DefaultRepositoryID pgtype.UUID        `json:"default_repository_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	ProjectContextKind  string             `json:"project_context_kind"`
+	ProjectSnapshot     []byte             `json:"project_snapshot"`
+	TitleSource         string             `json:"title_source"`
+	HasUnread           bool               `json:"has_unread"`
+}
+
+func (q *Queries) ListOlderLooseChatSessionsByCreator(ctx context.Context, arg ListOlderLooseChatSessionsByCreatorParams) ([]ListOlderLooseChatSessionsByCreatorRow, error) {
+	rows, err := q.db.Query(ctx, listOlderLooseChatSessionsByCreator,
+		arg.WorkspaceID,
+		arg.CreatorID,
+		arg.AgentIds,
+		arg.BeforeUpdatedAt,
+		arg.BeforeID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOlderLooseChatSessionsByCreatorRow{}
+	for rows.Next() {
+		var i ListOlderLooseChatSessionsByCreatorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.CreatorID,
+			&i.Title,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UnreadSince,
+			&i.RuntimeID,
+			&i.DefaultRepositoryID,
+			&i.ProjectID,
+			&i.ProjectContextKind,
+			&i.ProjectSnapshot,
+			&i.TitleSource,
+			&i.HasUnread,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingChatTasksByCreator = `-- name: ListPendingChatTasksByCreator :many
 SELECT atq.id AS task_id, atq.status, atq.chat_session_id
 FROM agent_task_queue atq
@@ -1311,14 +1408,16 @@ WHERE cs.workspace_id = $1
   AND cs.creator_id = $2
   AND cs.status = 'active'
   AND cs.project_context_kind = 'loose'
-  AND cs.updated_at >= now() - ($3::int * interval '1 day')
-ORDER BY cs.updated_at DESC
+  AND cs.agent_id = ANY($3::uuid[])
+  AND cs.updated_at >= now() - ($4::int * interval '1 day')
+ORDER BY cs.updated_at DESC, cs.id DESC
 `
 
 type ListRecentLooseChatSessionsByCreatorParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	CreatorID   pgtype.UUID `json:"creator_id"`
-	RecentDays  int32       `json:"recent_days"`
+	WorkspaceID pgtype.UUID   `json:"workspace_id"`
+	CreatorID   pgtype.UUID   `json:"creator_id"`
+	AgentIds    []pgtype.UUID `json:"agent_ids"`
+	RecentDays  int32         `json:"recent_days"`
 }
 
 type ListRecentLooseChatSessionsByCreatorRow struct {
@@ -1343,7 +1442,12 @@ type ListRecentLooseChatSessionsByCreatorRow struct {
 }
 
 func (q *Queries) ListRecentLooseChatSessionsByCreator(ctx context.Context, arg ListRecentLooseChatSessionsByCreatorParams) ([]ListRecentLooseChatSessionsByCreatorRow, error) {
-	rows, err := q.db.Query(ctx, listRecentLooseChatSessionsByCreator, arg.WorkspaceID, arg.CreatorID, arg.RecentDays)
+	rows, err := q.db.Query(ctx, listRecentLooseChatSessionsByCreator,
+		arg.WorkspaceID,
+		arg.CreatorID,
+		arg.AgentIds,
+		arg.RecentDays,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1383,27 +1487,54 @@ func (q *Queries) ListRecentLooseChatSessionsByCreator(ctx context.Context, arg 
 
 const listRecentProjectChatSessionsByCreator = `-- name: ListRecentProjectChatSessionsByCreator :many
 SELECT
-    cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.default_repository_id, cs.project_id, cs.project_context_kind, cs.project_snapshot, cs.title_source,
-    (cs.unread_since IS NOT NULL)::bool AS has_unread,
-    p.id AS group_project_id,
-    p.title AS group_project_title,
-    p.icon AS group_project_icon,
-    p.status AS group_project_status
-FROM chat_session cs
-JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
-WHERE cs.workspace_id = $1
-  AND cs.creator_id = $2
-  AND cs.status = 'active'
-  AND cs.project_context_kind = 'project'
-  AND cs.updated_at >= now() - ($3::int * interval '1 day')
-  AND p.status NOT IN ('completed', 'cancelled')
-ORDER BY p.updated_at DESC, p.title ASC, cs.updated_at DESC
+    ranked.id,
+    ranked.workspace_id,
+    ranked.agent_id,
+    ranked.creator_id,
+    ranked.title,
+    ranked.status,
+    ranked.session_id,
+    ranked.work_dir,
+    ranked.runtime_id,
+    ranked.default_repository_id,
+    ranked.project_id,
+    ranked.project_context_kind,
+    ranked.project_snapshot,
+    ranked.title_source,
+    ranked.unread_since,
+    ranked.created_at,
+    ranked.updated_at,
+    ranked.has_unread,
+    ranked.group_project_id
+FROM (
+    SELECT
+        cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.default_repository_id, cs.project_id, cs.project_context_kind, cs.project_snapshot, cs.title_source,
+        (cs.unread_since IS NOT NULL)::bool AS has_unread,
+        p.id AS group_project_id,
+        row_number() OVER (
+            PARTITION BY p.id
+            ORDER BY cs.updated_at DESC, cs.id DESC
+        ) AS project_session_rank
+    FROM chat_session cs
+    JOIN project p ON p.id = cs.project_id AND p.workspace_id = cs.workspace_id
+    WHERE cs.workspace_id = $1
+      AND cs.creator_id = $2
+      AND cs.status = 'active'
+      AND cs.project_context_kind = 'project'
+      AND cs.agent_id = ANY($3::uuid[])
+      AND cs.updated_at >= now() - ($4::int * interval '1 day')
+      AND p.status NOT IN ('completed', 'cancelled')
+) ranked
+WHERE ranked.project_session_rank <= $5::int
+ORDER BY ranked.group_project_id, ranked.updated_at DESC, ranked.id DESC
 `
 
 type ListRecentProjectChatSessionsByCreatorParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	CreatorID   pgtype.UUID `json:"creator_id"`
-	RecentDays  int32       `json:"recent_days"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	CreatorID        pgtype.UUID   `json:"creator_id"`
+	AgentIds         []pgtype.UUID `json:"agent_ids"`
+	RecentDays       int32         `json:"recent_days"`
+	ProjectChatLimit int32         `json:"project_chat_limit"`
 }
 
 type ListRecentProjectChatSessionsByCreatorRow struct {
@@ -1412,29 +1543,32 @@ type ListRecentProjectChatSessionsByCreatorRow struct {
 	AgentID             pgtype.UUID        `json:"agent_id"`
 	CreatorID           pgtype.UUID        `json:"creator_id"`
 	Title               string             `json:"title"`
+	Status              string             `json:"status"`
 	SessionID           pgtype.Text        `json:"session_id"`
 	WorkDir             pgtype.Text        `json:"work_dir"`
-	Status              string             `json:"status"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	UnreadSince         pgtype.Timestamptz `json:"unread_since"`
 	RuntimeID           pgtype.UUID        `json:"runtime_id"`
 	DefaultRepositoryID pgtype.UUID        `json:"default_repository_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	ProjectContextKind  string             `json:"project_context_kind"`
 	ProjectSnapshot     []byte             `json:"project_snapshot"`
 	TitleSource         string             `json:"title_source"`
+	UnreadSince         pgtype.Timestamptz `json:"unread_since"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	HasUnread           bool               `json:"has_unread"`
 	GroupProjectID      pgtype.UUID        `json:"group_project_id"`
-	GroupProjectTitle   string             `json:"group_project_title"`
-	GroupProjectIcon    pgtype.Text        `json:"group_project_icon"`
-	GroupProjectStatus  string             `json:"group_project_status"`
 }
 
 // Sidebar quick-access tree: active, private sessions updated within the
-// requested rolling window, grouped by active Projects.
+// requested rolling window, capped per active Project.
 func (q *Queries) ListRecentProjectChatSessionsByCreator(ctx context.Context, arg ListRecentProjectChatSessionsByCreatorParams) ([]ListRecentProjectChatSessionsByCreatorRow, error) {
-	rows, err := q.db.Query(ctx, listRecentProjectChatSessionsByCreator, arg.WorkspaceID, arg.CreatorID, arg.RecentDays)
+	rows, err := q.db.Query(ctx, listRecentProjectChatSessionsByCreator,
+		arg.WorkspaceID,
+		arg.CreatorID,
+		arg.AgentIds,
+		arg.RecentDays,
+		arg.ProjectChatLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1448,23 +1582,62 @@ func (q *Queries) ListRecentProjectChatSessionsByCreator(ctx context.Context, ar
 			&i.AgentID,
 			&i.CreatorID,
 			&i.Title,
+			&i.Status,
 			&i.SessionID,
 			&i.WorkDir,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.UnreadSince,
 			&i.RuntimeID,
 			&i.DefaultRepositoryID,
 			&i.ProjectID,
 			&i.ProjectContextKind,
 			&i.ProjectSnapshot,
 			&i.TitleSource,
+			&i.UnreadSince,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 			&i.HasUnread,
 			&i.GroupProjectID,
-			&i.GroupProjectTitle,
-			&i.GroupProjectIcon,
-			&i.GroupProjectStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSidebarProjects = `-- name: ListSidebarProjects :many
+SELECT id, title, icon, status
+FROM project
+WHERE workspace_id = $1
+  AND status NOT IN ('completed', 'cancelled')
+ORDER BY updated_at DESC, title ASC, id DESC
+`
+
+type ListSidebarProjectsRow struct {
+	ID     pgtype.UUID `json:"id"`
+	Title  string      `json:"title"`
+	Icon   pgtype.Text `json:"icon"`
+	Status string      `json:"status"`
+}
+
+// Sidebar Projects tree: active Projects are visible even when they have no
+// recent Project-associated Chat Sessions.
+func (q *Queries) ListSidebarProjects(ctx context.Context, workspaceID pgtype.UUID) ([]ListSidebarProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listSidebarProjects, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSidebarProjectsRow{}
+	for rows.Next() {
+		var i ListSidebarProjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Icon,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}

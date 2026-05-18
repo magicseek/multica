@@ -86,6 +86,8 @@
       "created_issues_title": "Created issues",
       "empty_created_issues_description": "Approved proposals will create backlog issues here.",
       "proposals_title": "Proposals",
+      "proposed_lane_title": "Proposed",
+      "empty_proposed_lane": "No proposed issues",
       "empty_outputs_title": "No outputs",
       "empty_outputs_description": "Artifact and output metadata from this chat will appear here.",
       "proposal_items": "{{count}} proposed issues",

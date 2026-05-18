@@ -19,15 +19,12 @@ import {
   Inbox,
   ListTodo,
   Bot,
-  Monitor,
-  Workflow,
   ChevronDown,
   ChevronRight,
   Settings,
   LogOut,
   Plus,
   Check,
-  BookOpenText,
   SquarePen,
   CircleUser,
   FolderKanban,
@@ -102,7 +99,12 @@ const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
-const EMPTY_CHAT_SIDEBAR: ChatSidebarResponse = { projects: [], loose: [] };
+const EMPTY_CHAT_SIDEBAR: ChatSidebarResponse = {
+  projects: [],
+  loose: [],
+  loose_next_cursor: null,
+  loose_has_more: false,
+};
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -115,9 +117,6 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
-  | "runtimes"
-  | "workflows"
-  | "skills"
   | "settings";
 
 // Static schema (key + icon) — labels resolved at render via useT("layout").
@@ -125,13 +124,11 @@ type NavLabelKey =
   | "inbox"
   | "my_issues"
   | "issues"
+  | "recents"
   | "autopilots"
   | "agents"
   | "squads"
   | "usage"
-  | "runtimes"
-  | "workflows"
-  | "skills"
   | "settings";
 
 const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
@@ -141,17 +138,10 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] 
 
 const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "issues", labelKey: "issues", icon: ListTodo },
-  { key: "autopilots", labelKey: "autopilots", icon: Zap },
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
+  { key: "autopilots", labelKey: "autopilots", icon: Zap },
   { key: "usage", labelKey: "usage", icon: BarChart3 },
-];
-
-const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
-  { key: "runtimes", labelKey: "runtimes", icon: Monitor },
-  { key: "workflows", labelKey: "workflows", icon: Workflow },
-  { key: "skills", labelKey: "skills", icon: BookOpenText },
-  { key: "settings", labelKey: "settings", icon: Settings },
 ];
 
 function DraftDot() {
@@ -494,38 +484,116 @@ function ProjectChatTreeItem({
 
 function LooseChatTree({
   sessions,
+  hasMore,
+  isLoadingMore,
   activePathname,
   sessionHref,
   labels,
   onNavigate,
+  onLoadMore,
 }: {
   sessions: ChatSession[];
+  hasMore: boolean;
+  isLoadingMore: boolean;
   activePathname: string;
   sessionHref: (sessionId: string) => string;
-  labels: { loose: string; empty: string; untitled: string };
+  labels: {
+    empty: string;
+    untitled: string;
+    showMore: string;
+    loadingMore: string;
+    today: string;
+    yesterday: string;
+    lastFiveDays: string;
+    older: string;
+  };
   onNavigate: (path: string) => void;
+  onLoadMore: () => void;
 }) {
+  const groups = groupSidebarChatsByDate(sessions, labels);
   return (
     <div className="ml-3 space-y-0.5">
-      <div className="flex h-6 items-center px-2 text-xs font-medium text-muted-foreground">
-        {labels.loose}
-      </div>
       {sessions.length === 0 ? (
         <div className="px-2 py-1 text-xs text-muted-foreground">{labels.empty}</div>
       ) : (
-        sessions.map((session) => (
-          <SidebarChatSessionRow
-            key={session.id}
-            session={session}
-            href={sessionHref(session.id)}
-            activePathname={activePathname}
-            untitledLabel={labels.untitled}
-            onNavigate={onNavigate}
-          />
+        groups.map((group) => (
+          <div key={group.key} className="space-y-0.5">
+            <div className="flex h-6 items-center px-2 text-xs font-medium text-muted-foreground">
+              {group.label}
+            </div>
+            {group.sessions.map((session) => (
+              <SidebarChatSessionRow
+                key={session.id}
+                session={session}
+                href={sessionHref(session.id)}
+                activePathname={activePathname}
+                untitledLabel={labels.untitled}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
         ))
+      )}
+      {hasMore && (
+        <SidebarMenuItem>
+          <button
+            type="button"
+            className="flex h-7 w-full items-center rounded-md px-2 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground disabled:opacity-60"
+            disabled={isLoadingMore}
+            onClick={onLoadMore}
+          >
+            {isLoadingMore ? labels.loadingMore : labels.showMore}
+          </button>
+        </SidebarMenuItem>
       )}
     </div>
   );
+}
+
+type RecentsDateLabels = {
+  today: string;
+  yesterday: string;
+  lastFiveDays: string;
+  older: string;
+};
+
+function groupSidebarChatsByDate(
+  sessions: ChatSession[],
+  labels: RecentsDateLabels,
+): { key: string; label: string; sessions: ChatSession[] }[] {
+  const today = { key: "today", label: labels.today, sessions: [] as ChatSession[] };
+  const yesterday = { key: "yesterday", label: labels.yesterday, sessions: [] as ChatSession[] };
+  const lastFiveDays = { key: "last-five-days", label: labels.lastFiveDays, sessions: [] as ChatSession[] };
+  const older = { key: "older", label: labels.older, sessions: [] as ChatSession[] };
+  for (const session of sessions) {
+    const dayDiff = calendarDayDiff(session.updated_at);
+    if (dayDiff === 0) today.sessions.push(session);
+    else if (dayDiff === 1) yesterday.sessions.push(session);
+    else if (dayDiff >= 2 && dayDiff < 5) lastFiveDays.sessions.push(session);
+    else older.sessions.push(session);
+  }
+  const buckets = [today, yesterday, lastFiveDays, older];
+  return buckets.filter((bucket) => bucket.sessions.length > 0);
+}
+
+function calendarDayDiff(value: string): number {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return Number.POSITIVE_INFINITY;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  return Math.floor((todayStart - dateStart) / (24 * 60 * 60 * 1000));
+}
+
+function mergeUniqueChatSessions(primary: ChatSession[], appended: ChatSession[]): ChatSession[] {
+  const seen = new Set<string>();
+  const merged: ChatSession[] = [];
+  for (const session of [...primary, ...appended]) {
+    if (seen.has(session.id)) continue;
+    seen.add(session.id);
+    merged.push(session);
+  }
+  return merged;
 }
 
 function SidebarChatSessionRow({
@@ -628,14 +696,46 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   // DOM under dnd-kit while its drop animation is still interpolating.
   const [localPinned, setLocalPinned] = useState<PinnedItem[]>(pinnedItems);
   const [projectsOpen, setProjectsOpen] = useState(true);
-  const [chatsOpen, setChatsOpen] = useState(true);
+  const [recentsOpen, setRecentsOpen] = useState(true);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
+  const [loadedRecents, setLoadedRecents] = useState<ChatSession[]>([]);
+  const [recentsCursor, setRecentsCursor] = useState<string | null>(chatSidebar.loose_next_cursor);
+  const [recentsHasMore, setRecentsHasMore] = useState(chatSidebar.loose_has_more);
+  const [isLoadingMoreRecents, setIsLoadingMoreRecents] = useState(false);
   const isDraggingRef = useRef(false);
   useEffect(() => {
     if (!isDraggingRef.current) {
       setLocalPinned(pinnedItems);
     }
   }, [pinnedItems]);
+
+  const looseSignature = React.useMemo(
+    () => chatSidebar.loose.map((session) => session.id).join("|"),
+    [chatSidebar.loose],
+  );
+  useEffect(() => {
+    setLoadedRecents([]);
+    setRecentsCursor(chatSidebar.loose_next_cursor);
+    setRecentsHasMore(chatSidebar.loose_has_more);
+  }, [chatSidebar.loose_has_more, chatSidebar.loose_next_cursor, looseSignature]);
+
+  const recentsSessions = React.useMemo(
+    () => mergeUniqueChatSessions(chatSidebar.loose, loadedRecents),
+    [chatSidebar.loose, loadedRecents],
+  );
+
+  const handleLoadMoreRecents = useCallback(async () => {
+    if (isLoadingMoreRecents || !recentsHasMore) return;
+    setIsLoadingMoreRecents(true);
+    try {
+      const page = await api.listChatSidebarRecents({ limit: 10, cursor: recentsCursor });
+      setLoadedRecents((current) => mergeUniqueChatSessions(current, page.sessions));
+      setRecentsCursor(page.next_cursor);
+      setRecentsHasMore(page.has_more);
+    } finally {
+      setIsLoadingMoreRecents(false);
+    }
+  }, [isLoadingMoreRecents, recentsCursor, recentsHasMore]);
 
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
@@ -872,10 +972,10 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {personalNav.map((item) => {
+                {[...personalNav, ...workspaceNav].map((item) => {
                   const href = p[item.key]();
                   const isActive = isNavActive(pathname, href);
-                  return (
+                  const node = (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton
                         isActive={isActive}
@@ -891,6 +991,95 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         )}
                       </SidebarMenuButton>
                     </SidebarMenuItem>
+                  );
+                  if (item.key === "issues") {
+                    return (
+                      <React.Fragment key={item.key}>
+                        {node}
+                        <SidebarTreeSection
+                          icon={FolderKanban}
+                          label={t(($) => $.nav.projects)}
+                          isActive={isNavActive(pathname, p.projects())}
+                          isOpen={projectsOpen}
+                          onToggle={() => setProjectsOpen((open) => !open)}
+                          actions={[
+                            {
+                              label: t(($) => $.sidebar.open_projects_tooltip),
+                              icon: ExternalLink,
+                              onClick: () => push(p.projects()),
+                            },
+                          ]}
+                        >
+                          {chatSidebar.projects.map((group) => {
+                            const projectOpen = expandedProjectIds.has(group.project.id);
+                            return (
+                              <ProjectChatTreeItem
+                                key={group.project.id}
+                                project={group.project}
+                                sessions={group.sessions}
+                                isOpen={projectOpen}
+                                activePathname={pathname}
+                                projectHref={p.projectDetail(group.project.id)}
+                                newChatHref={p.chatNew(group.project.id)}
+                                sessionHref={(sessionId) => p.chatSession(sessionId)}
+                                onToggle={() => toggleProjectExpansion(group.project.id)}
+                                onNavigate={push}
+                                labels={{
+                                  openProject: t(($) => $.sidebar.open_project_tooltip),
+                                  newChat: t(($) => $.sidebar.new_project_chat_tooltip),
+                                  untitled: t(($) => $.sidebar.untitled_chat),
+                                }}
+                              />
+                            );
+                          })}
+                        </SidebarTreeSection>
+                      </React.Fragment>
+                    );
+                  }
+                  if (item.key !== "usage") return node;
+                  return (
+                    <React.Fragment key={item.key}>
+                      {node}
+                      <SidebarTreeSection
+                        icon={MessageSquare}
+                        label={t(($) => $.nav.recents)}
+                        isActive={isNavActive(pathname, p.chats())}
+                        isOpen={recentsOpen}
+                        onToggle={() => setRecentsOpen((open) => !open)}
+                        actions={[
+                          {
+                            label: t(($) => $.sidebar.open_chats_tooltip),
+                            icon: ExternalLink,
+                            onClick: () => push(p.chats()),
+                          },
+                          {
+                            label: t(($) => $.sidebar.new_loose_chat_tooltip),
+                            icon: SquarePen,
+                            onClick: () => push(p.chatNew()),
+                          },
+                        ]}
+                      >
+                        <LooseChatTree
+                          sessions={recentsSessions}
+                          hasMore={recentsHasMore}
+                          isLoadingMore={isLoadingMoreRecents}
+                          activePathname={pathname}
+                          sessionHref={(sessionId) => p.chatSession(sessionId)}
+                          onNavigate={push}
+                          onLoadMore={handleLoadMoreRecents}
+                          labels={{
+                            empty: t(($) => $.sidebar.no_recent_chats),
+                            untitled: t(($) => $.sidebar.untitled_chat),
+                            showMore: t(($) => $.sidebar.show_more_recents),
+                            loadingMore: t(($) => $.sidebar.loading_more_recents),
+                            today: t(($) => $.sidebar.recents_today),
+                            yesterday: t(($) => $.sidebar.recents_yesterday),
+                            lastFiveDays: t(($) => $.sidebar.recents_last_five_days),
+                            older: t(($) => $.sidebar.recents_older),
+                          }}
+                        />
+                      </SidebarTreeSection>
+                    </React.Fragment>
                   );
                 })}
               </SidebarMenu>
@@ -931,137 +1120,27 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
               </SidebarGroup>
             </Collapsible>
           )}
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {workspaceNav.map((item) => {
-                  const href = p[item.key]();
-                  const isActive = isNavActive(pathname, href);
-                  const node = (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <item.icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                  if (item.key !== "issues") return node;
-                  return (
-                    <React.Fragment key={item.key}>
-                      {node}
-                      <SidebarTreeSection
-                        icon={FolderKanban}
-                        label={t(($) => $.nav.projects)}
-                        isActive={isNavActive(pathname, p.projects())}
-                        isOpen={projectsOpen}
-                        onToggle={() => setProjectsOpen((open) => !open)}
-                        actions={[
-                          {
-                            label: t(($) => $.sidebar.open_projects_tooltip),
-                            icon: ExternalLink,
-                            onClick: () => push(p.projects()),
-                          },
-                        ]}
-                      >
-                        {chatSidebar.projects.map((group) => {
-                          const projectOpen = expandedProjectIds.has(group.project.id);
-                          return (
-                            <ProjectChatTreeItem
-                              key={group.project.id}
-                              project={group.project}
-                              sessions={group.sessions}
-                              isOpen={projectOpen}
-                              activePathname={pathname}
-                              projectHref={p.projectDetail(group.project.id)}
-                              newChatHref={p.chatNew(group.project.id)}
-                              sessionHref={(sessionId) => p.chatSession(sessionId)}
-                              onToggle={() => toggleProjectExpansion(group.project.id)}
-                              onNavigate={push}
-                              labels={{
-                                openProject: t(($) => $.sidebar.open_project_tooltip),
-                                newChat: t(($) => $.sidebar.new_project_chat_tooltip),
-                                untitled: t(($) => $.sidebar.untitled_chat),
-                              }}
-                            />
-                          );
-                        })}
-                      </SidebarTreeSection>
-                      <SidebarTreeSection
-                        icon={MessageSquare}
-                        label={t(($) => $.nav.chats)}
-                        isActive={isNavActive(pathname, p.chats())}
-                        isOpen={chatsOpen}
-                        onToggle={() => setChatsOpen((open) => !open)}
-                        actions={[
-                          {
-                            label: t(($) => $.sidebar.open_chats_tooltip),
-                            icon: ExternalLink,
-                            onClick: () => push(p.chats()),
-                          },
-                          {
-                            label: t(($) => $.sidebar.new_loose_chat_tooltip),
-                            icon: SquarePen,
-                            onClick: () => push(p.chatNew()),
-                          },
-                        ]}
-                      >
-                        <LooseChatTree
-                          sessions={chatSidebar.loose}
-                          activePathname={pathname}
-                          sessionHref={(sessionId) => p.chatSession(sessionId)}
-                          onNavigate={push}
-                          labels={{
-                            loose: t(($) => $.sidebar.loose_chats_label),
-                            empty: t(($) => $.sidebar.no_recent_chats),
-                            untitled: t(($) => $.sidebar.untitled_chat),
-                          }}
-                        />
-                      </SidebarTreeSection>
-                    </React.Fragment>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {configureNav.map((item) => {
-                  const href = p[item.key]();
-                  const isActive = isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <item.icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                        {item.key === "runtimes" && hasRuntimeUpdates && (
-                          <span className="ml-auto size-1.5 rounded-full bg-destructive" />
-                        )}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
         </SidebarContent>
 
-        <SidebarFooter className="p-2">
-          <div className="flex justify-end">
-            <HelpLauncher />
-          </div>
+        <SidebarFooter className="border-t p-2">
+          <SidebarMenu className="gap-0.5">
+            <SidebarMenuItem>
+              <div className="flex items-center gap-1">
+                <SidebarMenuButton
+                  isActive={isNavActive(pathname, p.settings())}
+                  render={<AppLink href={p.settings()} />}
+                  className="min-w-0 flex-1 text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                >
+                  <Settings />
+                  <span>{t(($) => $.nav.settings)}</span>
+                  {hasRuntimeUpdates && (
+                    <span className="ml-auto size-1.5 rounded-full bg-destructive" />
+                  )}
+                </SidebarMenuButton>
+                <HelpLauncher />
+              </div>
+            </SidebarMenuItem>
+          </SidebarMenu>
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>

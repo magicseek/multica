@@ -16,12 +16,16 @@
   "page": {
     "title": "Settings",
     "my_account": "My Account",
+    "configure": "Configure",
     "workspace_fallback": "Workspace",
     "tabs": {
       "profile": "Profile",
       "preferences": "Preferences",
       "notifications": "Notifications",
       "tokens": "API Tokens",
+      "runtimes": "Runtimes",
+      "workflows": "Workflows",
+      "skills": "Skills",
       "general": "General",
       "repositories": "Repositories",
       "integrations": "Integrations",
