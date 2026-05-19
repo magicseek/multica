@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-05-18
+- **Total Sessions**: 3
+- **Last Active**: 2026-05-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~83 | Active |
+| `journal-1.md` | ~122 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-05-19 | Project-associated Chat Sessions | `c016fdbf`, `35153fe6`, `e5e3896e`, `652b7400`, `25702b56`, `43d3e845`, `d5fbdce2` | `trellis/project-associated-chat-sessions` |
 | 2 | 2026-05-18 | Improve project and issue start UX | `e6569b30`, `ed92f5c3`, `70f54e80`, `f519af72` | `trellis/repository-start-modes` |
 | 1 | 2026-05-17 | Repository start modes and execution workflows | `59b06982`, `cc2b17c6`, `5ec126fb`, `e3cf3db0`, `14b55622`, `ded210b3`, `c20550cc`, `ae4548c8` | `trellis/repository-start-modes` |
 <!-- @@@/auto:session-history -->

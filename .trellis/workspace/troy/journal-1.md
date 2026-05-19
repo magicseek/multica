@@ -81,3 +81,42 @@ Implemented local-folder and repository start UX follow-ups: daemon/native folde
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Project-associated Chat Sessions
+
+**Date**: 2026-05-19
+**Task**: Project-associated Chat Sessions
+**Branch**: `trellis/project-associated-chat-sessions`
+
+### Summary
+
+Implemented project-associated page chats, chat-origin issue proposals, sidebar/settings/workflow UI fixes, daemon context propagation, and verified the branch with lint plus full make check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c016fdbf` | (see git log) |
+| `35153fe6` | (see git log) |
+| `e5e3896e` | (see git log) |
+| `652b7400` | (see git log) |
+| `25702b56` | (see git log) |
+| `43d3e845` | (see git log) |
+| `d5fbdce2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
