@@ -120,3 +120,36 @@ Implemented project-associated page chats, chat-origin issue proposals, sidebar/
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Migrate ai-desk flows into Multica workflow runtime
+
+**Date**: 2026-05-19
+**Task**: Migrate ai-desk flows into Multica workflow runtime
+**Branch**: `trellis/ai-desk-flows-to-multica-workflows`
+
+### Summary
+
+Implemented Multica-native workflow schema v2 import/export, run and step-run runtime tables/services, daemon/CLI control contracts, shared core types/hooks, Settings workflow builder controls, and workflow run observation across issue/chat/autopilot surfaces.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `14b65f7c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
