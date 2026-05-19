@@ -22,6 +22,7 @@ postgres_port="${POSTGRES_PORT:-5432}"
 backend_port=$((18080 + offset))
 frontend_port=$((13000 + offset))
 frontend_origin="http://localhost:${frontend_port}"
+cors_allowed_origins="${frontend_origin},http://localhost:5173,http://localhost:5174"
 
 cat > "$ENV_FILE" <<EOF
 POSTGRES_DB=${postgres_db}
@@ -42,6 +43,7 @@ GOOGLE_REDIRECT_URI=${frontend_origin}/auth/callback
 
 FRONTEND_PORT=${frontend_port}
 FRONTEND_ORIGIN=${frontend_origin}
+CORS_ALLOWED_ORIGINS=${cors_allowed_origins}
 NEXT_PUBLIC_API_URL=http://localhost:${backend_port}
 NEXT_PUBLIC_WS_URL=ws://localhost:${backend_port}/ws
 EOF

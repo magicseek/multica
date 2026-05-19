@@ -59,7 +59,8 @@ type RepositoryOperationBindingData struct {
 }
 
 // TaskRepositoryBindingData mirrors the sanitized binding summary returned by
-// the daemon claim endpoint. It never includes local paths or binding metadata.
+// the daemon claim endpoint. local_path is populated only when the binding is
+// current for the claiming daemon/runtime.
 type TaskRepositoryBindingData struct {
 	ID             string `json:"id"`
 	Kind           string `json:"kind"`
@@ -67,6 +68,7 @@ type TaskRepositoryBindingData struct {
 	MachineLabel   string `json:"machine_label,omitempty"`
 	DaemonID       string `json:"daemon_id,omitempty"`
 	RuntimeID      string `json:"runtime_id,omitempty"`
+	LocalPath      string `json:"local_path,omitempty"`
 	Available      bool   `json:"available"`
 	CurrentDaemon  bool   `json:"current_daemon,omitempty"`
 	CurrentRuntime bool   `json:"current_runtime,omitempty"`

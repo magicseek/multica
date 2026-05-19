@@ -68,6 +68,9 @@ func appendRepositoryContext(b *strings.Builder, repo RepositoryContextForEnv) {
 			fmt.Fprintf(b, " (default branch: `%s`)", repo.DefaultBranch)
 		}
 		b.WriteString("\n")
+	} else if localPath, ok := usableLocalBindingPath(repo); ok {
+		fmt.Fprintf(b, "  - Local path: `%s`\n", localPath)
+		b.WriteString("  - Use this directory directly for code changes. Do not run `multica repo checkout` for this local repository.\n")
 	} else {
 		b.WriteString("  - Remote checkout: unavailable because this repository has no `remote_url`.\n")
 		b.WriteString("  - Local binding execution is not available in this slice; do not run `multica repo checkout` for this repository until it has a remote URL.\n")
@@ -84,6 +87,23 @@ func appendRepositoryContext(b *strings.Builder, repo RepositoryContextForEnv) {
 	} else if repo.BindingAvailable {
 		b.WriteString("  - Binding: available\n")
 	}
+}
+
+func usableLocalBindingPath(repo RepositoryContextForEnv) (string, bool) {
+	if repo.Binding == nil {
+		return "", false
+	}
+	binding := repo.Binding
+	localPath := filepath.Clean(strings.TrimSpace(binding.LocalPath))
+	if binding.Kind != "local_dir" ||
+		binding.State != "ready" ||
+		!binding.Available ||
+		(!binding.CurrentDaemon && !binding.CurrentRuntime) ||
+		localPath == "." ||
+		!filepath.IsAbs(localPath) {
+		return "", false
+	}
+	return localPath, true
 }
 
 func taskRepositoryRole(position int) string {
@@ -220,6 +240,13 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica workflow step complete <step-run-id>` — Complete a workflow step; human review may move it to waiting_review instead of completed\n")
 	b.WriteString("- `multica workflow step fail <step-run-id> --reason \"...\"` / `pause` / `retry` / `skip` — Control step lifecycle without editing the immutable workflow snapshot\n\n")
 
+	if ctx.WorkflowRunID != "" {
+		b.WriteString("## Workflow Step Tracking\n\n")
+		fmt.Fprintf(&b, "This task has workflow run `%s`, also available as `MULTICA_WORKFLOW_RUN_ID`. The workflow card is user-visible, so keep step state current as you work.\n\n", ctx.WorkflowRunID)
+		b.WriteString("Before each workflow phase, run `multica workflow run get \"$MULTICA_WORKFLOW_RUN_ID\" --output json`, find the next ready step, then mark it with `multica workflow step start <step-run-id>` before doing that phase and `multica workflow step complete <step-run-id>` after it is done. If a phase is impossible, use `fail` or `pause` with the reason instead of leaving the step pending.\n\n")
+		b.WriteString("Artifacts, reviews, and quality results are explicit workflow evidence records; they are not inferred from changed files, comments, or completed steps. When a phase produces durable output such as a contract, plan, implementation summary, verification report, or final handoff, persist it with `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text`. After verification or check phases, record quality evidence with `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text`. Review counts only appear when the workflow actually requests a human or agent review.\n\n")
+	}
+
 	if provider == "codex" {
 		b.WriteString("## Codex-Specific Comment Formatting\n\n")
 		if runtimeGOOS == "windows" {
@@ -240,7 +267,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		for _, repo := range ctx.Repositories {
 			appendRepositoryContext(&b, repo)
 		}
-		b.WriteString("\nRemote checkout commands create git worktrees with dedicated branches. You can check out one or more remote repositories as needed, and can pass `--ref` for review/QA on a non-default branch or commit.\n\n")
+		b.WriteString("\nRemote checkout commands create git worktrees with dedicated branches. Local bindings with a current ready local path are already available as the task working directory. You can check out one or more remote repositories as needed, and can pass `--ref` for review/QA on a non-default branch or commit.\n\n")
 	} else if len(ctx.Repos) > 0 {
 		b.WriteString("## Repositories\n\n")
 		b.WriteString("The following code repositories are available in this workspace.\n")
@@ -282,7 +309,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
 		b.WriteString("- If asked to create, split, plan, or generate issues/tasks, write proposal cards to `.multica/issue-proposals.json` for user approval. Do not run `multica issue create` unless the user explicitly asks to create immediately without approval.\n")
 		b.WriteString("- For non-creation actions such as status updates on existing issues, use the appropriate CLI commands.\n")
-		b.WriteString("- If the task requires code changes, use the Repositories section to identify the code target. For repositories with a checkout command, run it first; for local-only repositories without `remote_url`, local binding execution is not available in this slice\n")
+		b.WriteString("- If the task requires code changes, use the Repositories section to identify the code target. For repositories with a current local path, use that directory directly; for repositories with a checkout command, run it first; for local-only repositories without a current local path or `remote_url`, local binding execution is not available in this slice\n")
 		b.WriteString("- Keep responses concise and direct\n\n")
 	} else if ctx.QuickCreatePrompt != "" {
 		// Quick-create task: detailed field / output rules live in the

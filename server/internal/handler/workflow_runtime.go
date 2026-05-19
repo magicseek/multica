@@ -150,7 +150,7 @@ func workflowRunToResponse(
 	if steps != nil {
 		resp.Steps = make([]WorkflowStepRunResponse, len(steps))
 		for i, step := range steps {
-			resp.Steps[i] = workflowStepRunToResponse(step)
+			resp.Steps[i] = workflowStepRunToResponseForRun(run, step)
 		}
 	}
 	if artifacts != nil {
@@ -194,6 +194,21 @@ func workflowStepRunToResponse(step db.WorkflowStepRun) WorkflowStepRunResponse 
 		CreatedAt:        timestampToString(step.CreatedAt),
 		UpdatedAt:        timestampToString(step.UpdatedAt),
 	}
+}
+
+func workflowStepRunToResponseForRun(run db.WorkflowRun, step db.WorkflowStepRun) WorkflowStepRunResponse {
+	resp := workflowStepRunToResponse(step)
+	if run.Status == "completed" && !workflowStepResponseIsSuccessfulTerminal(resp.Status) {
+		resp.Status = "completed"
+		if resp.CompletedAt == nil {
+			resp.CompletedAt = timestampToPtr(run.CompletedAt)
+		}
+	}
+	return resp
+}
+
+func workflowStepResponseIsSuccessfulTerminal(status string) bool {
+	return status == "completed" || status == "skipped"
 }
 
 func workflowArtifactToResponse(artifact db.WorkflowArtifact) WorkflowArtifactResponse {

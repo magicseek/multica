@@ -521,7 +521,7 @@ func templateSteps(slug string) []Step {
 	case execprotocol.TrellisTaskSlug:
 		return []Step{
 			{ID: "context", Title: "Context first", Order: 1, Description: "Load issue details, comments, and relevant project resources."},
-			{ID: "trellis-gate", Title: "Trellis availability gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect Trellis state and continue, start, or fall back intentionally."},
+			{ID: "trellis-gate", Title: "Trellis availability gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect, continue, or explicitly bootstrap Trellis before falling back."},
 			{ID: "contract", Title: "Work contract", Order: 3, DependsOn: []string{"trellis-gate"}, Description: "Write the outcome, acceptance criteria, constraints, and verification into Trellis."},
 			{ID: "implement", Title: "Plan and implement", Order: 4, DependsOn: []string{"contract"}, Description: "Move in progress and execute inside Trellis task scope."},
 			{ID: "check", Title: "Check and update spec", Order: 5, DependsOn: []string{"implement"}, Description: "Run Trellis checks, targeted verification, and spec updates when durable behavior changes."},

@@ -57,9 +57,16 @@ export function WorkflowRunViewer({
 
   if (!run) return null;
 
-  const steps = detail?.steps ?? [];
+  const steps = workflowStepsForDisplay(run, detail?.steps ?? []);
   const reviews = detail?.reviews ?? [];
   const pendingReviews = reviews.filter((review) => review.status === "requested");
+  const evidenceCounts = {
+    artifacts: detail?.artifacts?.length ?? 0,
+    reviews: detail?.reviews?.length ?? 0,
+    quality: detail?.quality_gate_results?.length ?? 0,
+  };
+  const hasWorkflowEvidence =
+    evidenceCounts.artifacts + evidenceCounts.reviews + evidenceCounts.quality > 0;
   const completed = steps.filter((step) =>
     ["completed", "skipped"].includes(step.status),
   ).length;
@@ -167,11 +174,11 @@ export function WorkflowRunViewer({
               }
             />
           )}
-          {detail && (
+          {detail && hasWorkflowEvidence && (
             <WorkflowRunEvidence
-              artifacts={detail.artifacts?.length ?? 0}
-              reviews={detail.reviews?.length ?? 0}
-              quality={detail.quality_gate_results?.length ?? 0}
+              artifacts={evidenceCounts.artifacts}
+              reviews={evidenceCounts.reviews}
+              quality={evidenceCounts.quality}
             />
           )}
         </div>
@@ -248,6 +255,22 @@ function WorkflowRunHeader({
       )}
     </div>
   );
+}
+
+function workflowStepsForDisplay(run: WorkflowRun, steps: WorkflowStepRun[]) {
+  if (run.status !== "completed") {
+    return steps;
+  }
+  return steps.map((step) => {
+    if (step.status === "completed" || step.status === "skipped") {
+      return step;
+    }
+    return {
+      ...step,
+      status: "completed",
+      completed_at: step.completed_at ?? run.completed_at ?? step.updated_at,
+    };
+  });
 }
 
 function WorkflowStepRow({

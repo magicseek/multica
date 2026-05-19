@@ -2217,7 +2217,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "openclaw" {
 		openclawBin = entry.Path
 	}
-	if task.PriorWorkDir != "" {
+	localBoundWorkDir, hasLocalBoundWorkDir := execenv.LocalBindingWorkDir(taskCtx)
+	if task.PriorWorkDir != "" && !hasLocalBoundWorkDir {
 		env = execenv.Reuse(execenv.ReuseParams{
 			WorkDir:      task.PriorWorkDir,
 			Provider:     provider,
@@ -2225,6 +2226,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			OpenclawBin:  openclawBin,
 			Task:         taskCtx,
 		}, d.logger)
+	} else if task.PriorWorkDir != "" && hasLocalBoundWorkDir && task.PriorWorkDir != localBoundWorkDir {
+		d.logger.Info("execenv: ignoring prior workdir because current local binding owns cwd", "prior_workdir", task.PriorWorkDir, "local_workdir", localBoundWorkDir)
 	}
 	if env == nil {
 		var err error
@@ -3006,6 +3009,7 @@ func convertTaskRepositoriesForEnv(repositories []TaskRepositoryData) []execenv.
 				MachineLabel:   r.Binding.MachineLabel,
 				DaemonID:       r.Binding.DaemonID,
 				RuntimeID:      r.Binding.RuntimeID,
+				LocalPath:      r.Binding.LocalPath,
 				Available:      r.Binding.Available,
 				CurrentDaemon:  r.Binding.CurrentDaemon,
 				CurrentRuntime: r.Binding.CurrentRuntime,

@@ -335,6 +335,120 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	}
 }
 
+func TestPrepareUsesCurrentLocalBindingAsWorkDir(t *testing.T) {
+	t.Parallel()
+	workspacesRoot := t.TempDir()
+	localDir := filepath.Join(t.TempDir(), "multica-sudoku-game")
+
+	taskCtx := TaskContextForEnv{
+		IssueID: "33333333-4444-5555-6666-777777777777",
+		Repositories: []RepositoryContextForEnv{
+			{
+				ID:               "repo-local",
+				Name:             "Local game",
+				SourceState:      "local_dir",
+				Role:             "primary",
+				Position:         0,
+				BindingAvailable: true,
+				Binding: &RepositoryBindingContextForEnv{
+					ID:             "binding-local",
+					Kind:           "local_dir",
+					State:          "ready",
+					LocalPath:      localDir,
+					Available:      true,
+					CurrentDaemon:  true,
+					CurrentRuntime: true,
+				},
+			},
+		},
+	}
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: workspacesRoot,
+		WorkspaceID:    "ws-local-binding",
+		TaskID:         "33333333-4444-5555-6666-777777777777",
+		AgentName:      "Codex",
+		Provider:       "codex",
+		Task:           taskCtx,
+	}, discardLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	if env.WorkDir != localDir {
+		t.Fatalf("WorkDir = %q, want local binding dir %q", env.WorkDir, localDir)
+	}
+	if !env.ExternalWorkDir {
+		t.Fatal("expected ExternalWorkDir for local binding")
+	}
+	if env.RootDir != PredictRootDir(workspacesRoot, "ws-local-binding", "33333333-4444-5555-6666-777777777777") {
+		t.Fatalf("RootDir = %q, want predicted env root", env.RootDir)
+	}
+	for _, path := range []string{
+		filepath.Join(env.RootDir, "output"),
+		filepath.Join(env.RootDir, "logs"),
+		filepath.Join(localDir, ".agent_context", "issue_context.md"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to exist: %v", path, err)
+		}
+	}
+
+	if err := env.Cleanup(false); err != nil {
+		t.Fatalf("Cleanup(false): %v", err)
+	}
+	if _, err := os.Stat(localDir); err != nil {
+		t.Fatalf("local binding dir should survive partial cleanup: %v", err)
+	}
+}
+
+func TestInjectRuntimeConfigRendersCurrentLocalBindingPath(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	localDir := filepath.Join(t.TempDir(), "app")
+	ctx := TaskContextForEnv{
+		Repositories: []RepositoryContextForEnv{
+			{
+				ID:               "repo-local",
+				Name:             "Local app",
+				SourceState:      "local_dir",
+				Role:             "primary",
+				BindingAvailable: true,
+				Binding: &RepositoryBindingContextForEnv{
+					ID:             "binding-local",
+					Kind:           "local_dir",
+					State:          "ready",
+					MachineLabel:   "Troy MacBook",
+					LocalPath:      localDir,
+					Available:      true,
+					CurrentRuntime: true,
+				},
+			},
+		},
+	}
+	if _, err := InjectRuntimeConfig(dir, "codex", ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	s := string(content)
+	for _, want := range []string{
+		"Local path: `" + localDir + "`",
+		"Use this directory directly for code changes.",
+		"Do not run `multica repo checkout` for this local repository.",
+		"Binding: `local_dir` is `ready` on Troy MacBook (current runtime)",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("AGENTS.md missing %q", want)
+		}
+	}
+	if strings.Contains(s, "Local binding execution is not available in this slice") {
+		t.Fatalf("current local binding should not render unavailable guidance:\n%s", s)
+	}
+}
+
 func TestInjectRuntimeConfigRendersMixedRepositoryContext(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1228,6 +1342,30 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		} {
 			if strings.Contains(s, notWant) {
 				t.Fatalf("legacy execution protocol %q rendered despite workflow snapshot\n---\n%s", notWant, s)
+			}
+		}
+	})
+
+	t.Run("workflow run id renders step tracking contract", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ExecutionProtocolEnabled: true,
+			WorkflowRunID:            "workflow-run-1",
+		})
+		for _, want := range []string{
+			"## Workflow Step Tracking",
+			"`workflow-run-1`",
+			"`MULTICA_WORKFLOW_RUN_ID`",
+			"`multica workflow step start <step-run-id>`",
+			"`multica workflow step complete <step-run-id>`",
+			"Artifacts, reviews, and quality results are explicit workflow evidence records",
+			"persist it with `multica workflow artifact save <step-run-id> --name",
+			"record quality evidence with `multica workflow quality report <step-run-id> --status",
+			"instead of leaving the step pending",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("workflow step tracking missing %q\n---\n%s", want, s)
 			}
 		}
 	})

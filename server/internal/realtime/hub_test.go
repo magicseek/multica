@@ -27,10 +27,20 @@ func (m *mockMembershipChecker) IsMember(_ context.Context, _, _ string) bool {
 	return true
 }
 
+type membershipCheckerFunc func(context.Context, string, string) bool
+
+func (f membershipCheckerFunc) IsMember(ctx context.Context, userID, workspaceID string) bool {
+	return f(ctx, userID, workspaceID)
+}
+
 func makeTestToken(t *testing.T) string {
+	return makeTokenForUser(t, testUserID)
+}
+
+func makeTokenForUser(t *testing.T, userID string) string {
 	t.Helper()
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": testUserID,
+		"sub": userID,
 	})
 	signed, err := token.SignedString(auth.JWTSecret())
 	if err != nil {
@@ -297,6 +307,50 @@ func TestHandleWebSocket_ClientIdentityFromQuery(t *testing.T) {
 	}
 	if got, _ := found["client_os"].(string); got != "macos" {
 		t.Errorf("client_os = %q, want %q", got, "macos")
+	}
+}
+
+func TestHandleWebSocket_FallsBackToFirstMessageAuthWhenCookieIsNotMember(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+
+	mc := membershipCheckerFunc(func(_ context.Context, userID, workspaceID string) bool {
+		return userID == testUserID && workspaceID == testWorkspaceID
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		HandleWebSocket(hub, mc, nil, nil, w, r)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws?workspace_id=" + testWorkspaceID
+	header := http.Header{}
+	header.Add("Cookie", (&http.Cookie{
+		Name:  auth.AuthCookieName,
+		Value: makeTokenForUser(t, "stale-cookie-user"),
+	}).String())
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	authMsg, _ := json.Marshal(map[string]any{
+		"type":    "auth",
+		"payload": map[string]string{"token": makeTestToken(t)},
+	})
+	if err := conn.WriteMessage(websocket.TextMessage, authMsg); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, ack, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read auth_ack: %v", err)
+	}
+	if !strings.Contains(string(ack), "auth_ack") {
+		t.Fatalf("expected auth_ack, got %s", ack)
 	}
 }
 

@@ -275,6 +275,7 @@ func selectTaskRepositoryBinding(bindings []db.RepositoryBinding, runtimeID pgty
 			MachineLabel:   binding.MachineLabel,
 			DaemonID:       binding.DaemonID,
 			RuntimeID:      uuidToString(binding.RuntimeID),
+			LocalPath:      strings.TrimSpace(binding.LocalPath),
 			Available:      true,
 			CurrentDaemon:  currentDaemon,
 			CurrentRuntime: currentRuntime,

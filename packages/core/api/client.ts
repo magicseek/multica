@@ -179,11 +179,23 @@ import {
   EMPTY_LIST_REPOSITORY_OPERATIONS_RESPONSE,
   EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_EXPORT_WORKFLOW_RESPONSE,
+  EMPTY_IMPORT_WORKFLOW_RESPONSE,
   EMPTY_REPOSITORY,
   EMPTY_REPOSITORY_BINDING,
   EMPTY_REPOSITORY_OPERATION,
   EMPTY_TIMELINE_ENTRIES,
+  EMPTY_WORKFLOW_ARTIFACT,
+  EMPTY_WORKFLOW_DEFINITION,
+  EMPTY_WORKFLOW_PREVIEW_RESPONSE,
+  EMPTY_WORKFLOW_QUALITY_GATE_RESULT,
+  EMPTY_WORKFLOW_REVIEW,
+  EMPTY_WORKFLOW_REVISION,
+  EMPTY_WORKFLOW_RUN,
+  EMPTY_WORKFLOW_STEP_RUN,
+  ExportWorkflowResponseSchema,
   GroupedIssuesResponseSchema,
+  ImportWorkflowResponseSchema,
   ListIssuesResponseSchema,
   ListProjectRepositoriesResponseSchema,
   ListRepositoriesResponseSchema,
@@ -195,6 +207,16 @@ import {
   RepositorySchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
+  WorkflowArtifactSchema,
+  WorkflowDefinitionListSchema,
+  WorkflowDefinitionSchema,
+  WorkflowPreviewResponseSchema,
+  WorkflowQualityGateResultSchema,
+  WorkflowReviewSchema,
+  WorkflowRevisionSchema,
+  WorkflowRunListSchema,
+  WorkflowRunSchema,
+  WorkflowStepRunSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1289,17 +1311,26 @@ export class ApiClient {
       search.set("include_archived", "true");
     }
     const suffix = search.toString();
-    return this.fetch(`/api/workflows${suffix ? `?${suffix}` : ""}`);
+    const raw = await this.fetch<unknown>(`/api/workflows${suffix ? `?${suffix}` : ""}`);
+    return parseWithFallback(raw, WorkflowDefinitionListSchema, [], {
+      endpoint: "GET /api/workflows",
+    });
   }
 
   async getWorkflow(id: string): Promise<WorkflowDefinition> {
-    return this.fetch(`/api/workflows/${id}`);
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}`);
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "GET /api/workflows/:id",
+    });
   }
 
   async createWorkflow(data: CreateWorkflowRequest): Promise<WorkflowDefinition> {
-    return this.fetch("/api/workflows", {
+    const raw = await this.fetch<unknown>("/api/workflows", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "POST /api/workflows",
     });
   }
 
@@ -1307,23 +1338,32 @@ export class ApiClient {
     id: string,
     data: UpdateWorkflowRequest,
   ): Promise<WorkflowDefinition> {
-    return this.fetch(`/api/workflows/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "PATCH /api/workflows/:id",
     });
   }
 
   async createWorkflowDraft(id: string): Promise<WorkflowDefinition> {
-    return this.fetch(`/api/workflows/${id}/draft`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/draft`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "POST /api/workflows/:id/draft",
+    });
   }
 
   async updateWorkflowDraft(
     id: string,
     data: WorkflowSchemaRequest,
   ): Promise<WorkflowRevision> {
-    return this.fetch(`/api/workflows/${id}/draft`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/draft`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowRevisionSchema, EMPTY_WORKFLOW_REVISION, {
+      endpoint: "PUT /api/workflows/:id/draft",
     });
   }
 
@@ -1331,9 +1371,12 @@ export class ApiClient {
     id: string,
     data?: Partial<WorkflowSchemaRequest>,
   ): Promise<WorkflowDefinition> {
-    return this.fetch(`/api/workflows/${id}/publish`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/publish`, {
       method: "POST",
       body: data ? JSON.stringify(data) : undefined,
+    });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "POST /api/workflows/:id/publish",
     });
   }
 
@@ -1341,18 +1384,24 @@ export class ApiClient {
     id: string,
     data?: ForkWorkflowRequest,
   ): Promise<WorkflowDefinition> {
-    return this.fetch(`/api/workflows/${id}/fork`, {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/fork`, {
       method: "POST",
       body: data ? JSON.stringify(data) : undefined,
+    });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, EMPTY_WORKFLOW_DEFINITION, {
+      endpoint: "POST /api/workflows/:id/fork",
     });
   }
 
   async previewWorkflow(
     data: WorkflowPreviewRequest,
   ): Promise<WorkflowPreviewResponse> {
-    return this.fetch("/api/workflows/preview", {
+    const raw = await this.fetch<unknown>("/api/workflows/preview", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowPreviewResponseSchema, EMPTY_WORKFLOW_PREVIEW_RESPONSE, {
+      endpoint: "POST /api/workflows/preview",
     });
   }
 
@@ -1361,9 +1410,12 @@ export class ApiClient {
   }
 
   async importWorkflow(data: ImportWorkflowRequest): Promise<ImportWorkflowResponse> {
-    return this.fetch("/api/workflows/import", {
+    const raw = await this.fetch<unknown>("/api/workflows/import", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ImportWorkflowResponseSchema, EMPTY_IMPORT_WORKFLOW_RESPONSE, {
+      endpoint: "POST /api/workflows/import",
     });
   }
 
@@ -1373,7 +1425,10 @@ export class ApiClient {
   ): Promise<ExportWorkflowResponse> {
     const search = new URLSearchParams();
     if (format) search.set("format", format);
-    return this.fetch(`/api/workflows/${id}/export?${search.toString()}`);
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/export?${search.toString()}`);
+    return parseWithFallback(raw, ExportWorkflowResponseSchema, EMPTY_EXPORT_WORKFLOW_RESPONSE, {
+      endpoint: "GET /api/workflows/:id/export",
+    });
   }
 
   async listWorkflowRuns(params: {
@@ -1388,15 +1443,24 @@ export class ApiClient {
     if (params.chat_session_id) search.set("chat_session_id", params.chat_session_id);
     if (params.autopilot_run_id) search.set("autopilot_run_id", params.autopilot_run_id);
     const suffix = search.toString();
-    return this.fetch(`/api/workflow-runs${suffix ? `?${suffix}` : ""}`);
+    const raw = await this.fetch<unknown>(`/api/workflow-runs${suffix ? `?${suffix}` : ""}`);
+    return parseWithFallback(raw, WorkflowRunListSchema, [], {
+      endpoint: "GET /api/workflow-runs",
+    });
   }
 
   async getWorkflowRun(id: string): Promise<WorkflowRun> {
-    return this.fetch(`/api/workflow-runs/${id}`);
+    const raw = await this.fetch<unknown>(`/api/workflow-runs/${id}`);
+    return parseWithFallback(raw, WorkflowRunSchema, EMPTY_WORKFLOW_RUN, {
+      endpoint: "GET /api/workflow-runs/:id",
+    });
   }
 
   async cancelWorkflowRun(id: string): Promise<WorkflowRun> {
-    return this.fetch(`/api/workflow-runs/${id}/cancel`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-runs/${id}/cancel`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowRunSchema, EMPTY_WORKFLOW_RUN, {
+      endpoint: "POST /api/workflow-runs/:id/cancel",
+    });
   }
 
   async rerunWorkflowRun(id: string): Promise<AgentTask> {
@@ -1404,37 +1468,58 @@ export class ApiClient {
   }
 
   async startWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/start`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/start`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/start",
+    });
   }
 
   async completeWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/complete`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/complete`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/complete",
+    });
   }
 
   async completeManualWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/manual-complete`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/manual-complete`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/manual-complete",
+    });
   }
 
   async failWorkflowStepRun(id: string, reason?: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/fail`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/fail`, {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/fail",
     });
   }
 
   async pauseWorkflowStepRun(id: string, reason?: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/pause`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/pause`, {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/pause",
     });
   }
 
   async retryWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/retry`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/retry`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/retry",
+    });
   }
 
   async skipWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
-    return this.fetch(`/api/workflow-step-runs/${id}/skip`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${id}/skip`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowStepRunSchema, EMPTY_WORKFLOW_STEP_RUN, {
+      endpoint: "POST /api/workflow-step-runs/:id/skip",
+    });
   }
 
   async createWorkflowArtifact(
@@ -1446,9 +1531,12 @@ export class ApiClient {
       content_json?: unknown;
     },
   ): Promise<WorkflowArtifact> {
-    return this.fetch(`/api/workflow-step-runs/${stepRunId}/artifacts`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${stepRunId}/artifacts`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowArtifactSchema, EMPTY_WORKFLOW_ARTIFACT, {
+      endpoint: "POST /api/workflow-step-runs/:id/artifacts",
     });
   }
 
@@ -1462,23 +1550,32 @@ export class ApiClient {
       report_json?: unknown;
     },
   ): Promise<WorkflowQualityGateResult> {
-    return this.fetch(`/api/workflow-step-runs/${stepRunId}/quality-gates`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${stepRunId}/quality-gates`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowQualityGateResultSchema, EMPTY_WORKFLOW_QUALITY_GATE_RESULT, {
+      endpoint: "POST /api/workflow-step-runs/:id/quality-gates",
     });
   }
 
   async approveWorkflowReview(id: string, notes?: string): Promise<WorkflowReview> {
-    return this.fetch(`/api/workflow-reviews/${id}/approve`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-reviews/${id}/approve`, {
       method: "POST",
       body: JSON.stringify({ notes: notes ?? "" }),
+    });
+    return parseWithFallback(raw, WorkflowReviewSchema, EMPTY_WORKFLOW_REVIEW, {
+      endpoint: "POST /api/workflow-reviews/:id/approve",
     });
   }
 
   async rejectWorkflowReview(id: string, notes?: string): Promise<WorkflowReview> {
-    return this.fetch(`/api/workflow-reviews/${id}/reject`, {
+    const raw = await this.fetch<unknown>(`/api/workflow-reviews/${id}/reject`, {
       method: "POST",
       body: JSON.stringify({ notes: notes ?? "" }),
+    });
+    return parseWithFallback(raw, WorkflowReviewSchema, EMPTY_WORKFLOW_REVIEW, {
+      endpoint: "POST /api/workflow-reviews/:id/reject",
     });
   }
 

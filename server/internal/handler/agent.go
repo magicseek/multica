@@ -126,7 +126,9 @@ type RepoData struct {
 }
 
 // TaskRepositoryBindingData is a sanitized binding summary for daemon task
-// claims. It intentionally omits local_path and binding metadata.
+// claims. local_path is included only for a ready binding selected for the
+// claiming daemon/runtime, so agents can execute current local-dir bindings
+// without leaking paths from other machines.
 type TaskRepositoryBindingData struct {
 	ID             string `json:"id"`
 	Kind           string `json:"kind"`
@@ -134,6 +136,7 @@ type TaskRepositoryBindingData struct {
 	MachineLabel   string `json:"machine_label,omitempty"`
 	DaemonID       string `json:"daemon_id,omitempty"`
 	RuntimeID      string `json:"runtime_id,omitempty"`
+	LocalPath      string `json:"local_path,omitempty"`
 	Available      bool   `json:"available"`
 	CurrentDaemon  bool   `json:"current_daemon,omitempty"`
 	CurrentRuntime bool   `json:"current_runtime,omitempty"`

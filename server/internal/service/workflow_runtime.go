@@ -246,14 +246,39 @@ func workflowInitialStepRunsFromSnapshot(raw []byte) ([]workflowInitialStepRun, 
 }
 
 func (s *TaskService) setWorkflowRunStatusForTask(ctx context.Context, q *db.Queries, taskID pgtype.UUID, status string) error {
-	if _, err := q.UpdateWorkflowRunStatusByTask(ctx, db.UpdateWorkflowRunStatusByTaskParams{
+	run, err := q.UpdateWorkflowRunStatusByTask(ctx, db.UpdateWorkflowRunStatusByTaskParams{
 		AgentTaskQueueID: taskID,
 		Status:           status,
-	}); err != nil {
+	})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return fmt.Errorf("update workflow run status: %w", err)
+	}
+	if status == workflowRunStatusCompleted {
+		if err := completeUnfinishedWorkflowStepRuns(ctx, q, run.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func completeUnfinishedWorkflowStepRuns(ctx context.Context, q *db.Queries, runID pgtype.UUID) error {
+	steps, err := q.ListWorkflowStepRunsByRun(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("list workflow step runs for completion: %w", err)
+	}
+	for _, step := range steps {
+		if workflowStepIsSuccessfulTerminal(step.Status) {
+			continue
+		}
+		if _, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+			ID:     step.ID,
+			Status: workflowStepStatusCompleted,
+		}); err != nil {
+			return fmt.Errorf("complete workflow step %q with task: %w", step.StepDefinitionID, err)
+		}
 	}
 	return nil
 }
@@ -265,51 +290,53 @@ func (s *TaskService) CompleteWorkflowStepRun(ctx context.Context, stepID pgtype
 		if err != nil {
 			return fmt.Errorf("load workflow step run: %w", err)
 		}
-		if workflowStepIsTerminal(step.Status) {
-			out = step
-			return nil
-		}
-		if step.Status == workflowStepStatusWaitingReview {
-			out = step
-			return nil
-		}
-		if hasBlockingQualityFailure(ctx, q, step.ID) {
-			return fmt.Errorf("workflow step has a blocking quality failure")
-		}
-		if workflowStepRequiresReview(step.Snapshot) {
-			updated, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
-				ID:     step.ID,
-				Status: workflowStepStatusWaitingReview,
-			})
-			if err != nil {
-				return fmt.Errorf("mark workflow step waiting for review: %w", err)
-			}
-			if _, err := q.CreateWorkflowReview(ctx, db.CreateWorkflowReviewParams{
-				WorkflowRunID:     step.WorkflowRunID,
-				WorkflowStepRunID: step.ID,
-			}); err != nil {
-				return fmt.Errorf("create workflow review: %w", err)
-			}
-			if _, err := q.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{
-				ID:     step.WorkflowRunID,
-				Status: workflowRunStatusWaiting,
-			}); err != nil {
-				return fmt.Errorf("mark workflow run waiting: %w", err)
-			}
-			out = updated
-			return nil
-		}
-		updated, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
-			ID:     step.ID,
-			Status: workflowStepStatusCompleted,
-		})
+		updated, err := s.completeWorkflowStepRunInTx(ctx, q, step)
 		if err != nil {
-			return fmt.Errorf("complete workflow step run: %w", err)
+			return err
 		}
 		out = updated
-		return s.advanceWorkflowAfterStepChange(ctx, q, step.WorkflowRunID)
+		return nil
 	})
 	return out, err
+}
+
+func (s *TaskService) completeWorkflowStepRunInTx(ctx context.Context, q *db.Queries, step db.WorkflowStepRun) (db.WorkflowStepRun, error) {
+	if workflowStepIsTerminal(step.Status) || step.Status == workflowStepStatusWaitingReview {
+		return step, nil
+	}
+	if hasBlockingQualityFailure(ctx, q, step.ID) {
+		return db.WorkflowStepRun{}, fmt.Errorf("workflow step has a blocking quality failure")
+	}
+	if workflowStepRequiresReview(step.Snapshot) {
+		updated, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+			ID:     step.ID,
+			Status: workflowStepStatusWaitingReview,
+		})
+		if err != nil {
+			return db.WorkflowStepRun{}, fmt.Errorf("mark workflow step waiting for review: %w", err)
+		}
+		if _, err := q.CreateWorkflowReview(ctx, db.CreateWorkflowReviewParams{
+			WorkflowRunID:     step.WorkflowRunID,
+			WorkflowStepRunID: step.ID,
+		}); err != nil {
+			return db.WorkflowStepRun{}, fmt.Errorf("create workflow review: %w", err)
+		}
+		if _, err := q.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{
+			ID:     step.WorkflowRunID,
+			Status: workflowRunStatusWaiting,
+		}); err != nil {
+			return db.WorkflowStepRun{}, fmt.Errorf("mark workflow run waiting: %w", err)
+		}
+		return updated, nil
+	}
+	updated, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+		ID:     step.ID,
+		Status: workflowStepStatusCompleted,
+	})
+	if err != nil {
+		return db.WorkflowStepRun{}, fmt.Errorf("complete workflow step run: %w", err)
+	}
+	return updated, s.advanceWorkflowAfterStepChange(ctx, q, step.WorkflowRunID)
 }
 
 func (s *TaskService) StartWorkflowStepRun(ctx context.Context, stepID pgtype.UUID) (db.WorkflowStepRun, error) {
@@ -351,19 +378,12 @@ func (s *TaskService) CompleteManualWorkflowStepRun(ctx context.Context, stepID 
 		if step.ExecutionKind != workflowStepExecutionManual {
 			return fmt.Errorf("workflow step is not manual")
 		}
-		if workflowStepIsTerminal(step.Status) {
-			out = step
-			return nil
-		}
-		updated, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
-			ID:     step.ID,
-			Status: workflowStepStatusCompleted,
-		})
+		updated, err := s.completeWorkflowStepRunInTx(ctx, q, step)
 		if err != nil {
-			return fmt.Errorf("complete manual workflow step run: %w", err)
+			return err
 		}
 		out = updated
-		return s.advanceWorkflowAfterStepChange(ctx, q, step.WorkflowRunID)
+		return nil
 	})
 	return out, err
 }

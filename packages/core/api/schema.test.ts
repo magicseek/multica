@@ -228,6 +228,44 @@ describe("ApiClient schema fallback", () => {
       expect(resp.reused_skill_ids).toEqual([]);
     });
   });
+
+  describe("workflows", () => {
+    it("falls back to [] when the workflow run list is malformed", async () => {
+      stubFetchJson({ runs: "not-an-array" });
+      const client = new ApiClient("https://api.example.test");
+      const runs = await client.listWorkflowRuns({ issue_id: "issue-1" });
+      expect(runs).toEqual([]);
+    });
+
+    it("defaults nested runtime arrays so the workflow viewer can render", async () => {
+      stubFetchJson({
+        id: "run-1",
+        workspace_id: "workspace-1",
+        agent_task_queue_id: "task-1",
+        trigger_type: "assignment",
+        status: "future_status",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        future_field: { preserved: true },
+      });
+      const client = new ApiClient("https://api.example.test");
+      const run = await client.getWorkflowRun("run-1");
+      expect(run.steps).toEqual([]);
+      expect(run.artifacts).toEqual([]);
+      expect(run.reviews).toEqual([]);
+      expect(run.quality_gate_results).toEqual([]);
+      expect(run.status).toBe("future_status");
+      expect((run as unknown as Record<string, unknown>).future_field).toEqual({ preserved: true });
+    });
+
+    it("defaults workflow preview warnings", async () => {
+      stubFetchJson({ rendered_markdown: "Preview" });
+      const client = new ApiClient("https://api.example.test");
+      const preview = await client.previewWorkflow({ schema: {} });
+      expect(preview.rendered_markdown).toBe("Preview");
+      expect(preview.warnings).toEqual([]);
+    });
+  });
 });
 
 // Direct tests for the helper, decoupled from any specific endpoint —

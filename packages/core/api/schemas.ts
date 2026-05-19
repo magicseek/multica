@@ -13,6 +13,8 @@ import type {
   ChatSidebarResponse,
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
+  ExportWorkflowResponse,
+  ImportWorkflowResponse,
   ListIssuesResponse,
   ListProjectRepositoriesResponse,
   ListRepositoriesResponse,
@@ -25,6 +27,14 @@ import type {
   RepositoryOperation,
   TaskOutputMetadata,
   TimelineEntry,
+  WorkflowArtifact,
+  WorkflowDefinition,
+  WorkflowPreviewResponse,
+  WorkflowQualityGateResult,
+  WorkflowReview,
+  WorkflowRevision,
+  WorkflowRun,
+  WorkflowStepRun,
 } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -569,6 +579,322 @@ export const EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE: ListTaskOutputMetadataRes
   outputs: [],
   total: 0,
 };
+
+// ---------------------------------------------------------------------------
+// Workflow definitions and runtime state
+//
+// Workflow data is rendered in Settings, issue detail, chat tasks, and
+// autopilot runs. Desktop builds may keep running against newer servers, so
+// unknown workflow fields must pass through while runtime arrays default to
+// `[]`; the viewer maps steps/reviews/artifacts directly.
+// ---------------------------------------------------------------------------
+
+const WorkflowArtifactInputSchema = z.object({
+  step_id: z.string().optional(),
+  artifact_name: z.string().optional(),
+  name: z.string().optional(),
+  required: z.boolean().optional(),
+}).loose();
+
+const WorkflowStepSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  title: z.string().default(""),
+  order: z.number().optional(),
+  required: z.boolean().optional(),
+  depends_on: z.array(z.string()).optional(),
+  execution: z.object({
+    kind: z.string().optional(),
+    prompt: z.string().optional(),
+    rules: z.string().optional(),
+  }).loose().optional(),
+  artifact: z.object({
+    name: z.string().optional(),
+    content_kind: z.string().optional(),
+    template: z.object({
+      format: z.string().optional(),
+      content: z.string().optional(),
+      files: z.array(z.object({
+        path: z.string().optional(),
+        content: z.string().optional(),
+      }).loose()).optional(),
+    }).loose().optional(),
+    inputs: z.array(WorkflowArtifactInputSchema).optional(),
+  }).loose().optional(),
+  input_artifacts: z.array(WorkflowArtifactInputSchema).optional(),
+  review: z.object({
+    required: z.boolean().optional(),
+  }).loose().optional(),
+  quality_gate: z.object({
+    enabled: z.boolean().optional(),
+    blocking: z.boolean().optional(),
+    prompt: z.string().optional(),
+    report_mode: z.string().optional(),
+  }).loose().optional(),
+  body_template: z.string().optional(),
+  description: z.string().optional(),
+  checklist: z.array(z.string()).optional(),
+}).loose();
+
+export const WorkflowSchemaSchema = z.object({
+  schema_version: z.number().optional(),
+  version: z.number().optional(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  applicability: z.array(z.string()).optional(),
+  source: z.object({
+    format: z.string().optional(),
+    mode: z.string().optional(),
+    body_template: z.string().optional(),
+  }).loose().optional(),
+  variables: z.array(z.object({
+    key: z.string(),
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+  }).loose()).optional(),
+  steps: z.array(WorkflowStepSchema).optional(),
+  gates: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    description: z.string().optional(),
+  }).loose()).optional(),
+}).loose();
+
+export const WorkflowRevisionSchema = z.object({
+  id: z.string(),
+  workflow_definition_id: z.string(),
+  revision_number: z.number().default(0),
+  status: z.string().default("draft"),
+  schema: WorkflowSchemaSchema.default({}),
+  created_by: z.string().nullable().default(null),
+  published_at: z.string().nullable().default(null),
+  deprecated_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_REVISION: WorkflowRevision = {
+  id: "",
+  workflow_definition_id: "",
+  revision_number: 0,
+  status: "draft",
+  schema: {},
+  created_by: null,
+  published_at: null,
+  deprecated_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const WorkflowDefinitionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  name: z.string().default(""),
+  description: z.string().default(""),
+  origin: z.string().default("user"),
+  system_key: z.string().nullable().default(null),
+  forked_from_definition_id: z.string().nullable().default(null),
+  current_published_revision_id: z.string().nullable().default(null),
+  current_revision: WorkflowRevisionSchema.nullable().optional(),
+  created_by: z.string().nullable().default(null),
+  archived_at: z.string().nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_DEFINITION: WorkflowDefinition = {
+  id: "",
+  workspace_id: "",
+  name: "",
+  description: "",
+  origin: "user",
+  system_key: null,
+  forked_from_definition_id: null,
+  current_published_revision_id: null,
+  current_revision: null,
+  created_by: null,
+  archived_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const WorkflowDefinitionListSchema = z.array(WorkflowDefinitionSchema);
+
+export const WorkflowPreviewResponseSchema = z.object({
+  rendered_markdown: z.string().default(""),
+  warnings: z.array(z.string()).nullable().default([]),
+}).loose();
+
+export const EMPTY_WORKFLOW_PREVIEW_RESPONSE: WorkflowPreviewResponse = {
+  rendered_markdown: "",
+  warnings: [],
+};
+
+export const ImportWorkflowResponseSchema = z.object({
+  workflow: WorkflowDefinitionSchema,
+  warnings: z.array(z.string()).nullable().default([]),
+}).loose();
+
+export const EMPTY_IMPORT_WORKFLOW_RESPONSE: ImportWorkflowResponse = {
+  workflow: EMPTY_WORKFLOW_DEFINITION,
+  warnings: [],
+};
+
+export const ExportWorkflowResponseSchema = z.object({
+  format: z.string().default("yaml"),
+  content: z.string().default(""),
+  warnings: z.array(z.string()).nullable().default([]),
+}).loose();
+
+export const EMPTY_EXPORT_WORKFLOW_RESPONSE: ExportWorkflowResponse = {
+  format: "yaml",
+  content: "",
+  warnings: [],
+};
+
+export const WorkflowStepRunSchema = z.object({
+  id: z.string(),
+  workflow_run_id: z.string().default(""),
+  step_definition_id: z.string().default(""),
+  title: z.string().default(""),
+  order_index: z.number().default(0),
+  required: z.boolean().default(false),
+  status: z.string().default("pending"),
+  execution_kind: z.string().default("agent"),
+  attempt: z.number().default(1),
+  depends_on_step_ids: z.unknown().optional(),
+  artifact_inputs: z.unknown().optional(),
+  snapshot: z.unknown().optional(),
+  started_at: z.string().nullable().optional(),
+  completed_at: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_STEP_RUN: WorkflowStepRun = {
+  id: "",
+  workflow_run_id: "",
+  step_definition_id: "",
+  title: "",
+  order_index: 0,
+  required: false,
+  status: "pending",
+  execution_kind: "agent",
+  attempt: 1,
+  created_at: "",
+  updated_at: "",
+};
+
+export const WorkflowArtifactSchema = z.object({
+  id: z.string(),
+  workflow_run_id: z.string().default(""),
+  workflow_step_run_id: z.string().default(""),
+  logical_name: z.string().default(""),
+  version: z.number().default(1),
+  content_kind: z.string().default("text"),
+  content_text: z.string().nullable().optional(),
+  content_json: z.unknown().optional(),
+  producer_type: z.string().default("member"),
+  producer_id: z.string().nullable().optional(),
+  supersedes_artifact_id: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_ARTIFACT: WorkflowArtifact = {
+  id: "",
+  workflow_run_id: "",
+  workflow_step_run_id: "",
+  logical_name: "",
+  version: 1,
+  content_kind: "text",
+  producer_type: "member",
+  created_at: "",
+};
+
+export const WorkflowReviewSchema = z.object({
+  id: z.string(),
+  workflow_run_id: z.string().default(""),
+  workflow_step_run_id: z.string().nullable().optional(),
+  workflow_artifact_id: z.string().nullable().optional(),
+  status: z.string().default("requested"),
+  reviewer_id: z.string().nullable().optional(),
+  decision_notes: z.string().nullable().optional(),
+  reviewed_at: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_REVIEW: WorkflowReview = {
+  id: "",
+  workflow_run_id: "",
+  status: "requested",
+  created_at: "",
+  updated_at: "",
+};
+
+export const WorkflowQualityGateResultSchema = z.object({
+  id: z.string(),
+  workflow_run_id: z.string().default(""),
+  workflow_step_run_id: z.string().default(""),
+  workflow_artifact_id: z.string().nullable().optional(),
+  status: z.string().default("pass"),
+  blocking: z.boolean().default(false),
+  producer_type: z.string().default("member"),
+  producer_id: z.string().nullable().optional(),
+  report_text: z.string().nullable().optional(),
+  report_json: z.unknown().optional(),
+  created_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_QUALITY_GATE_RESULT: WorkflowQualityGateResult = {
+  id: "",
+  workflow_run_id: "",
+  workflow_step_run_id: "",
+  status: "pass",
+  blocking: false,
+  producer_type: "member",
+  created_at: "",
+};
+
+export const WorkflowRunSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  agent_task_queue_id: z.string().default(""),
+  issue_id: z.string().nullable().optional(),
+  chat_session_id: z.string().nullable().optional(),
+  autopilot_run_id: z.string().nullable().optional(),
+  workflow_definition_id: z.string().nullable().optional(),
+  workflow_revision_id: z.string().nullable().optional(),
+  trigger_type: z.string().default(""),
+  snapshot: z.unknown().optional(),
+  status: z.string().default("queued"),
+  started_at: z.string().nullable().optional(),
+  completed_at: z.string().nullable().optional(),
+  cancelled_at: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  steps: z.array(WorkflowStepRunSchema).default([]),
+  artifacts: z.array(WorkflowArtifactSchema).default([]),
+  reviews: z.array(WorkflowReviewSchema).default([]),
+  quality_gate_results: z.array(WorkflowQualityGateResultSchema).default([]),
+}).loose();
+
+export const EMPTY_WORKFLOW_RUN: WorkflowRun = {
+  id: "",
+  workspace_id: "",
+  agent_task_queue_id: "",
+  trigger_type: "",
+  status: "queued",
+  created_at: "",
+  updated_at: "",
+  steps: [],
+  artifacts: [],
+  reviews: [],
+  quality_gate_results: [],
+};
+
+export const WorkflowRunListSchema = z.array(WorkflowRunSchema);
 
 // ---------------------------------------------------------------------------
 // Chat sessions

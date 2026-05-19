@@ -657,15 +657,15 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 	var userID string
 	if cookie, err := r.Cookie(auth.AuthCookieName); err == nil && cookie.Value != "" {
 		uid, errMsg := authenticateToken(cookie.Value, pr, r.Context())
-		if errMsg != "" {
-			http.Error(w, errMsg, http.StatusUnauthorized)
-			return
+		if errMsg == "" && mc.IsMember(r.Context(), uid, workspaceID) {
+			userID = uid
+		} else {
+			// Desktop and legacy web sessions may have both an HttpOnly cookie
+			// and a localStorage token. A stale cookie must not preempt the
+			// first-message token auth path, or token-mode clients reconnect
+			// forever with an HTTP 403 before they can send the auth frame.
+			slog.Debug("websocket cookie auth ignored; waiting for first-message auth")
 		}
-		if !mc.IsMember(r.Context(), uid, workspaceID) {
-			http.Error(w, `{"error":"not a member of this workspace"}`, http.StatusForbidden)
-			return
-		}
-		userID = uid
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)

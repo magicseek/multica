@@ -1,6 +1,7 @@
-// Package execenv manages isolated per-task execution environments for the daemon.
-// Each task gets its own directory with injected context files. Repositories are
-// checked out on demand by the agent via `multica repo checkout`.
+// Package execenv manages per-task execution environments for the daemon.
+// Remote repositories are checked out on demand by the agent via
+// `multica repo checkout`; current local-dir bindings execute directly in the
+// bound directory while keeping task logs/output/provider home under envRoot.
 package execenv
 
 import (
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -17,8 +19,8 @@ type RepoContextForEnv struct {
 	URL string // remote URL
 }
 
-// RepositoryBindingContextForEnv is a sanitized binding summary. It never
-// carries local paths or private binding metadata.
+// RepositoryBindingContextForEnv is a sanitized binding summary. LocalPath is
+// populated only for a ready binding selected for the claiming daemon/runtime.
 type RepositoryBindingContextForEnv struct {
 	ID             string
 	Kind           string
@@ -26,14 +28,15 @@ type RepositoryBindingContextForEnv struct {
 	MachineLabel   string
 	DaemonID       string
 	RuntimeID      string
+	LocalPath      string
 	Available      bool
 	CurrentDaemon  bool
 	CurrentRuntime bool
 }
 
 // RepositoryContextForEnv describes the first-class repository context for a
-// task. RemoteURL keeps existing checkout behavior; local binding cwd
-// switching is intentionally not performed in this slice.
+// task. RemoteURL keeps existing checkout behavior; a current ready local-dir
+// binding may become the task WorkDir.
 type RepositoryContextForEnv struct {
 	ID                  string
 	Name                string
@@ -118,7 +121,11 @@ type Environment struct {
 	// RootDir is the top-level env directory ({workspacesRoot}/{task_id_short}/).
 	RootDir string
 	// WorkDir is the directory to pass as Cwd to the agent ({RootDir}/workdir/).
+	// For a current local-dir repository binding this is the bound local path.
 	WorkDir string
+	// ExternalWorkDir is true when WorkDir is outside RootDir and must not be
+	// deleted by task cleanup.
+	ExternalWorkDir bool
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
 	// OpenclawConfigPath is the path to the per-task synthesized OpenClaw
@@ -148,6 +155,36 @@ func PredictRootDir(workspacesRoot, workspaceID, taskID string) string {
 	return filepath.Join(workspacesRoot, workspaceID, shortID(taskID))
 }
 
+// LocalBindingWorkDir returns the current ready local-dir binding path that
+// should be used as the task CWD. Only the primary repository is eligible so a
+// secondary local reference cannot unexpectedly redirect execution.
+func LocalBindingWorkDir(ctx TaskContextForEnv) (string, bool) {
+	for _, repo := range ctx.Repositories {
+		role := strings.TrimSpace(repo.Role)
+		if role != "" && role != "primary" {
+			continue
+		}
+		if role == "" && repo.Position != 0 {
+			continue
+		}
+		if repo.Binding == nil {
+			continue
+		}
+		binding := repo.Binding
+		localPath := filepath.Clean(strings.TrimSpace(binding.LocalPath))
+		if binding.Kind != "local_dir" ||
+			binding.State != "ready" ||
+			!binding.Available ||
+			(!binding.CurrentDaemon && !binding.CurrentRuntime) ||
+			localPath == "." ||
+			!filepath.IsAbs(localPath) {
+			continue
+		}
+		return localPath, true
+	}
+	return "", false
+}
+
 // Prepare creates an isolated execution environment for a task.
 // The workdir starts empty (no repo checkouts). The agent checks out repos
 // on demand via `multica repo checkout <url>`.
@@ -171,8 +208,14 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		}
 	}
 
-	// Create directory tree.
 	workDir := filepath.Join(envRoot, "workdir")
+	externalWorkDir := false
+	if localWorkDir, ok := LocalBindingWorkDir(params.Task); ok {
+		workDir = localWorkDir
+		externalWorkDir = true
+	}
+
+	// Create directory tree.
 	for _, dir := range []string{workDir, filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("execenv: create directory %s: %w", dir, err)
@@ -180,9 +223,10 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	env := &Environment{
-		RootDir: envRoot,
-		WorkDir: workDir,
-		logger:  logger,
+		RootDir:         envRoot,
+		WorkDir:         workDir,
+		ExternalWorkDir: externalWorkDir,
+		logger:          logger,
 	}
 
 	// Write context files into workdir (skills go to provider-native paths).
@@ -217,7 +261,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
-	logger.Info("execenv: prepared env", "root", envRoot, "repos_available", len(params.Task.Repos))
+	logger.Info("execenv: prepared env", "root", envRoot, "workdir", workDir, "external_workdir", externalWorkDir, "repos_available", len(params.Task.Repos))
 	return env, nil
 }
 
@@ -406,7 +450,11 @@ func (env *Environment) Cleanup(removeAll bool) error {
 		return nil
 	}
 
-	// Partial cleanup: remove workdir, keep output/ and logs/.
+	// Partial cleanup: remove isolated workdir, keep output/ and logs/. Never
+	// remove a user-owned local-dir binding.
+	if env.ExternalWorkDir {
+		return nil
+	}
 	if err := os.RemoveAll(env.WorkDir); err != nil {
 		env.logger.Warn("execenv: cleanup workdir failed", "error", err)
 		return err
