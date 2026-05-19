@@ -97,6 +97,7 @@ type TaskContextForEnv struct {
 	ExecutionProtocolEnabled bool   // true when this agent opted into a template-backed assignment-task workflow
 	ExecutionProtocolSlug    string // selected assignment-task protocol template; empty resolves to the standard template
 	WorkflowRenderedMarkdown string // immutable workflow snapshot rendered when the task was queued
+	WorkflowRunID            string // materialized workflow run ID for step/artifact/review control commands
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

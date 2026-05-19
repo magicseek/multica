@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
   Copy,
+  Download,
   Eye,
   FileText,
   FolderKanban,
@@ -15,9 +16,10 @@ import {
   Plus,
   Search,
   Trash2,
+  Upload,
   Workflow,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -29,6 +31,7 @@ import {
   useForkWorkflow,
   usePublishWorkflow,
   useUpdateWorkflow,
+  workflowKeys,
   workflowListOptions,
 } from "@multica/core/workflows";
 import type {
@@ -43,6 +46,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   Tabs,
@@ -64,8 +68,13 @@ import { useT } from "../../i18n";
 import { WorkflowGraphPreview } from "./workflow-graph-preview";
 
 type FilterKey = "all" | WorkflowApplicability;
+type StepArtifactInput = NonNullable<
+  NonNullable<WorkflowStep["artifact"]>["inputs"]
+>[number];
 
 const FILTERS: FilterKey[] = ["all", "assignment", "comment"];
+const EXECUTION_KINDS = ["agent", "manual", "external"] as const;
+const ARTIFACT_CONTENT_KINDS = ["markdown", "text", "json"] as const;
 
 const SAMPLE_ISSUE_ID = "MUL-123";
 const SAMPLE_COMMENT_ID = "comment-123";
@@ -100,7 +109,7 @@ function bodyToSchema(
   const base = workflow?.current_revision?.schema ?? {};
   return {
     ...base,
-    schema_version: base.schema_version ?? base.version ?? 1,
+    schema_version: 2,
     version: undefined,
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -124,6 +133,34 @@ function workflowSteps(
 function normalizeStep(step: WorkflowStep, index: number): WorkflowStep {
   const id = (step.id ?? "").trim() || `step-${index + 1}`;
   const title = (step.title ?? "").trim() || step.name?.trim() || id;
+  const execution = {
+    kind: step.execution?.kind?.trim() || "agent",
+    prompt: step.execution?.prompt?.trim() || undefined,
+    rules: step.execution?.rules?.trim() || undefined,
+  };
+  const artifactInputs = step.artifact?.inputs?.filter(
+    (input) => input.step_id?.trim() || input.artifact_name?.trim() || input.name?.trim(),
+  );
+  const artifactTemplate = step.artifact?.template;
+  const artifact =
+    step.artifact?.name?.trim() ||
+    step.artifact?.content_kind ||
+    artifactTemplate?.content?.trim() ||
+    (artifactInputs?.length ?? 0) > 0
+      ? {
+          name: step.artifact?.name?.trim() || undefined,
+          content_kind: step.artifact?.content_kind || "markdown",
+          template: artifactTemplate?.content?.trim()
+            ? {
+                format: artifactTemplate.format || "markdown",
+                content: artifactTemplate.content.trim(),
+                files: artifactTemplate.files?.filter((file) => file.path || file.content),
+              }
+            : undefined,
+          inputs: artifactInputs,
+        }
+      : undefined;
+  const qualityPrompt = step.quality_gate?.prompt?.trim();
   return {
     ...step,
     id,
@@ -131,10 +168,48 @@ function normalizeStep(step: WorkflowStep, index: number): WorkflowStep {
     name: step.name?.trim() || undefined,
     order: step.order || index + 1,
     depends_on: step.depends_on?.map((item) => item.trim()).filter(Boolean),
+    execution,
+    artifact,
+    input_artifacts: undefined,
+    review: step.review?.required ? { required: true } : undefined,
+    quality_gate:
+      step.quality_gate?.enabled || step.quality_gate?.blocking || qualityPrompt
+        ? {
+            enabled: step.quality_gate?.enabled || Boolean(qualityPrompt),
+            blocking: Boolean(step.quality_gate?.blocking),
+            prompt: qualityPrompt || undefined,
+            report_mode: step.quality_gate?.report_mode?.trim() || "summary",
+          }
+        : undefined,
     body_template: step.body_template?.trim() || undefined,
     description: step.description?.trim() || undefined,
     checklist: step.checklist?.map((item) => item.trim()).filter(Boolean),
   };
+}
+
+function formatArtifactInputs(inputs: StepArtifactInput[] | undefined): string {
+  return (inputs ?? [])
+    .map((input) => {
+      const stepId = input.step_id?.trim();
+      const artifactName = input.artifact_name?.trim();
+      if (stepId && artifactName) return `${stepId}:${artifactName}`;
+      return artifactName || stepId || input.name?.trim() || "";
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function parseArtifactInputs(value: string): StepArtifactInput[] {
+  return value
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => {
+      const [stepId, artifactName] = item.split(":").map((part) => part.trim());
+      return artifactName
+        ? { step_id: stepId, artifact_name: artifactName }
+        : { artifact_name: stepId };
+    });
 }
 
 function applicabilityLabel(
@@ -149,11 +224,16 @@ function applicabilityLabel(
 function PageHeaderBar({
   totalCount,
   onCreate,
+  onImportFile,
+  importing,
 }: {
   totalCount: number;
   onCreate: () => void;
+  onImportFile: (file: File) => void;
+  importing: boolean;
 }) {
   const { t } = useT("workflows");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <PageHeader className="justify-between px-5">
       <div className="flex items-center gap-2">
@@ -168,10 +248,37 @@ function PageHeaderBar({
           {t(($) => $.page.tagline)}
         </p>
       </div>
-      <Button type="button" size="sm" onClick={onCreate}>
-        <Plus className="h-3 w-3" />
-        {t(($) => $.page.new_workflow)}
-      </Button>
+      <div className="flex items-center gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".yaml,.yml,.json,application/json,text/yaml,text/x-yaml"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.currentTarget.value = "";
+            if (file) onImportFile(file);
+          }}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing}
+        >
+          {importing ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Upload className="h-3 w-3" />
+          )}
+          {t(($) => $.page.import_workflow)}
+        </Button>
+        <Button type="button" size="sm" onClick={onCreate}>
+          <Plus className="h-3 w-3" />
+          {t(($) => $.page.new_workflow)}
+        </Button>
+      </div>
     </PageHeader>
   );
 }
@@ -399,6 +506,7 @@ function WorkflowEditor({
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const updateWorkflow = useUpdateWorkflow();
   const publishWorkflow = usePublishWorkflow();
@@ -543,6 +651,35 @@ function WorkflowEditor({
     }
   };
 
+  const exportCurrentWorkflow = async () => {
+    if (!workflow) return;
+    setExporting(true);
+    try {
+      const result = await api.exportWorkflow(workflow.id, "yaml");
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(result.content);
+      } else {
+        const blob = new Blob([result.content], { type: "text/yaml" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${workflow.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "workflow"}.yaml`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+      toast.success(t(($) => $.editor.exported));
+      if (result.warnings?.length) {
+        toast.warning(result.warnings.join("\n"));
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.editor.export_failed),
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
@@ -557,6 +694,20 @@ function WorkflowEditor({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={exportCurrentWorkflow}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Download className="h-3 w-3" />
+            )}
+            {t(($) => $.editor.export)}
+          </Button>
           {isSystem ? (
             <Button
               type="button"
@@ -811,6 +962,133 @@ function WorkflowEditor({
 
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t(($) => $.steps.execution_kind_label)}
+                        </Label>
+                        <Select
+                          value={step.execution?.kind ?? "agent"}
+                          onValueChange={(value) =>
+                            updateStep(index, {
+                              execution: {
+                                ...(step.execution ?? {}),
+                                kind: value ?? "agent",
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                        >
+                          <SelectTrigger size="sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {EXECUTION_KINDS.map((kind) => (
+                              <SelectItem key={kind} value={kind}>
+                                {t(($) => $.steps.execution_kinds[kind])}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor={`workflow-step-artifact-name-${index}`}
+                          className="text-xs"
+                        >
+                          {t(($) => $.steps.artifact_name_label)}
+                        </Label>
+                        <Input
+                          id={`workflow-step-artifact-name-${index}`}
+                          value={step.artifact?.name ?? ""}
+                          onChange={(e) =>
+                            updateStep(index, {
+                              artifact: {
+                                ...(step.artifact ?? {}),
+                                name: e.target.value,
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t(($) => $.steps.artifact_kind_label)}
+                        </Label>
+                        <Select
+                          value={step.artifact?.content_kind ?? "markdown"}
+                          onValueChange={(value) =>
+                            updateStep(index, {
+                              artifact: {
+                                ...(step.artifact ?? {}),
+                                content_kind: value ?? "markdown",
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                        >
+                          <SelectTrigger size="sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ARTIFACT_CONTENT_KINDS.map((kind) => (
+                              <SelectItem key={kind} value={kind}>
+                                {kind}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor={`workflow-step-agent-prompt-${index}`}
+                          className="text-xs"
+                        >
+                          {t(($) => $.steps.agent_prompt_label)}
+                        </Label>
+                        <Textarea
+                          id={`workflow-step-agent-prompt-${index}`}
+                          value={step.execution?.prompt ?? ""}
+                          onChange={(e) =>
+                            updateStep(index, {
+                              execution: {
+                                ...(step.execution ?? {}),
+                                prompt: e.target.value,
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                          className="min-h-20 resize-y text-xs leading-5"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor={`workflow-step-rules-${index}`}
+                          className="text-xs"
+                        >
+                          {t(($) => $.steps.rules_label)}
+                        </Label>
+                        <Textarea
+                          id={`workflow-step-rules-${index}`}
+                          value={step.execution?.rules ?? ""}
+                          onChange={(e) =>
+                            updateStep(index, {
+                              execution: {
+                                ...(step.execution ?? {}),
+                                rules: e.target.value,
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                          className="min-h-20 resize-y text-xs leading-5"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="space-y-1.5">
                         <Label
                           htmlFor={`workflow-step-description-${index}`}
                           className="text-xs"
@@ -867,6 +1145,151 @@ function WorkflowEditor({
                           disabled={isSystem}
                           className="min-h-20 resize-y text-xs leading-5"
                         />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor={`workflow-step-artifact-template-${index}`}
+                          className="text-xs"
+                        >
+                          {t(($) => $.steps.artifact_template_label)}
+                        </Label>
+                        <Textarea
+                          id={`workflow-step-artifact-template-${index}`}
+                          value={step.artifact?.template?.content ?? ""}
+                          onChange={(e) =>
+                            updateStep(index, {
+                              artifact: {
+                                ...(step.artifact ?? {}),
+                                template: {
+                                  ...(step.artifact?.template ?? {
+                                    format: "markdown",
+                                  }),
+                                  content: e.target.value,
+                                },
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                          spellCheck={false}
+                          className="min-h-24 resize-y font-mono text-xs leading-5"
+                        />
+                      </div>
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label
+                            htmlFor={`workflow-step-artifact-inputs-${index}`}
+                            className="text-xs"
+                          >
+                            {t(($) => $.steps.artifact_inputs_label)}
+                          </Label>
+                          <Input
+                            id={`workflow-step-artifact-inputs-${index}`}
+                            value={formatArtifactInputs(step.artifact?.inputs)}
+                            onChange={(e) =>
+                              updateStep(index, {
+                                artifact: {
+                                  ...(step.artifact ?? {}),
+                                  inputs: parseArtifactInputs(e.target.value),
+                                },
+                              })
+                            }
+                            placeholder={t(($) => $.steps.artifact_inputs_placeholder)}
+                            disabled={isSystem}
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                            <span>{t(($) => $.steps.review_required_label)}</span>
+                            <Switch
+                              checked={Boolean(step.review?.required)}
+                              onCheckedChange={(checked) =>
+                                updateStep(index, {
+                                  review: checked ? { required: true } : undefined,
+                                })
+                              }
+                              disabled={isSystem}
+                            />
+                          </label>
+                          <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs">
+                            <span>{t(($) => $.steps.quality_blocking_label)}</span>
+                            <Switch
+                              checked={Boolean(step.quality_gate?.blocking)}
+                              onCheckedChange={(checked) =>
+                                updateStep(index, {
+                                  quality_gate: {
+                                    ...(step.quality_gate ?? {}),
+                                    enabled:
+                                      checked ||
+                                      Boolean(step.quality_gate?.prompt?.trim()),
+                                    blocking: checked,
+                                  },
+                                })
+                              }
+                              disabled={isSystem}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px]">
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor={`workflow-step-quality-prompt-${index}`}
+                          className="text-xs"
+                        >
+                          {t(($) => $.steps.quality_prompt_label)}
+                        </Label>
+                        <Textarea
+                          id={`workflow-step-quality-prompt-${index}`}
+                          value={step.quality_gate?.prompt ?? ""}
+                          onChange={(e) =>
+                            updateStep(index, {
+                              quality_gate: {
+                                ...(step.quality_gate ?? {}),
+                                enabled: Boolean(e.target.value.trim()),
+                                prompt: e.target.value,
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                          className="min-h-20 resize-y text-xs leading-5"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">
+                          {t(($) => $.steps.quality_report_mode_label)}
+                        </Label>
+                        <Select
+                          value={step.quality_gate?.report_mode ?? "summary"}
+                          onValueChange={(value) =>
+                            updateStep(index, {
+                              quality_gate: {
+                                ...(step.quality_gate ?? {}),
+                                report_mode: value ?? "summary",
+                              },
+                            })
+                          }
+                          disabled={isSystem}
+                        >
+                          <SelectTrigger size="sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="summary">
+                              {t(($) => $.steps.quality_report_modes.summary)}
+                            </SelectItem>
+                            <SelectItem value="full">
+                              {t(($) => $.steps.quality_report_modes.full)}
+                            </SelectItem>
+                            <SelectItem value="json">
+                              {t(($) => $.steps.quality_report_modes.json)}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                   </div>
@@ -954,6 +1377,7 @@ function WorkflowEditor({
 export function WorkflowsPage() {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const {
     data: workflows = [],
     isLoading,
@@ -968,6 +1392,7 @@ export function WorkflowsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [importing, setImporting] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -999,7 +1424,7 @@ export function WorkflowsPage() {
         name: t(($) => $.new_workflow.name),
         description: t(($) => $.new_workflow.description),
         schema: {
-          schema_version: 1,
+          schema_version: 2,
           name: t(($) => $.new_workflow.name),
           description: t(($) => $.new_workflow.description),
           applicability: ["assignment"],
@@ -1018,11 +1443,39 @@ export function WorkflowsPage() {
     }
   };
 
+  const importFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const content = await file.text();
+      const format = file.name.toLowerCase().endsWith(".json") ? "json" : "yaml";
+      const result = await api.importWorkflow({
+        name: file.name.replace(/\.(ya?ml|json)$/i, ""),
+        format,
+        content,
+      });
+      await queryClient.invalidateQueries({ queryKey: workflowKeys.all(wsId) });
+      setSelectedId(result.workflow.id);
+      toast.success(t(($) => $.import.created));
+      if (result.warnings?.length) {
+        toast.warning(result.warnings.join("\n"));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t(($) => $.import.failed));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   if (isLoading) return <WorkflowsSkeleton />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeaderBar totalCount={workflows.length} onCreate={create} />
+      <PageHeaderBar
+        totalCount={workflows.length}
+        onCreate={create}
+        onImportFile={importFile}
+        importing={importing}
+      />
       <div className="flex min-h-0 flex-1 p-6">
         <div className="flex min-h-0 flex-1 overflow-hidden rounded-lg border bg-background">
           {error ? (

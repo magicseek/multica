@@ -22,6 +22,7 @@ import { useAutoScroll } from "@multica/ui/hooks/use-auto-scroll";
 import { taskMessagesOptions } from "@multica/core/chat/queries";
 import { Markdown } from "@multica/views/common/markdown";
 import { copyMarkdown } from "../../editor";
+import { WorkflowRunViewer } from "../../workflows";
 import type { AgentAvailability } from "@multica/core/agents";
 import type { ChatMessage, ChatPendingTask, TaskMessagePayload, TaskFailureReason } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
@@ -218,6 +219,7 @@ function AssistantMessage({
         timeline={timeline}
         isPending={isPending}
       />
+      {taskId && <WorkflowRunViewer taskId={taskId} />}
     </div>
   );
 }

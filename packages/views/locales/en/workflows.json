@@ -3,6 +3,7 @@
     "title": "Workflows",
     "tagline": "Edit reusable agent execution templates and bind them to projects.",
     "new_workflow": "New workflow",
+    "import_workflow": "Import",
     "search_placeholder": "Search workflows",
     "no_matches": "No workflows match this view.",
     "load_failed": "Failed to load workflows."
@@ -31,6 +32,9 @@
     "body_label": "Markdown template",
     "variables_hint": "Available variables: issue_id and trigger_comment_id.",
     "preview_failed": "Preview failed.",
+    "export": "Export",
+    "exported": "Workflow YAML copied.",
+    "export_failed": "Failed to export workflow.",
     "fork_to_edit": "Fork to edit",
     "forked": "Workflow forked.",
     "fork_failed": "Failed to fork workflow.",
@@ -65,10 +69,32 @@
     "id_label": "ID",
     "title_label": "Title",
     "depends_on_label": "Depends on",
+    "execution_kind_label": "Execution",
+    "artifact_name_label": "Artifact name",
+    "artifact_kind_label": "Artifact kind",
+    "agent_prompt_label": "Agent prompt",
+    "rules_label": "Rules",
     "description_label": "Description",
     "body_template_label": "Step body",
     "checklist_label": "Checklist",
+    "artifact_template_label": "Artifact template",
+    "artifact_inputs_label": "Artifact inputs",
+    "review_required_label": "Human review",
+    "quality_blocking_label": "Blocking quality gate",
+    "quality_prompt_label": "Quality prompt",
+    "quality_report_mode_label": "Report mode",
+    "execution_kinds": {
+      "agent": "Agent",
+      "manual": "Manual",
+      "external": "External"
+    },
+    "quality_report_modes": {
+      "summary": "Summary",
+      "full": "Full",
+      "json": "JSON"
+    },
     "depends_on_placeholder": "step-1, step-2",
+    "artifact_inputs_placeholder": "design:Design, context",
     "checklist_placeholder": "One checklist item per line",
     "new_step_title": "Step {{number}}",
     "remove": "Remove step"
@@ -91,5 +117,30 @@
     "description": "Editable assignment workflow.",
     "created": "Workflow created.",
     "failed": "Failed to create workflow."
+  },
+  "import": {
+    "created": "Workflow imported.",
+    "failed": "Failed to import workflow."
+  },
+  "runtime": {
+    "title": "Workflow run",
+    "steps_progress": "{{completed}}/{{total}} steps",
+    "cancel": "Cancel",
+    "cancelled": "Workflow run cancelled.",
+    "rerun": "Rerun",
+    "rerun_created": "Workflow rerun queued.",
+    "complete": "Complete",
+    "retry": "Retry",
+    "step_completed": "Step completed.",
+    "step_retry_created": "Step retry queued.",
+    "pending_reviews": "Pending reviews",
+    "approve": "Approve",
+    "reject": "Reject",
+    "review_approved": "Review approved.",
+    "review_rejected": "Review rejected.",
+    "action_failed": "Workflow action failed.",
+    "artifacts": "Artifacts",
+    "reviews": "Reviews",
+    "quality": "Quality"
   }
 }

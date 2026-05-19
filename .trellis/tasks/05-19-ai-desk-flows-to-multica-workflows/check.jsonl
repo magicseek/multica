@@ -1,0 +1,13 @@
+{"file":"CONTEXT.md","reason":"Verify implementation matches the resolved workflow migration vocabulary and scope exclusions."}
+{"file":"docs/adr/0003-migrate-ai-desk-flows-through-multica-workflow-runs.md","reason":"Check that implementation follows the accepted server-owned run/step-run architecture and immutable snapshot decisions."}
+{"file":"docs/ai-desk-flows-to-multica-workflows-plan.md","reason":"Use as the detailed review checklist for schema, runtime state, daemon control, UI, import/export, and migration mapping."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review cross-layer contract propagation across DB, sqlc, services, handlers, daemon, core types, and views."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review whether existing workflow, daemon, UI, and API patterns were reused before new abstractions were added."}
+{"file":".trellis/spec/workflows/index.md","reason":"Workflow spec entrypoint for review context."}
+{"file":".trellis/spec/workflows/execution-workflow-definitions.md","reason":"Verify existing workflow definition, binding, snapshot, daemon claim, and frontend contracts remain intact while extended."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Verify backend tests, migrations, sqlc, and API contracts follow project guidelines."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Verify workflow execution does not regress agent protocol injection or snapshot behavior."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Verify daemon runtime behavior and local/cloud daemon boundaries remain compatible."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Verify core package boundaries, API response parsing, shared types, and hooks."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Verify shared UI follows Multica component and state patterns without framework-specific imports."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Verify web-only wiring stays in the web app layer."}

@@ -47,7 +47,7 @@ import { toast } from "sonner";
 import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
 import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
-import { WorkflowPicker } from "../../workflows";
+import { WorkflowPicker, WorkflowRunViewer } from "../../workflows";
 import { CommentCard } from "./comment-card";
 import { CommentInput } from "./comment-input";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
@@ -1344,6 +1344,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </button>
         {pullRequestsOpen && <div className="pl-2"><PullRequestList issueId={id} /></div>}
       </div>
+
+      <WorkflowRunViewer issueId={id} />
 
       {/* Details */}
       <div>

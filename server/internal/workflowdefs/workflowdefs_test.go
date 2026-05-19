@@ -30,8 +30,8 @@ func TestNormalizeSchemaCanonicalizesLegacyFields(t *testing.T) {
 	if err := json.Unmarshal(normalized, &schema); err != nil {
 		t.Fatalf("unmarshal normalized schema: %v", err)
 	}
-	if schema.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", schema.SchemaVersion)
+	if schema.SchemaVersion != 2 {
+		t.Fatalf("schema_version = %d, want 2", schema.SchemaVersion)
 	}
 	if schema.Version != 0 {
 		t.Fatalf("legacy version should be omitted, got %d", schema.Version)
@@ -57,8 +57,8 @@ func TestNormalizeSchemaValidation(t *testing.T) {
 	}{
 		{
 			name:    "unsupported schema version",
-			raw:     `{"schema_version": 2, "applicability": ["assignment"]}`,
-			wantErr: "unsupported schema_version 2",
+			raw:     `{"schema_version": 3, "applicability": ["assignment"]}`,
+			wantErr: "unsupported schema_version 3",
 		},
 		{
 			name:    "missing applicability",
@@ -89,6 +89,144 @@ func TestNormalizeSchemaValidation(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNormalizeSchemaV2StepRuntimeFields(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"schema_version": 2,
+		"applicability": ["assignment"],
+		"steps": [
+			{
+				"id": "draft",
+				"title": "Draft",
+				"execution": {"kind": "manual"},
+				"artifact": {
+					"name": "Design",
+					"content_kind": "md",
+					"inputs": [{"step_id": "context", "artifact_name": "Context"}]
+				},
+				"review_required": true,
+				"quality_gate": {"prompt": "Check quality"}
+			},
+			{"id": "context", "title": "Context"}
+		]
+	}`)
+	normalized, err := NormalizeSchema(raw, "Runtime fields", "")
+	if err != nil {
+		t.Fatalf("NormalizeSchema returned error: %v", err)
+	}
+	var schema Schema
+	if err := json.Unmarshal(normalized, &schema); err != nil {
+		t.Fatalf("unmarshal normalized schema: %v", err)
+	}
+	step := schema.Steps[0]
+	if step.Execution == nil || step.Execution.Kind != "manual" {
+		t.Fatalf("execution = %#v, want manual", step.Execution)
+	}
+	if step.Artifact == nil || step.Artifact.ContentKind != "markdown" {
+		t.Fatalf("artifact = %#v, want markdown artifact", step.Artifact)
+	}
+	if step.Review == nil || !step.Review.Required || step.ReviewRequired != nil {
+		t.Fatalf("review = %#v review_required = %#v, want canonical required review", step.Review, step.ReviewRequired)
+	}
+	if step.QualityGate == nil || !step.QualityGate.Enabled || step.QualityGate.ReportMode != "summary" {
+		t.Fatalf("quality_gate = %#v, want enabled summary quality gate", step.QualityGate)
+	}
+}
+
+func TestImportAIDeskYAMLMapsSupportedFieldsAndWarns(t *testing.T) {
+	t.Parallel()
+
+	content := []byte(`
+name: Design Review
+description: Review a proposed design
+workflow_type: AUTOMATION
+party_mode_discuss: true
+pre_added_agents:
+  - helper
+step_definitions:
+  - id: design
+    name: Write design
+    default_execution_mode: LOCAL_AGENT
+    agent_prompt: Draft the design.
+    rules: Keep it concise.
+    artifact_name: Design
+    artifact_template_content: "# Design"
+    review_required: true
+    quality_gate_prompt: Check the design.
+    quality_report_mode: full
+  - id: approve
+    name: Approve design
+    default_execution_mode: MANUAL
+    depends_on_steps: [design]
+    input_artifacts:
+      - step_id: design
+        artifact_name: Design
+`)
+	result, err := ImportSchema("yaml", content, "", "")
+	if err != nil {
+		t.Fatalf("ImportSchema returned error: %v", err)
+	}
+	var schema Schema
+	if err := json.Unmarshal(result.Schema, &schema); err != nil {
+		t.Fatalf("unmarshal imported schema: %v", err)
+	}
+	if schema.SchemaVersion != 2 || schema.Name != "Design Review" {
+		t.Fatalf("schema = %#v, want v2 Design Review", schema)
+	}
+	if got := schema.Steps[0].Execution; got == nil || got.Kind != "agent" || got.Prompt != "Draft the design." || got.Rules != "Keep it concise." {
+		t.Fatalf("first step execution = %#v", got)
+	}
+	if schema.Steps[0].Artifact == nil || schema.Steps[0].Artifact.Template == nil || schema.Steps[0].Artifact.Template.Content != "# Design" {
+		t.Fatalf("first step artifact = %#v", schema.Steps[0].Artifact)
+	}
+	if schema.Steps[0].Review == nil || !schema.Steps[0].Review.Required {
+		t.Fatalf("review = %#v, want required", schema.Steps[0].Review)
+	}
+	if schema.Steps[0].QualityGate == nil || schema.Steps[0].QualityGate.ReportMode != "full" {
+		t.Fatalf("quality gate = %#v", schema.Steps[0].QualityGate)
+	}
+	if got := schema.Steps[1].Execution; got == nil || got.Kind != "manual" {
+		t.Fatalf("second step execution = %#v, want manual", got)
+	}
+	joined := strings.Join(result.Warnings, "\n")
+	for _, want := range []string{"AUTOMATION", "party_mode_discuss", "pre_added_agents"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("warnings %q missing %q", joined, want)
+		}
+	}
+}
+
+func TestExportSchemaYAMLRoundTripsThroughImport(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"schema_version": 2,
+		"name": "Round Trip",
+		"applicability": ["assignment"],
+		"source": {"format": "markdown", "body_template": "Run"},
+		"steps": [{"id": "run", "title": "Run", "execution": {"kind": "agent"}}]
+	}`)
+	exported, err := ExportSchema(raw, "yaml")
+	if err != nil {
+		t.Fatalf("ExportSchema returned error: %v", err)
+	}
+	if exported.Format != "yaml" || !strings.Contains(exported.Content, "schema_version") {
+		t.Fatalf("exported = %#v", exported)
+	}
+	imported, err := ImportSchema(exported.Format, []byte(exported.Content), "", "")
+	if err != nil {
+		t.Fatalf("ImportSchema(exported) returned error: %v", err)
+	}
+	var schema Schema
+	if err := json.Unmarshal(imported.Schema, &schema); err != nil {
+		t.Fatalf("unmarshal imported schema: %v", err)
+	}
+	if schema.Name != "Round Trip" || len(schema.Steps) != 1 || schema.Steps[0].ID != "run" {
+		t.Fatalf("round-tripped schema = %#v", schema)
 	}
 }
 

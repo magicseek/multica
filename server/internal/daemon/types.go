@@ -132,6 +132,7 @@ type Task struct {
 	WorkflowDefinitionID    string                `json:"workflow_definition_id,omitempty"`    // workflow definition selected at queue time
 	WorkflowRevisionID      string                `json:"workflow_revision_id,omitempty"`      // immutable workflow revision selected at queue time
 	WorkflowSnapshot        WorkflowSnapshot      `json:"workflow_snapshot,omitempty"`         // rendered workflow snapshot captured at queue time
+	WorkflowRun             *WorkflowRun          `json:"workflow_run,omitempty"`              // materialized workflow run and initial step state
 }
 
 type WorkflowSnapshot struct {
@@ -152,6 +153,33 @@ type WorkflowSnapshot struct {
 type WorkflowCapabilityWarning struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type WorkflowRun struct {
+	ID                   string            `json:"id"`
+	WorkspaceID          string            `json:"workspace_id"`
+	AgentTaskQueueID     string            `json:"agent_task_queue_id"`
+	IssueID              *string           `json:"issue_id,omitempty"`
+	WorkflowDefinitionID *string           `json:"workflow_definition_id,omitempty"`
+	WorkflowRevisionID   *string           `json:"workflow_revision_id,omitempty"`
+	TriggerType          string            `json:"trigger_type"`
+	Status               string            `json:"status"`
+	Steps                []WorkflowStepRun `json:"steps,omitempty"`
+}
+
+type WorkflowStepRun struct {
+	ID               string          `json:"id"`
+	WorkflowRunID    string          `json:"workflow_run_id"`
+	StepDefinitionID string          `json:"step_definition_id"`
+	Title            string          `json:"title"`
+	OrderIndex       int32           `json:"order_index"`
+	Required         bool            `json:"required"`
+	Status           string          `json:"status"`
+	ExecutionKind    string          `json:"execution_kind"`
+	Attempt          int32           `json:"attempt"`
+	DependsOnStepIDs []string        `json:"depends_on_step_ids"`
+	ArtifactInputs   json.RawMessage `json:"artifact_inputs"`
+	Snapshot         json.RawMessage `json:"snapshot"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

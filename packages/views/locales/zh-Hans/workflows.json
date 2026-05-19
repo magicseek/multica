@@ -3,6 +3,7 @@
     "title": "Workflow",
     "tagline": "编辑可复用的智能体执行模板，并绑定到项目。",
     "new_workflow": "新建 workflow",
+    "import_workflow": "导入",
     "search_placeholder": "搜索 workflow",
     "no_matches": "当前视图下没有匹配的 workflow。",
     "load_failed": "加载 workflow 失败。"
@@ -31,6 +32,9 @@
     "body_label": "Markdown 模板",
     "variables_hint": "可用变量：issue_id 和 trigger_comment_id。",
     "preview_failed": "预览失败。",
+    "export": "导出",
+    "exported": "Workflow YAML 已复制。",
+    "export_failed": "导出 workflow 失败。",
     "fork_to_edit": "Fork 后编辑",
     "forked": "已 fork workflow。",
     "fork_failed": "Fork workflow 失败。",
@@ -65,10 +69,32 @@
     "id_label": "ID",
     "title_label": "标题",
     "depends_on_label": "依赖步骤",
+    "execution_kind_label": "执行方式",
+    "artifact_name_label": "Artifact 名称",
+    "artifact_kind_label": "Artifact 类型",
+    "agent_prompt_label": "智能体提示词",
+    "rules_label": "规则",
     "description_label": "描述",
     "body_template_label": "步骤正文",
     "checklist_label": "检查清单",
+    "artifact_template_label": "Artifact 模板",
+    "artifact_inputs_label": "Artifact 输入",
+    "review_required_label": "人工审核",
+    "quality_blocking_label": "阻断质量门",
+    "quality_prompt_label": "质量门提示词",
+    "quality_report_mode_label": "报告模式",
+    "execution_kinds": {
+      "agent": "智能体",
+      "manual": "人工",
+      "external": "外部"
+    },
+    "quality_report_modes": {
+      "summary": "摘要",
+      "full": "完整",
+      "json": "JSON"
+    },
     "depends_on_placeholder": "step-1, step-2",
+    "artifact_inputs_placeholder": "design:Design, context",
     "checklist_placeholder": "每行一个检查项",
     "new_step_title": "步骤 {{number}}",
     "remove": "删除步骤"
@@ -91,5 +117,30 @@
     "description": "可编辑的分配任务 workflow。",
     "created": "已创建 workflow。",
     "failed": "创建 workflow 失败。"
+  },
+  "import": {
+    "created": "已导入 workflow。",
+    "failed": "导入 workflow 失败。"
+  },
+  "runtime": {
+    "title": "Workflow run",
+    "steps_progress": "{{completed}}/{{total}} 个步骤",
+    "cancel": "取消",
+    "cancelled": "Workflow run 已取消。",
+    "rerun": "重新运行",
+    "rerun_created": "已创建 workflow rerun。",
+    "complete": "完成",
+    "retry": "重试",
+    "step_completed": "步骤已完成。",
+    "step_retry_created": "已创建步骤重试。",
+    "pending_reviews": "待审核",
+    "approve": "批准",
+    "reject": "拒绝",
+    "review_approved": "审核已批准。",
+    "review_rejected": "审核已拒绝。",
+    "action_failed": "Workflow 操作失败。",
+    "artifacts": "Artifacts",
+    "reviews": "审核",
+    "quality": "质量门"
   }
 }

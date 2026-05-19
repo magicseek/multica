@@ -68,6 +68,18 @@ type WorkflowPreviewRequest struct {
 	TriggerCommentID string          `json:"trigger_comment_id"`
 }
 
+type ImportWorkflowRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Format      string `json:"format"`
+	Content     string `json:"content"`
+}
+
+type ImportWorkflowResponse struct {
+	Workflow WorkflowDefinitionResponse `json:"workflow"`
+	Warnings []string                   `json:"warnings,omitempty"`
+}
+
 func decodeWorkflowSchema(raw []byte) any {
 	if len(raw) == 0 {
 		return map[string]any{}
@@ -371,6 +383,90 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	h.writeWorkflowDetail(w, r, http.StatusCreated, def.ID, wsUUID)
 }
 
+func (h *Handler) ImportWorkflow(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok || !h.ensureWorkflowSeeds(w, r, wsUUID) {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var req ImportWorkflowRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	result, err := workflowdefs.ImportSchema(req.Format, []byte(req.Content), req.Name, req.Description)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	name, description := workflowdefs.SchemaMetadata(result.Schema)
+	if name == "" {
+		name = strings.TrimSpace(req.Name)
+	}
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "workflow name is required")
+		return
+	}
+	if description == "" {
+		description = strings.TrimSpace(req.Description)
+	}
+
+	def, err := h.Queries.CreateUserWorkflowDefinition(r.Context(), db.CreateUserWorkflowDefinitionParams{
+		WorkspaceID: wsUUID,
+		Name:        name,
+		Description: description,
+		CreatedBy:   parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to import workflow")
+		return
+	}
+	rev, err := h.Queries.CreateWorkflowRevision(r.Context(), db.CreateWorkflowRevisionParams{
+		WorkflowDefinitionID: def.ID,
+		RevisionNumber:       1,
+		Status:               "published",
+		Schema:               result.Schema,
+		CreatedBy:            parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to import workflow revision")
+		return
+	}
+	if err := h.Queries.DeprecateOtherPublishedWorkflowRevisions(r.Context(), db.DeprecateOtherPublishedWorkflowRevisionsParams{
+		WorkflowDefinitionID: def.ID,
+		ID:                   rev.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to deprecate old workflow revisions")
+		return
+	}
+	if _, err := h.Queries.SetWorkflowCurrentPublishedRevision(r.Context(), db.SetWorkflowCurrentPublishedRevisionParams{
+		ID:                         def.ID,
+		CurrentPublishedRevisionID: rev.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to publish imported workflow")
+		return
+	}
+
+	row, err := h.Queries.GetWorkflowDefinitionWithCurrentRevision(r.Context(), db.GetWorkflowDefinitionWithCurrentRevisionParams{
+		ID:          def.ID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load imported workflow")
+		return
+	}
+	writeJSON(w, http.StatusCreated, ImportWorkflowResponse{
+		Workflow: workflowDetailRowToResponse(row),
+		Warnings: result.Warnings,
+	})
+}
+
 func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
 	idUUID, wsUUID, ok := h.workflowIDAndWorkspace(w, r)
 	if !ok {
@@ -635,6 +731,27 @@ func (h *Handler) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
 		TriggerCommentID: strings.TrimSpace(req.TriggerCommentID),
 	})
 	writeJSON(w, http.StatusOK, rendered)
+}
+
+func (h *Handler) ExportWorkflow(w http.ResponseWriter, r *http.Request) {
+	idUUID, wsUUID, ok := h.workflowIDAndWorkspace(w, r)
+	if !ok {
+		return
+	}
+	row, err := h.Queries.GetWorkflowDefinitionWithCurrentRevision(r.Context(), db.GetWorkflowDefinitionWithCurrentRevisionParams{
+		ID:          idUUID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil || !row.CurrentRevisionID.Valid {
+		writeError(w, http.StatusNotFound, "workflow not found")
+		return
+	}
+	result, err := workflowdefs.ExportSchema(row.CurrentRevisionSchema, r.URL.Query().Get("format"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {

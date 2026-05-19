@@ -48,6 +48,7 @@ vi.mock("@multica/core/projects/mutations", () => ({
   useUpdateProject: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@multica/core/workflows", () => ({
+  workflowKeys: { all: (workspaceId: string) => ["workflows", workspaceId] },
   workflowListOptions: (_workspaceId: string, filters?: { applicability?: string }) => ({
     queryKey: filters?.applicability ? ["workflows", filters.applicability] : ["workflows"],
   }),
@@ -58,6 +59,7 @@ vi.mock("@multica/core/workflows", () => ({
   useUpdateWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
     if (queryKey[0] === "projects") return { data: [], isLoading: false, error: null };
     return { data: [workflow], isLoading: false, error: null };

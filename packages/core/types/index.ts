@@ -135,13 +135,23 @@ export type {
   WorkflowPreviewResponse,
   WorkflowRevision,
   WorkflowRevisionStatus,
+  WorkflowRun,
+  WorkflowRunStatus,
   WorkflowSchema,
   WorkflowSchemaRequest,
   WorkflowStep,
+  WorkflowStepRun,
+  WorkflowStepRunStatus,
+  WorkflowArtifact,
+  WorkflowReview,
+  WorkflowQualityGateResult,
   WorkflowVariable,
   CreateWorkflowRequest,
   UpdateWorkflowRequest,
   ForkWorkflowRequest,
+  ImportWorkflowRequest,
+  ImportWorkflowResponse,
+  ExportWorkflowResponse,
 } from "./workflow";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {

@@ -127,6 +127,14 @@ import type {
   ForkWorkflowRequest,
   WorkflowPreviewRequest,
   WorkflowPreviewResponse,
+  ImportWorkflowRequest,
+  ImportWorkflowResponse,
+  ExportWorkflowResponse,
+  WorkflowRun,
+  WorkflowStepRun,
+  WorkflowArtifact,
+  WorkflowQualityGateResult,
+  WorkflowReview,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -1350,6 +1358,128 @@ export class ApiClient {
 
   async deleteWorkflow(id: string): Promise<void> {
     await this.fetch(`/api/workflows/${id}`, { method: "DELETE" });
+  }
+
+  async importWorkflow(data: ImportWorkflowRequest): Promise<ImportWorkflowResponse> {
+    return this.fetch("/api/workflows/import", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async exportWorkflow(
+    id: string,
+    format: "yaml" | "json" | string = "yaml",
+  ): Promise<ExportWorkflowResponse> {
+    const search = new URLSearchParams();
+    if (format) search.set("format", format);
+    return this.fetch(`/api/workflows/${id}/export?${search.toString()}`);
+  }
+
+  async listWorkflowRuns(params: {
+    issue_id?: string;
+    task_id?: string;
+    chat_session_id?: string;
+    autopilot_run_id?: string;
+  }): Promise<WorkflowRun[]> {
+    const search = new URLSearchParams();
+    if (params.issue_id) search.set("issue_id", params.issue_id);
+    if (params.task_id) search.set("task_id", params.task_id);
+    if (params.chat_session_id) search.set("chat_session_id", params.chat_session_id);
+    if (params.autopilot_run_id) search.set("autopilot_run_id", params.autopilot_run_id);
+    const suffix = search.toString();
+    return this.fetch(`/api/workflow-runs${suffix ? `?${suffix}` : ""}`);
+  }
+
+  async getWorkflowRun(id: string): Promise<WorkflowRun> {
+    return this.fetch(`/api/workflow-runs/${id}`);
+  }
+
+  async cancelWorkflowRun(id: string): Promise<WorkflowRun> {
+    return this.fetch(`/api/workflow-runs/${id}/cancel`, { method: "POST" });
+  }
+
+  async rerunWorkflowRun(id: string): Promise<AgentTask> {
+    return this.fetch(`/api/workflow-runs/${id}/rerun`, { method: "POST" });
+  }
+
+  async startWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/start`, { method: "POST" });
+  }
+
+  async completeWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/complete`, { method: "POST" });
+  }
+
+  async completeManualWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/manual-complete`, { method: "POST" });
+  }
+
+  async failWorkflowStepRun(id: string, reason?: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/fail`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+  }
+
+  async pauseWorkflowStepRun(id: string, reason?: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/pause`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+  }
+
+  async retryWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/retry`, { method: "POST" });
+  }
+
+  async skipWorkflowStepRun(id: string): Promise<WorkflowStepRun> {
+    return this.fetch(`/api/workflow-step-runs/${id}/skip`, { method: "POST" });
+  }
+
+  async createWorkflowArtifact(
+    stepRunId: string,
+    data: {
+      logical_name: string;
+      content_kind: string;
+      content_text?: string;
+      content_json?: unknown;
+    },
+  ): Promise<WorkflowArtifact> {
+    return this.fetch(`/api/workflow-step-runs/${stepRunId}/artifacts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async reportWorkflowQualityGate(
+    stepRunId: string,
+    data: {
+      artifact_id?: string;
+      status: string;
+      blocking?: boolean;
+      report_text?: string;
+      report_json?: unknown;
+    },
+  ): Promise<WorkflowQualityGateResult> {
+    return this.fetch(`/api/workflow-step-runs/${stepRunId}/quality-gates`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async approveWorkflowReview(id: string, notes?: string): Promise<WorkflowReview> {
+    return this.fetch(`/api/workflow-reviews/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ notes: notes ?? "" }),
+    });
+  }
+
+  async rejectWorkflowReview(id: string, notes?: string): Promise<WorkflowReview> {
+    return this.fetch(`/api/workflow-reviews/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ notes: notes ?? "" }),
+    });
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {

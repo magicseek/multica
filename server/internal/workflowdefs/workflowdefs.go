@@ -28,6 +28,7 @@ type Schema struct {
 	Version       int        `json:"version,omitempty"`
 	Name          string     `json:"name,omitempty"`
 	Description   string     `json:"description,omitempty"`
+	Category      string     `json:"category,omitempty"`
 	Applicability []string   `json:"applicability,omitempty"`
 	Source        Source     `json:"source,omitempty"`
 	Variables     []Variable `json:"variables,omitempty"`
@@ -48,15 +49,63 @@ type Variable struct {
 }
 
 type Step struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name,omitempty"`
-	Title        string   `json:"title"`
-	Order        int      `json:"order,omitempty"`
-	Required     bool     `json:"required,omitempty"`
-	DependsOn    []string `json:"depends_on,omitempty"`
-	BodyTemplate string   `json:"body_template,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Checklist    []string `json:"checklist,omitempty"`
+	ID             string           `json:"id"`
+	Name           string           `json:"name,omitempty"`
+	Title          string           `json:"title"`
+	Order          int              `json:"order,omitempty"`
+	Required       bool             `json:"required,omitempty"`
+	DependsOn      []string         `json:"depends_on,omitempty"`
+	Execution      *StepExecution   `json:"execution,omitempty"`
+	Artifact       *StepArtifact    `json:"artifact,omitempty"`
+	InputArtifacts []ArtifactInput  `json:"input_artifacts,omitempty"`
+	Review         *StepReview      `json:"review,omitempty"`
+	ReviewRequired *bool            `json:"review_required,omitempty"`
+	QualityGate    *StepQualityGate `json:"quality_gate,omitempty"`
+	BodyTemplate   string           `json:"body_template,omitempty"`
+	Description    string           `json:"description,omitempty"`
+	Checklist      []string         `json:"checklist,omitempty"`
+}
+
+type StepExecution struct {
+	Kind   string `json:"kind,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	Rules  string `json:"rules,omitempty"`
+}
+
+type StepArtifact struct {
+	Name        string            `json:"name,omitempty"`
+	ContentKind string            `json:"content_kind,omitempty"`
+	Template    *ArtifactTemplate `json:"template,omitempty"`
+	Inputs      []ArtifactInput   `json:"inputs,omitempty"`
+}
+
+type ArtifactTemplate struct {
+	Format  string                 `json:"format,omitempty"`
+	Content string                 `json:"content,omitempty"`
+	Files   []ArtifactTemplateFile `json:"files,omitempty"`
+}
+
+type ArtifactTemplateFile struct {
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+type ArtifactInput struct {
+	StepID       string `json:"step_id,omitempty"`
+	ArtifactName string `json:"artifact_name,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Required     bool   `json:"required,omitempty"`
+}
+
+type StepReview struct {
+	Required bool `json:"required,omitempty"`
+}
+
+type StepQualityGate struct {
+	Enabled    bool   `json:"enabled,omitempty"`
+	Blocking   bool   `json:"blocking,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	ReportMode string `json:"report_mode,omitempty"`
 }
 
 type Gate struct {
@@ -198,11 +247,12 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 		s.SchemaVersion = s.Version
 	}
 	if s.SchemaVersion == 0 {
-		s.SchemaVersion = 1
+		s.SchemaVersion = 2
 	}
-	if s.SchemaVersion != 1 {
+	if s.SchemaVersion != 1 && s.SchemaVersion != 2 {
 		return nil, fmt.Errorf("unsupported schema_version %d", s.SchemaVersion)
 	}
+	s.SchemaVersion = 2
 	s.Version = 0
 	if strings.TrimSpace(s.Name) == "" {
 		s.Name = strings.TrimSpace(fallbackName)
@@ -214,7 +264,7 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 		return nil, fmt.Errorf("schema applicability is required")
 	}
 	for _, item := range s.Applicability {
-		if item != "assignment" && item != "comment" {
+		if item != "assignment" && item != "comment" && item != "chat" && item != "autopilot" {
 			return nil, fmt.Errorf("unsupported workflow applicability %q", item)
 		}
 	}
@@ -225,6 +275,7 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 		s.Source.Format = "markdown"
 	}
 	s.Source.Mode = ""
+	normalizeSteps(s.Steps)
 	if err := validateSteps(s.Steps); err != nil {
 		return nil, err
 	}
@@ -233,6 +284,116 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 		return nil, fmt.Errorf("normalize schema: %w", err)
 	}
 	return normalized, nil
+}
+
+func normalizeSteps(steps []Step) {
+	for i := range steps {
+		step := &steps[i]
+		step.ID = strings.TrimSpace(step.ID)
+		step.Name = strings.TrimSpace(step.Name)
+		step.Title = strings.TrimSpace(step.Title)
+		if step.Title == "" {
+			step.Title = step.Name
+		}
+		if step.Title == "" {
+			step.Title = step.ID
+		}
+		if step.Order == 0 {
+			step.Order = i + 1
+		}
+		step.DependsOn = normalizedStrings(step.DependsOn)
+		step.BodyTemplate = strings.TrimSpace(step.BodyTemplate)
+		step.Description = strings.TrimSpace(step.Description)
+		step.Checklist = normalizedStrings(step.Checklist)
+		if step.Execution == nil {
+			step.Execution = &StepExecution{Kind: "agent"}
+		}
+		step.Execution.Kind = normalizeExecutionKind(step.Execution.Kind)
+		step.Execution.Prompt = strings.TrimSpace(step.Execution.Prompt)
+		step.Execution.Rules = strings.TrimSpace(step.Execution.Rules)
+		if len(step.InputArtifacts) > 0 {
+			if step.Artifact == nil {
+				step.Artifact = &StepArtifact{}
+			}
+			if len(step.Artifact.Inputs) == 0 {
+				step.Artifact.Inputs = step.InputArtifacts
+			}
+			step.InputArtifacts = nil
+		}
+		if step.Artifact != nil {
+			step.Artifact.Name = strings.TrimSpace(step.Artifact.Name)
+			step.Artifact.ContentKind = normalizeArtifactContentKind(step.Artifact.ContentKind)
+			if step.Artifact.Template != nil {
+				step.Artifact.Template.Format = normalizeArtifactContentKind(step.Artifact.Template.Format)
+				step.Artifact.Template.Content = strings.TrimSpace(step.Artifact.Template.Content)
+			}
+			normalizeArtifactInputs(step.Artifact.Inputs)
+		}
+		if step.ReviewRequired != nil {
+			if step.Review == nil {
+				step.Review = &StepReview{}
+			}
+			step.Review.Required = *step.ReviewRequired
+			step.ReviewRequired = nil
+		}
+		if step.QualityGate != nil {
+			step.QualityGate.Prompt = strings.TrimSpace(step.QualityGate.Prompt)
+			step.QualityGate.ReportMode = strings.TrimSpace(step.QualityGate.ReportMode)
+			if step.QualityGate.ReportMode == "" {
+				step.QualityGate.ReportMode = "summary"
+			}
+			if step.QualityGate.Prompt != "" {
+				step.QualityGate.Enabled = true
+			}
+		}
+	}
+}
+
+func normalizedStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeArtifactInputs(inputs []ArtifactInput) {
+	for i := range inputs {
+		inputs[i].StepID = strings.TrimSpace(inputs[i].StepID)
+		inputs[i].ArtifactName = strings.TrimSpace(inputs[i].ArtifactName)
+		inputs[i].Name = strings.TrimSpace(inputs[i].Name)
+	}
+}
+
+func normalizeExecutionKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "agent", "built_in_agent", "local_agent":
+		return "agent"
+	case "manual":
+		return "manual"
+	case "external", "external_agent":
+		return "external"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
+	}
+}
+
+func normalizeArtifactContentKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "", "text":
+		return "text"
+	case "markdown", "md":
+		return "markdown"
+	case "json":
+		return "json"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
+	}
 }
 
 func validateSteps(steps []Step) error {
@@ -248,6 +409,20 @@ func validateSteps(steps []Step) error {
 		seen[id] = struct{}{}
 	}
 	for _, step := range steps {
+		if step.Execution != nil {
+			switch step.Execution.Kind {
+			case "agent", "manual", "external":
+			default:
+				return fmt.Errorf("step %q has unsupported execution kind %q", step.ID, step.Execution.Kind)
+			}
+		}
+		if step.Artifact != nil {
+			switch step.Artifact.ContentKind {
+			case "", "text", "markdown", "json":
+			default:
+				return fmt.Errorf("step %q has unsupported artifact content kind %q", step.ID, step.Artifact.ContentKind)
+			}
+		}
 		for _, dep := range step.DependsOn {
 			id := strings.TrimSpace(dep)
 			if id == "" {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -1325,6 +1326,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp := taskToResponse(*task)
+	if run, err := h.Queries.GetWorkflowRunByTask(r.Context(), task.ID); err == nil {
+		if steps, stepErr := h.Queries.ListWorkflowStepRunsByRun(r.Context(), run.ID); stepErr == nil {
+			runResp := workflowRunToResponse(run, steps, nil, nil, nil)
+			resp.WorkflowRun = &runResp
+		} else {
+			slog.Warn("failed to load workflow step runs for claim response", "task_id", uuidToString(task.ID), "error", stepErr)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("failed to load workflow run for claim response", "task_id", uuidToString(task.ID), "error", err)
+	}
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
 		var customEnv map[string]string

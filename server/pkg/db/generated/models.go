@@ -707,6 +707,21 @@ type VerificationCode struct {
 	Attempts  int32              `json:"attempts"`
 }
 
+type WorkflowArtifact struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkflowRunID        pgtype.UUID        `json:"workflow_run_id"`
+	WorkflowStepRunID    pgtype.UUID        `json:"workflow_step_run_id"`
+	LogicalName          string             `json:"logical_name"`
+	Version              int32              `json:"version"`
+	ContentKind          string             `json:"content_kind"`
+	ContentText          pgtype.Text        `json:"content_text"`
+	ContentJson          []byte             `json:"content_json"`
+	ProducerType         string             `json:"producer_type"`
+	ProducerID           pgtype.UUID        `json:"producer_id"`
+	SupersedesArtifactID pgtype.UUID        `json:"supersedes_artifact_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
 type WorkflowDefinition struct {
 	ID                         pgtype.UUID        `json:"id"`
 	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
@@ -722,6 +737,34 @@ type WorkflowDefinition struct {
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkflowQualityGateResult struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkflowRunID      pgtype.UUID        `json:"workflow_run_id"`
+	WorkflowStepRunID  pgtype.UUID        `json:"workflow_step_run_id"`
+	WorkflowArtifactID pgtype.UUID        `json:"workflow_artifact_id"`
+	Status             string             `json:"status"`
+	Blocking           bool               `json:"blocking"`
+	ProducerType       string             `json:"producer_type"`
+	ProducerID         pgtype.UUID        `json:"producer_id"`
+	ReportText         pgtype.Text        `json:"report_text"`
+	ReportJson         []byte             `json:"report_json"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowReview struct {
+	ID                 pgtype.UUID        `json:"id"`
+	WorkflowRunID      pgtype.UUID        `json:"workflow_run_id"`
+	WorkflowStepRunID  pgtype.UUID        `json:"workflow_step_run_id"`
+	WorkflowArtifactID pgtype.UUID        `json:"workflow_artifact_id"`
+	Status             string             `json:"status"`
+	ReviewerID         pgtype.UUID        `json:"reviewer_id"`
+	DecisionNotes      pgtype.Text        `json:"decision_notes"`
+	RequestedAt        pgtype.Timestamptz `json:"requested_at"`
+	ReviewedAt         pgtype.Timestamptz `json:"reviewed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkflowRevision struct {
 	ID                   pgtype.UUID        `json:"id"`
 	WorkflowDefinitionID pgtype.UUID        `json:"workflow_definition_id"`
@@ -733,6 +776,46 @@ type WorkflowRevision struct {
 	DeprecatedAt         pgtype.Timestamptz `json:"deprecated_at"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkflowRun struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	AgentTaskQueueID     pgtype.UUID        `json:"agent_task_queue_id"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	ChatSessionID        pgtype.UUID        `json:"chat_session_id"`
+	AutopilotRunID       pgtype.UUID        `json:"autopilot_run_id"`
+	WorkflowDefinitionID pgtype.UUID        `json:"workflow_definition_id"`
+	WorkflowRevisionID   pgtype.UUID        `json:"workflow_revision_id"`
+	TriggerType          string             `json:"trigger_type"`
+	Snapshot             []byte             `json:"snapshot"`
+	Status               string             `json:"status"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt          pgtype.Timestamptz `json:"cancelled_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkflowStepRun struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkflowRunID     pgtype.UUID        `json:"workflow_run_id"`
+	StepDefinitionID  string             `json:"step_definition_id"`
+	Title             string             `json:"title"`
+	OrderIndex        int32              `json:"order_index"`
+	Required          bool               `json:"required"`
+	Status            string             `json:"status"`
+	ExecutionKind     string             `json:"execution_kind"`
+	DependsOnStepIds  []byte             `json:"depends_on_step_ids"`
+	ArtifactInputs    []byte             `json:"artifact_inputs"`
+	Snapshot          []byte             `json:"snapshot"`
+	Attempt           int32              `json:"attempt"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	ExecutionMetadata []byte             `json:"execution_metadata"`
+	Error             pgtype.Text        `json:"error"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Workspace struct {

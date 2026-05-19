@@ -2191,6 +2191,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ExecutionProtocolSlug:    executionProtocolSlug,
 		WorkflowRenderedMarkdown: strings.TrimSpace(task.WorkflowSnapshot.RenderedMarkdown),
 	}
+	if task.WorkflowRun != nil {
+		taskCtx.WorkflowRunID = task.WorkflowRun.ID
+	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
 	// can't reclaim artifacts inside them mid-execution. We mark both the
@@ -2271,6 +2274,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"MULTICA_AGENT_ID":     task.AgentID,
 		"MULTICA_TASK_ID":      task.ID,
 		"MULTICA_TASK_SLOT":    strconv.Itoa(slot),
+	}
+	if task.WorkflowRun != nil && task.WorkflowRun.ID != "" {
+		agentEnv["MULTICA_WORKFLOW_RUN_ID"] = task.WorkflowRun.ID
 	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID

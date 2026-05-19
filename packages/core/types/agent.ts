@@ -1,3 +1,5 @@
+import type { WorkflowRun } from "./workflow";
+
 export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
 export type AgentRuntimeMode = "local" | "cloud";
@@ -108,6 +110,8 @@ export interface AgentTask {
   workflow_revision_id?: string;
   /** Immutable workflow payload injected into the daemon execution context. */
   workflow_snapshot?: AgentTaskWorkflowSnapshot | null;
+  /** Materialized workflow run and step state included in daemon claim responses. */
+  workflow_run?: WorkflowRun | null;
   /**
    * Server-computed source discriminator used by the activity row to label
    * tasks that have no linked issue (so e.g. quick-create tasks render

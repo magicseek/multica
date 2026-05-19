@@ -524,15 +524,47 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/workflows", func(r chi.Router) {
 				r.Get("/", h.ListWorkflows)
 				r.Post("/", h.CreateWorkflow)
+				r.Post("/import", h.ImportWorkflow)
 				r.Post("/preview", h.PreviewWorkflow)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetWorkflow)
 					r.Patch("/", h.UpdateWorkflow)
 					r.Delete("/", h.DeleteWorkflow)
+					r.Get("/export", h.ExportWorkflow)
 					r.Post("/draft", h.CreateWorkflowDraft)
 					r.Put("/draft", h.UpdateWorkflowDraft)
 					r.Post("/publish", h.PublishWorkflow)
 					r.Post("/fork", h.ForkWorkflow)
+				})
+			})
+
+			// Workflow runtime
+			r.Route("/api/workflow-runs", func(r chi.Router) {
+				r.Get("/", h.ListWorkflowRuns)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflowRun)
+					r.Post("/cancel", h.CancelWorkflowRun)
+					r.Post("/rerun", h.RerunWorkflowRun)
+				})
+			})
+			r.Route("/api/workflow-step-runs", func(r chi.Router) {
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflowStepRun)
+					r.Post("/start", h.StartWorkflowStepRun)
+					r.Post("/complete", h.CompleteWorkflowStepRun)
+					r.Post("/manual-complete", h.CompleteManualWorkflowStepRun)
+					r.Post("/fail", h.FailWorkflowStepRun)
+					r.Post("/pause", h.PauseWorkflowStepRun)
+					r.Post("/retry", h.RetryWorkflowStepRun)
+					r.Post("/skip", h.SkipWorkflowStepRun)
+					r.Post("/artifacts", h.CreateWorkflowArtifact)
+					r.Post("/quality-gates", h.ReportWorkflowQualityGate)
+				})
+			})
+			r.Route("/api/workflow-reviews", func(r chi.Router) {
+				r.Route("/{id}", func(r chi.Router) {
+					r.Post("/approve", h.ApproveWorkflowReview)
+					r.Post("/reject", h.RejectWorkflowReview)
 				})
 			})
 

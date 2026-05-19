@@ -2,7 +2,11 @@ export type WorkflowOrigin = "system_seeded" | "user";
 
 export type WorkflowRevisionStatus = "draft" | "published" | "deprecated";
 
-export type WorkflowApplicability = "assignment" | "comment";
+export type WorkflowApplicability =
+  | "assignment"
+  | "comment"
+  | "chat"
+  | "autopilot";
 
 export interface WorkflowVariable {
   key: string;
@@ -17,6 +21,44 @@ export interface WorkflowStep {
   order?: number;
   required?: boolean;
   depends_on?: string[];
+  execution?: {
+    kind?: "agent" | "manual" | "external" | string;
+    prompt?: string;
+    rules?: string;
+  };
+  artifact?: {
+    name?: string;
+    content_kind?: "markdown" | "json" | "text" | string;
+    template?: {
+      format?: "markdown" | "json" | "text" | string;
+      content?: string;
+      files?: Array<{
+        path?: string;
+        content?: string;
+      }>;
+    };
+    inputs?: Array<{
+      step_id?: string;
+      artifact_name?: string;
+      name?: string;
+      required?: boolean;
+    }>;
+  };
+  input_artifacts?: Array<{
+    step_id?: string;
+    artifact_name?: string;
+    name?: string;
+    required?: boolean;
+  }>;
+  review?: {
+    required?: boolean;
+  };
+  quality_gate?: {
+    enabled?: boolean;
+    blocking?: boolean;
+    prompt?: string;
+    report_mode?: string;
+  };
   body_template?: string;
   description?: string;
   checklist?: string[];
@@ -103,4 +145,132 @@ export interface WorkflowPreviewRequest {
 export interface WorkflowPreviewResponse {
   rendered_markdown: string;
   warnings?: string[] | null;
+}
+
+export interface ImportWorkflowRequest {
+  name?: string;
+  description?: string;
+  format?: "yaml" | "json" | string;
+  content: string;
+}
+
+export interface ImportWorkflowResponse {
+  workflow: WorkflowDefinition;
+  warnings?: string[] | null;
+}
+
+export interface ExportWorkflowResponse {
+  format: "yaml" | "json" | string;
+  content: string;
+  warnings?: string[] | null;
+}
+
+export type WorkflowRunStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "blocked"
+  | "failed"
+  | "completed"
+  | "cancelled"
+  | string;
+
+export type WorkflowStepRunStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "waiting_manual"
+  | "waiting_external"
+  | "waiting_review"
+  | "waiting_quality"
+  | "paused"
+  | "blocked"
+  | "failed"
+  | "completed"
+  | "skipped"
+  | string;
+
+export interface WorkflowStepRun {
+  id: string;
+  workflow_run_id: string;
+  step_definition_id: string;
+  title: string;
+  order_index: number;
+  required: boolean;
+  status: WorkflowStepRunStatus;
+  execution_kind: "agent" | "manual" | "external" | string;
+  attempt: number;
+  depends_on_step_ids?: unknown;
+  artifact_inputs?: unknown;
+  snapshot?: unknown;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowArtifact {
+  id: string;
+  workflow_run_id: string;
+  workflow_step_run_id: string;
+  logical_name: string;
+  version: number;
+  content_kind: "markdown" | "json" | "text" | string;
+  content_text?: string | null;
+  content_json?: unknown;
+  producer_type: "agent" | "member" | string;
+  producer_id?: string | null;
+  supersedes_artifact_id?: string | null;
+  created_at: string;
+}
+
+export interface WorkflowReview {
+  id: string;
+  workflow_run_id: string;
+  workflow_step_run_id?: string | null;
+  workflow_artifact_id?: string | null;
+  status: "requested" | "approved" | "rejected" | string;
+  reviewer_id?: string | null;
+  decision_notes?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowQualityGateResult {
+  id: string;
+  workflow_run_id: string;
+  workflow_step_run_id: string;
+  workflow_artifact_id?: string | null;
+  status: "pass" | "fail" | "warning" | string;
+  blocking: boolean;
+  producer_type: "agent" | "member" | string;
+  producer_id?: string | null;
+  report_text?: string | null;
+  report_json?: unknown;
+  created_at: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workspace_id: string;
+  agent_task_queue_id: string;
+  issue_id?: string | null;
+  chat_session_id?: string | null;
+  autopilot_run_id?: string | null;
+  workflow_definition_id?: string | null;
+  workflow_revision_id?: string | null;
+  trigger_type: string;
+  snapshot?: unknown;
+  status: WorkflowRunStatus;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  steps?: WorkflowStepRun[];
+  artifacts?: WorkflowArtifact[];
+  reviews?: WorkflowReview[];
+  quality_gate_results?: WorkflowQualityGateResult[];
 }

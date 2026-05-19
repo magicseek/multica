@@ -47,6 +47,7 @@ import type { AutopilotExecutionMode, AutopilotRun, AutopilotTrigger } from "@mu
 import type { AgentTask } from "@multica/core/types/agent";
 import { ReadonlyContent } from "../../editor";
 import { TranscriptButton } from "../../common/task-transcript";
+import { WorkflowRunViewer } from "../../workflows";
 import { AutopilotDialog } from "./autopilot-dialog";
 import { useT } from "../../i18n";
 
@@ -137,7 +138,14 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
     );
   }
 
-  return <div className={rowClass}>{content}</div>;
+  return (
+    <div>
+      <div className={rowClass}>{content}</div>
+      {(run.task_id || run.id) && (
+        <WorkflowRunViewer taskId={run.task_id ?? undefined} autopilotRunId={run.id} />
+      )}
+    </div>
+  );
 }
 
 function RunHistoryList({

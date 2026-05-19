@@ -172,6 +172,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica autopilot list [--status X] [--full-id] [--output json]` — List autopilots (scheduled/triggered agent automations) in the workspace; copied short IDs are accepted by autopilot subcommands when unique\n")
 	b.WriteString("- `multica autopilot get <id> --output json` — Get autopilot details including triggers\n")
 	b.WriteString("- `multica autopilot runs <id> [--limit N] --output json` — List execution history for an autopilot\n")
+	b.WriteString("- `multica workflow run get <workflow-run-id> --output json` — Get immutable workflow run state, step runs, artifacts, reviews, and quality results. Current workflow tasks expose `MULTICA_WORKFLOW_RUN_ID`.\n")
 	b.WriteString("- `multica project get <id> --output json` — Get project details. Includes `resource_count`; the resources themselves live at the sub-collection below.\n")
 	b.WriteString("- `multica project resource list <project-id> --output json` — List resources (e.g. github_repo) attached to a project. Use this when `resource_count > 0` and you need the actual refs.\n\n")
 
@@ -212,6 +213,12 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica autopilot update <id> [--title X] [--description X] [--status active|paused] [--mode create_issue|run_only]` — Update an autopilot\n")
 	b.WriteString("- `multica autopilot trigger <id>` — Manually trigger an autopilot to run once\n")
 	b.WriteString("- `multica autopilot delete <id>` — Delete an autopilot\n\n")
+	b.WriteString("### Workflow Run Control\n")
+	b.WriteString("- `multica workflow step start <step-run-id>` — Mark a ready workflow step as running before doing its work\n")
+	b.WriteString("- `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text` — Persist an explicit versioned workflow artifact\n")
+	b.WriteString("- `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text` — Record agent-produced quality evidence with provenance\n")
+	b.WriteString("- `multica workflow step complete <step-run-id>` — Complete a workflow step; human review may move it to waiting_review instead of completed\n")
+	b.WriteString("- `multica workflow step fail <step-run-id> --reason \"...\"` / `pause` / `retry` / `skip` — Control step lifecycle without editing the immutable workflow snapshot\n\n")
 
 	if provider == "codex" {
 		b.WriteString("## Codex-Specific Comment Formatting\n\n")

@@ -412,19 +412,27 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 		return db.AgentTaskQueue{}, fmt.Errorf("resolve workflow snapshot: %w", err)
 	}
 
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:              issue.AssigneeID,
-		RuntimeID:            agent.RuntimeID,
-		IssueID:              issue.ID,
-		Priority:             priorityToInt(issue.Priority),
-		TriggerCommentID:     triggerCommentID,
-		TriggerSummary:       s.buildCommentTriggerSummary(ctx, triggerCommentID),
-		ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
-		WorkflowDefinitionID: workflowSnapshot.DefinitionID,
-		WorkflowRevisionID:   workflowSnapshot.RevisionID,
-		WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
-	})
-	if err != nil {
+	var task db.AgentTaskQueue
+	triggerSummary := s.buildCommentTriggerSummary(ctx, triggerCommentID)
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		created, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:              issue.AssigneeID,
+			RuntimeID:            agent.RuntimeID,
+			IssueID:              issue.ID,
+			Priority:             priorityToInt(issue.Priority),
+			TriggerCommentID:     triggerCommentID,
+			TriggerSummary:       triggerSummary,
+			ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
+			WorkflowDefinitionID: workflowSnapshot.DefinitionID,
+			WorkflowRevisionID:   workflowSnapshot.RevisionID,
+			WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
+		})
+		if err != nil {
+			return err
+		}
+		task = created
+		return s.createWorkflowRunForTask(ctx, qtx, task)
+	}); err != nil {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create task: %w", err)
 	}
@@ -484,19 +492,27 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 		return db.AgentTaskQueue{}, fmt.Errorf("resolve workflow snapshot: %w", err)
 	}
 
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:              agentID,
-		RuntimeID:            agent.RuntimeID,
-		IssueID:              issue.ID,
-		Priority:             priorityToInt(issue.Priority),
-		TriggerCommentID:     triggerCommentID,
-		TriggerSummary:       s.buildCommentTriggerSummary(ctx, triggerCommentID),
-		IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
-		WorkflowDefinitionID: workflowSnapshot.DefinitionID,
-		WorkflowRevisionID:   workflowSnapshot.RevisionID,
-		WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
-	})
-	if err != nil {
+	var task db.AgentTaskQueue
+	triggerSummary := s.buildCommentTriggerSummary(ctx, triggerCommentID)
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		created, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:              agentID,
+			RuntimeID:            agent.RuntimeID,
+			IssueID:              issue.ID,
+			Priority:             priorityToInt(issue.Priority),
+			TriggerCommentID:     triggerCommentID,
+			TriggerSummary:       triggerSummary,
+			IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
+			WorkflowDefinitionID: workflowSnapshot.DefinitionID,
+			WorkflowRevisionID:   workflowSnapshot.RevisionID,
+			WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
+		})
+		if err != nil {
+			return err
+		}
+		task = created
+		return s.createWorkflowRunForTask(ctx, qtx, task)
+	}); err != nil {
 		slog.Error("mention task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create task: %w", err)
 	}
@@ -655,6 +671,9 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 		return err
 	}
 	for _, t := range cancelled {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusCancelled); err != nil {
+			slog.Warn("cancel issue tasks: update workflow run status failed", "task_id", util.UUIDToString(t.ID), "error", err)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -674,6 +693,9 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 		return nil, err
 	}
 	for _, t := range cancelled {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusCancelled); err != nil {
+			slog.Warn("cancel agent tasks: update workflow run status failed", "task_id", util.UUIDToString(t.ID), "error", err)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
@@ -696,6 +718,9 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 		return err
 	}
 	for _, t := range cancelled {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusCancelled); err != nil {
+			slog.Warn("cancel comment tasks: update workflow run status failed", "task_id", util.UUIDToString(t.ID), "error", err)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -709,6 +734,9 @@ func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID
 // that the tx might still roll back.
 func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
 	for _, t := range cancelled {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusCancelled); err != nil {
+			slog.Warn("broadcast cancelled tasks: update workflow run status failed", "task_id", util.UUIDToString(t.ID), "error", err)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -724,7 +752,15 @@ func (s *TaskService) CaptureCancelledTasks(ctx context.Context, cancelled []db.
 // CancelTask cancels a single task by ID. It broadcasts a task:cancelled event
 // so frontends can update immediately.
 func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.CancelAgentTask(ctx, taskID)
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		t, err := qtx.CancelAgentTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		task = t
+		return s.setWorkflowRunStatusForTask(ctx, qtx, task.ID, workflowRunStatusCancelled)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		existing, err := s.Queries.GetAgentTask(ctx, taskID)
 		if err != nil {
@@ -932,8 +968,15 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 // StartTask transitions a dispatched task to running.
 // Issue status is NOT changed here — the agent manages it via the CLI.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, taskID)
-	if err != nil {
+	var task db.AgentTaskQueue
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		t, err := qtx.StartAgentTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		task = t
+		return s.setWorkflowRunStatusForTask(ctx, qtx, task.ID, workflowRunStatusRunning)
+	}); err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
 
@@ -983,6 +1026,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}); err != nil {
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
+		}
+		if err := s.setWorkflowRunStatusForTask(ctx, qtx, t.ID, workflowRunStatusCompleted); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
@@ -1161,6 +1207,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
+		if err := s.setWorkflowRunStatusForTask(ctx, qtx, t.ID, workflowRunStatusFailed); err != nil {
+			return err
+		}
 		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
@@ -1330,8 +1379,15 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 		return nil, nil
 	}
 
-	child, err := s.Queries.CreateRetryTask(ctx, parent.ID)
-	if err != nil {
+	var child db.AgentTaskQueue
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		created, err := qtx.CreateRetryTask(ctx, parent.ID)
+		if err != nil {
+			return err
+		}
+		child = created
+		return s.createWorkflowRunForTask(ctx, qtx, child)
+	}); err != nil {
 		slog.Warn("task auto-retry failed",
 			"parent_task_id", util.UUIDToString(parent.ID),
 			"reason", reason,
@@ -1403,6 +1459,12 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, trigg
 		)
 	}
 	for _, t := range cancelled {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusCancelled); err != nil {
+			slog.Warn("rerun: update cancelled workflow run status failed",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
 		s.captureTaskCancelled(ctx, t)
 		s.ReconcileAgentStatus(ctx, t.AgentID)
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
@@ -1451,6 +1513,12 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	retried := 0
 
 	for _, t := range tasks {
+		if err := s.setWorkflowRunStatusForTask(ctx, s.Queries, t.ID, workflowRunStatusFailed); err != nil {
+			slog.Warn("handle failed tasks: update workflow run status failed",
+				"task_id", util.UUIDToString(t.ID),
+				"error", err,
+			)
+		}
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {

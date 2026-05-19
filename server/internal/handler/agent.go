@@ -189,6 +189,7 @@ type AgentTaskResponse struct {
 	WorkflowDefinitionID    *string               `json:"workflow_definition_id,omitempty"`
 	WorkflowRevisionID      *string               `json:"workflow_revision_id,omitempty"`
 	WorkflowSnapshot        json.RawMessage       `json:"workflow_snapshot,omitempty"`
+	WorkflowRun             *WorkflowRunResponse  `json:"workflow_run,omitempty"`
 	Agent                   *TaskAgentData        `json:"agent,omitempty"`
 	Repos                   []RepoData            `json:"repos,omitempty"`
 	Repositories            []TaskRepositoryData  `json:"repositories,omitempty"`
