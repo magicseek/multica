@@ -250,9 +250,21 @@ _Avoid_: daemon runtime mode, ai-desk execution mode enum
 The user-facing editing contract for one workflow step: its title, purpose, expected completion output, required status, and review or quality expectations.
 _Avoid_: exposing every workflow step schema field as the default editor
 
+**Workflow Step Inspector**:
+The focused editing panel for the currently selected workflow step, grouping step contract fields and advanced settings without expanding every step inline.
+_Avoid_: per-step form stack, repeating every advanced tab in every step row
+
+**Workflow Step Inspector Section**:
+A user-intent grouping inside the Workflow Step Inspector, such as Basics, Instructions, Inputs, Outputs, or Checks.
+_Avoid_: ai-desk field-name tabs, schema-shaped navigation
+
+**Workflow Prompt Focus Editor**:
+A modal editor for the selected workflow step's long-form agent prompt and checklist constraints, opened from the step inspector without leaving the current step.
+_Avoid_: schema jump, full step modal, separate save model
+
 **Workflow Step Completion Expectation**:
 A user-facing description of how a workspace member or agent can tell that a workflow step is complete.
-_Avoid_: forcing every step to produce a named artifact
+_Avoid_: executable completion condition, forcing every step to produce a named artifact
 
 **Workflow Step Gate**:
 The user-facing gate setting on a workflow step that summarizes whether the run continues immediately, waits for human approval, runs an agent quality check, or requires both.
@@ -350,6 +362,10 @@ _Avoid_: hard capability gate in the first version
 A UI rendering of the resolved workflow content before it is saved or assigned to execution.
 _Avoid_: raw-only editor, blind prompt injection
 
+**Workflow Graph Viewport**:
+The visual viewport for inspecting workflow step graph layout, including fit-to-view and zoom controls that do not change workflow schema.
+_Avoid_: schema-affecting canvas state, graph editing by accident
+
 **Workflow Builder**:
 The Multica UI surface for editing workflow schemas using the product's shared UI components and design system.
 _Avoid_: ai-desk UI clone, dependency-first graph canvas
@@ -400,12 +416,26 @@ _Avoid_: silently continuing the full project workflow
 - A **Workflow Schema** declares **Workflow Applicability**.
 - **Workflow Schema YAML** and the **Workflow Builder** are two editing projections over the same **Workflow Schema** and must round-trip without creating a second persisted model.
 - **Workflow Schema YAML** is generated from the normalized **Workflow Schema**; user-entered YAML formatting and comments are not retained after save.
+- The current Builder iteration may keep the Schema tab as canonical JSON editing while labeling it as Schema; YAML import/export is a separate migration surface.
 - A **Workflow Preview** renders from the **Workflow Schema** using Multica's current UI library and design system.
+- A **Workflow Graph Viewport** supports zoom in, zoom out, and fit-to-view as view-only controls.
+- Workflow graph zoom controls belong to the Preview graph viewport, not to the Steps outline or **Workflow Step Inspector**.
 - A **Workflow Builder** edits **Workflow Schemas** without introducing a new graph-canvas dependency in the first version.
 - The workflow builder labels the full YAML-backed definition surface as **Workflow Schema Editor** or Schema rather than YAML or Markdown Source.
 - A **Workflow Builder** opens the active **Workflow Draft Revision** by default when one exists, while execution and selectors continue to use the published revision.
 - A **Workflow Builder** presents **Workflow Step Contracts** as the default step editing surface and keeps lower-level schema fields in advanced editing surfaces.
 - A **Workflow Builder** presents workflow steps as a linear main path by default; dependency edges are inferred from order unless the user opens an advanced step-graph surface.
+- A **Workflow Builder** shows workflow steps as a collapsed, scannable outline by default and edits the selected step through one **Workflow Step Inspector**.
+- A workflow step outline row shows the step title as content, with inline edit affordance such as an icon button, rather than rendering a labeled Title form field.
+- First-version step ordering uses explicit controls such as move up and move down rather than drag-and-drop.
+- In desktop layouts, the Steps tab uses a split view with the step outline on the left and the **Workflow Step Inspector** on the right; narrow layouts may stack the inspector below the outline.
+- A **Workflow Step Inspector** organizes settings by user intent: Basics, Instructions, Inputs, Outputs, and Checks.
+- **Workflow Step Inspector Sections** are projections over canonical **Workflow Schema** fields and do not recreate ai-desk field-name tabs.
+- Selecting a different step from the outline opens the **Workflow Step Inspector** on Basics by default.
+- Step outline affordances may deep-link into a specific inspector section or the **Workflow Prompt Focus Editor** when the user explicitly clicks that affordance.
+- A **Workflow Step Inspector** treats linear step order as the default input model and exposes arbitrary `depends_on` editing only in the Inputs advanced area.
+- A **Workflow Prompt Focus Editor** may edit long-form prompt fields for the selected step, then apply changes back to the active **Workflow Draft Revision** autosave path.
+- A **Workflow Prompt Focus Editor** returns the user to the same selected step and inspector section after apply or cancel.
 - A **Workflow Builder** automatically saves edits into the active **Workflow Draft Revision**, while publishing remains an explicit user action.
 - A **Workflow Draft Revision** may contain a structurally parseable but not publishable schema; publishing requires full validation.
 - Invalid **Workflow Schema YAML** that cannot be parsed is not saved to the server in the first version; the builder keeps it as local unsaved editor state until the syntax is fixed.
@@ -413,7 +443,11 @@ _Avoid_: silently continuing the full project workflow
 - Editing a published workflow creates the active **Workflow Draft Revision** on the first actual change, not when the builder is merely opened.
 - Workflow metadata that affects understanding or execution selection, including name, description, and applicability, is edited through the active **Workflow Draft Revision** rather than mutating the published definition in place.
 - A **Workflow Step Contract** uses a **Workflow Step Completion Expectation** by default; it declares explicit **Workflow Artifacts** only when an output must be reviewed, reused by later steps, or retained as a deliverable.
+- The Workflow Builder may label **Workflow Step Completion Expectation** as "Done when" in the UI, but it must explain that the field describes the expected result and does not automatically complete the step.
+- A **Workflow Artifact** is an explicit opt-in output in the Workflow Step Inspector Outputs section, not a required field for every step.
+- The Builder distinguishes "Done when" from **Workflow Artifact**: "Done when" guides completion expectations, while artifacts create durable outputs for review, reuse, or retention.
 - A **Workflow Step Contract** uses one **Workflow Step Gate** in the default editor instead of exposing review and quality-gate internals as separate required configuration groups.
+- A **Workflow Step Gate** appears as one combined choice in the step outline and Basics section, while the Checks section exposes detailed human review and quality gate configuration for the selected choice.
 - **Workflow Step Contracts** are projections over **Workflow Schema** fields and do not introduce UI-only persisted fields.
 - Workflow change review compares the active **Workflow Draft Revision** against the current published revision; draft-only workflows show an initial publish preview.
 - Workflow change review defaults to a **Workflow Step Contract** diff and provides a **Workflow Schema YAML** diff for complete definition review.
@@ -527,9 +561,17 @@ _Avoid_: silently continuing the full project workflow
 - Workflow definition steps, artifacts, and gates could be normalized as separate editable records, but that would complicate draft, publish, fork, import, export, and snapshot behavior. Resolved: **Workflow Schema** remains one canonical versioned definition payload, while execution state is materialized through **Workflow Runs** and related runtime records.
 - Workflow Builder could copy ai-desk's ReactFlow canvas, but that would introduce a new dependency before the schema and run contract are stable. Resolved: first-version **Workflow Builder** uses Multica shared UI components, structured inspectors, drag ordering where useful, and graph preview without a new graph-canvas dependency.
 - Workflow Builder could expose raw step schema fields by default, but that makes users edit implementation details before confirming the step's intent. Resolved: the default step editor uses **Workflow Step Contracts** and moves raw identifiers, dependencies, templates, artifact details, and route internals to advanced surfaces.
+- Workflow Builder could expand a full editor with tabs under every step row, but that turns long workflows into repeated form stacks and makes scanning difficult. Resolved: the default Steps view is a collapsed step outline, with one **Workflow Step Inspector** for the selected step.
+- Workflow Step Inspector could open as a drawer or replace the step list, but that hides the workflow outline while editing. Resolved: desktop uses a split view so users can scan the outline and edit the selected step together.
+- Workflow Step Inspector sections could copy ai-desk's Basic, Prompt, Dependencies, Artifact, Rules, Party, and Quality tabs, but that exposes implementation history and preserves skipped Party Mode. Resolved: the inspector uses user-intent sections: Basics, Instructions, Inputs, Outputs, and Checks.
+- Prompt editing could send users to the full Schema editor, but that makes everyday prompt changes depend on locating the right schema path. Resolved: long-form step prompts use a **Workflow Prompt Focus Editor** opened from the selected step inspector.
+- Workflow Builder UX improvements could also add YAML parsing and import/export, but that expands the draft autosave and round-trip surface. Resolved: this iteration keeps Schema as canonical JSON editing and treats YAML import/export as separate work.
 - Step Contract UI could store separate simplified fields and translate later, but that would create another model to keep in sync with YAML and execution. Resolved: **Workflow Step Contracts** are direct projections over **Workflow Schema** fields.
 - Workflow Builder could make users author arbitrary DAG dependencies in the default step list, but first-version execution is serial and deterministic even when the schema has branches. Resolved: the default builder uses a linear main path with advanced editing for non-linear dependency graphs.
+- Workflow Builder could make step ordering drag-and-drop in the first version, but drag interactions add keyboard, mobile, scroll, and dependency repair complexity. Resolved: use explicit move controls first and leave drag-and-drop out of v1.
+- Workflow Step Inspector could expose every step dependency as a default field, but that turns ordinary serial workflows into graph authoring. Resolved: default Inputs represent linear order, while arbitrary `depends_on` editing lives behind an advanced control.
 - Workflow Builder could require every step to name a **Workflow Artifact**, but that forces users to invent implementation outputs for ordinary progress steps. Resolved: default steps use **Workflow Step Completion Expectations** and only introduce explicit artifacts when output needs review, reuse, or durable retention.
+- The "Done when" label could be interpreted as an executable completion rule, but it maps to ai-desk `outputDescription`, which is an expected result description. Resolved: keep the concise label with an inline info affordance that explains the field does not auto-complete the step.
 - Workflow Builder could show required human review and quality gates as separate always-visible field groups, but that makes every step feel like a governance form. Resolved: the default editor uses one **Workflow Step Gate** with detailed reviewer, blocking, rubric, and artifact-target settings in advanced surfaces.
 - Workflow run UI could live under Settings next to the builder, but running workflows belong to the work item that triggered them. Resolved: Settings owns **Workflow Builder** for definitions; issue, task, chat, or autopilot surfaces own **Workflow Run** observation.
 - Workflow completion could automatically comment or close issues, but that risks duplicate or context-free reporting. Resolved: final user-visible reporting remains an explicit workflow step executed by the agent or human, while the server only derives **Workflow Run** state.
