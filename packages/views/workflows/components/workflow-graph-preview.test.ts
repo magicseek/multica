@@ -104,6 +104,23 @@ describe("buildWorkflowGraphLayout", () => {
     expect(screen.getByText("Read context")).toBeVisible();
     expect(screen.getByText("Verify")).toBeVisible();
     expect(screen.getByText("1 deps")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Zoom out" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Fit" })).toBeVisible();
+  });
+
+  it("updates graph zoom through viewport controls", () => {
+    const steps: WorkflowStep[] = [
+      { id: "context", title: "Read context", order: 1 },
+      { id: "verify", title: "Verify", order: 2, depends_on: ["context"] },
+    ];
+
+    renderWithI18n(createElement(WorkflowGraphPreview, { steps }));
+
+    const initialPercent = screen.getByText(/\d+%/).textContent;
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+
+    expect(screen.getByText(/\d+%/).textContent).not.toBe(initialPercent);
   });
 
   it("exposes a graph expand action when controlled by the preview tab", () => {

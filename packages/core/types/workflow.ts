@@ -23,11 +23,22 @@ export interface WorkflowStep {
   output?: {
     description?: string;
   };
+  artifact?: {
+    name?: string;
+    format?: "markdown" | "json" | "text" | string;
+    template?: string;
+    description?: string;
+  };
   review?: {
     required?: boolean;
+    reviewer_role?: string;
+    instructions?: string;
   };
   quality_gate?: {
     enabled?: boolean;
+    blocking?: boolean;
+    prompt?: string;
+    report_mode?: "summary" | "full" | string;
   };
 }
 

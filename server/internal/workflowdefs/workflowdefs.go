@@ -58,6 +58,7 @@ type Step struct {
 	Description  string       `json:"description,omitempty"`
 	Checklist    []string     `json:"checklist,omitempty"`
 	Output       *Output      `json:"output,omitempty"`
+	Artifact     *Artifact    `json:"artifact,omitempty"`
 	Review       *Review      `json:"review,omitempty"`
 	QualityGate  *QualityGate `json:"quality_gate,omitempty"`
 }
@@ -72,12 +73,24 @@ type Output struct {
 	Description string `json:"description,omitempty"`
 }
 
+type Artifact struct {
+	Name        string `json:"name,omitempty"`
+	Format      string `json:"format,omitempty"`
+	Template    string `json:"template,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 type Review struct {
-	Required bool `json:"required,omitempty"`
+	Required     bool   `json:"required,omitempty"`
+	ReviewerRole string `json:"reviewer_role,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 type QualityGate struct {
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled    bool   `json:"enabled,omitempty"`
+	Blocking   bool   `json:"blocking,omitempty"`
+	Prompt     string `json:"prompt,omitempty"`
+	ReportMode string `json:"report_mode,omitempty"`
 }
 
 type RenderContext struct {
