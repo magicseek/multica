@@ -53,9 +53,13 @@ vi.mock("@multica/core/workflows", () => ({
   }),
   useCreateWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteWorkflowDraft: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useForkWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
   usePublishWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdateWorkflow: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateWorkflowDraft: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({ validation: { publishable: true, issues: [] } }),
+    isPending: false,
+  }),
 }));
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => {
@@ -89,6 +93,8 @@ describe("WorkflowsPage", () => {
     expect(await screen.findAllByText("Trellis task")).not.toHaveLength(0);
     expect(screen.getByTestId("workflow-editor-tabs")).toHaveClass("flex-col");
     expect(screen.getByTestId("workflow-editor-tabs-list").className).toContain("!flex-row");
+    expect(screen.getByRole("tab", { name: /schema/i })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /source/i })).not.toBeInTheDocument();
   });
 
   it("keeps the steps tab as a height-constrained scroll region", async () => {

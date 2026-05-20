@@ -14,13 +14,18 @@
     "system": "System",
     "user": "Custom"
   },
+  "status": {
+    "draft": "Draft",
+    "published": "Published",
+    "unpublished_changes": "Draft changes"
+  },
   "applicability": {
     "assignment": "Assignment",
     "comment": "Comment"
   },
   "tabs": {
-    "source": "Source",
     "steps": "Steps",
+    "schema": "Schema",
     "preview": "Preview"
   },
   "editor": {
@@ -34,16 +39,50 @@
     "fork_to_edit": "Fork to edit",
     "forked": "Workflow forked.",
     "fork_failed": "Failed to fork workflow.",
+    "autosaved": "Autosaved",
+    "saving": "Saving",
+    "unsaved": "Unsaved",
+    "save_failed": "Failed to save workflow draft.",
     "publish": "Publish",
     "published": "Workflow published.",
     "publish_failed": "Failed to publish workflow.",
     "archive": "Archive",
     "archived": "Workflow archived.",
+    "delete": "Delete",
+    "deleted": "Workflow deleted.",
+    "draft_discarded": "Draft discarded.",
     "archive_failed": "Failed to archive workflow."
+  },
+  "schema": {
+    "title": "Workflow schema",
+    "description": "Advanced schema representation. Invalid JSON stays local until it parses.",
+    "parse_failed": "Schema could not be parsed."
+  },
+  "review": {
+    "open": "Review changes",
+    "title": "Review changes",
+    "description": "Confirm the draft before it becomes the workflow used by new runs.",
+    "summary_tab": "Summary",
+    "schema_tab": "Schema",
+    "published_schema": "Published",
+    "draft_schema": "Draft",
+    "none": "No published schema",
+    "initial_publish": "Initial publish creates {{count}} steps.",
+    "step_added": "Step {{number}} added: {{title}}",
+    "step_removed": "Step removed: {{title}}",
+    "step_moved": "Step moved: {{title}} from {{from}} to {{to}}",
+    "step_changed": "Step changed: {{title}}",
+    "name_changed": "Workflow name changed.",
+    "description_changed": "Workflow description changed.",
+    "applicability_changed": "Applicability changed.",
+    "no_changes": "No semantic changes detected.",
+    "discard": "Discard draft",
+    "publish": "Publish"
   },
   "preview": {
     "title": "Preview",
     "markdown_title": "Rendered Markdown",
+    "instructions_title": "Execution instructions",
     "empty": "Preview will appear here."
   },
   "graph": {
@@ -64,6 +103,15 @@
     "empty": "No structured steps yet.",
     "id_label": "ID",
     "title_label": "Title",
+    "purpose_label": "Purpose",
+    "output_label": "Done when",
+    "gate_label": "Gate",
+    "gate_none": "None",
+    "gate_human": "Human review",
+    "gate_quality": "Quality check",
+    "gate_human_quality": "Review + quality",
+    "required": "Required",
+    "optional": "Optional",
     "depends_on_label": "Depends on",
     "description_label": "Description",
     "body_template_label": "Step body",

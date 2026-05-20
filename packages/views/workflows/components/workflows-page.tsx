@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
+  ChevronDown,
   Copy,
   Eye,
   FileText,
@@ -13,6 +14,7 @@ import {
   Loader2,
   Lock,
   Plus,
+  Save,
   Search,
   Trash2,
   Workflow,
@@ -25,10 +27,11 @@ import { projectListOptions } from "@multica/core/projects/queries";
 import { useUpdateProject } from "@multica/core/projects/mutations";
 import {
   useCreateWorkflow,
+  useDeleteWorkflowDraft,
   useDeleteWorkflow,
   useForkWorkflow,
   usePublishWorkflow,
-  useUpdateWorkflow,
+  useUpdateWorkflowDraft,
   workflowListOptions,
 } from "@multica/core/workflows";
 import type {
@@ -37,9 +40,18 @@ import type {
   WorkflowDefinition,
   WorkflowSchema,
   WorkflowStep,
+  WorkflowValidation,
 } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -77,63 +89,165 @@ const DEFAULT_WORKFLOW_TEMPLATE = `## Custom Workflow
 4. Verify the result and post a concise issue comment.
 `;
 
+type StepGate = "none" | "human" | "quality" | "human_quality";
+
+const EMPTY_SCHEMA: WorkflowSchema = {
+  schema_version: 1,
+  name: "",
+  description: "",
+  applicability: ["assignment"],
+  source: {
+    format: "markdown",
+    body_template: "",
+  },
+  steps: [],
+};
+
+function publishedRevision(workflow: WorkflowDefinition | null | undefined) {
+  return workflow?.published_revision ?? workflow?.current_revision ?? null;
+}
+
+function draftRevision(workflow: WorkflowDefinition | null | undefined) {
+  return workflow?.draft_revision ?? null;
+}
+
+function authoringRevision(workflow: WorkflowDefinition | null | undefined) {
+  return draftRevision(workflow) ?? publishedRevision(workflow);
+}
+
+function publishedSchema(workflow: WorkflowDefinition | null | undefined) {
+  return publishedRevision(workflow)?.schema ?? null;
+}
+
+function authoringSchema(workflow: WorkflowDefinition | null | undefined) {
+  return authoringRevision(workflow)?.schema ?? EMPTY_SCHEMA;
+}
+
 function workflowApplicability(
   workflow: WorkflowDefinition | null | undefined,
 ): WorkflowApplicability[] {
-  return workflow?.current_revision?.schema.applicability ?? ["assignment"];
+  return authoringSchema(workflow).applicability ?? ["assignment"];
 }
 
-function workflowBody(workflow: WorkflowDefinition | null | undefined): string {
-  return workflow?.current_revision?.schema.source?.body_template ?? "";
-}
-
-function bodyToSchema(
+function workflowDisplayName(
   workflow: WorkflowDefinition | null | undefined,
-  draft: {
-    name: string;
-    description: string;
-    body: string;
-    applicability: WorkflowApplicability[];
-    steps: WorkflowStep[];
-  },
+): string {
+  return (
+    authoringSchema(workflow).name?.trim() ||
+    workflow?.name?.trim() ||
+    "Untitled workflow"
+  );
+}
+
+function workflowDisplayDescription(
+  workflow: WorkflowDefinition | null | undefined,
+): string {
+  return (
+    authoringSchema(workflow).description?.trim() ||
+    workflow?.description?.trim() ||
+    ""
+  );
+}
+
+function buildSchema(
+  workflow: WorkflowDefinition | null | undefined,
+  base: WorkflowSchema,
+  patch: Partial<WorkflowSchema>,
 ): WorkflowSchema {
-  const base = workflow?.current_revision?.schema ?? {};
   return {
     ...base,
     schema_version: base.schema_version ?? base.version ?? 1,
     version: undefined,
-    name: draft.name.trim(),
-    description: draft.description.trim(),
-    applicability: draft.applicability,
+    name: (patch.name as string | undefined)?.trim() ?? base.name ?? workflow?.name ?? "",
+    description:
+      (patch.description as string | undefined)?.trim() ??
+      base.description ??
+      workflow?.description ??
+      "",
+    applicability:
+      (patch.applicability as WorkflowApplicability[] | undefined) ??
+      base.applicability ??
+      ["assignment"],
     source: {
       ...(base.source ?? {}),
       format: "markdown",
       mode: undefined,
-      body_template: draft.body,
+      body_template:
+        patch.source?.body_template ?? base.source?.body_template ?? "",
     },
-    steps: draft.steps,
+    steps: patch.steps ?? base.steps ?? [],
   };
 }
 
-function workflowSteps(
-  workflow: WorkflowDefinition | null | undefined,
-): WorkflowStep[] {
-  return workflow?.current_revision?.schema.steps ?? [];
+function slugifyStepId(value: string, fallback: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || fallback;
 }
 
-function normalizeStep(step: WorkflowStep, index: number): WorkflowStep {
-  const id = (step.id ?? "").trim() || `step-${index + 1}`;
+function normalizeStep(
+  step: WorkflowStep,
+  index: number,
+  previousId?: string,
+): WorkflowStep {
+  const id = (step.id ?? "").trim() || slugifyStepId(step.title ?? "", `step-${index + 1}`);
   const title = (step.title ?? "").trim() || step.name?.trim() || id;
+  const outputDescription = step.output?.description?.trim() ?? "";
+  const reviewRequired = step.review?.required === true;
+  const qualityEnabled = step.quality_gate?.enabled === true;
   return {
     ...step,
     id,
     title,
     name: step.name?.trim() || undefined,
     order: step.order || index + 1,
-    depends_on: step.depends_on?.map((item) => item.trim()).filter(Boolean),
+    depends_on:
+      step.depends_on?.map((item) => item.trim()).filter(Boolean) ??
+      (previousId ? [previousId] : undefined),
     body_template: step.body_template?.trim() || undefined,
     description: step.description?.trim() || undefined,
     checklist: step.checklist?.map((item) => item.trim()).filter(Boolean),
+    output: outputDescription ? { description: outputDescription } : undefined,
+    review: reviewRequired ? { required: true } : undefined,
+    quality_gate: qualityEnabled ? { enabled: true } : undefined,
+  };
+}
+
+function normalizeSteps(steps: WorkflowStep[]): WorkflowStep[] {
+  const next: WorkflowStep[] = [];
+  for (const [index, step] of steps.entries()) {
+    const normalized = normalizeStep(step, index, next[index - 1]?.id);
+    next.push(normalized);
+  }
+  return next;
+}
+
+function formatSchema(schema: WorkflowSchema): string {
+  return JSON.stringify(schema, null, 2);
+}
+
+function stepGate(step: WorkflowStep): StepGate {
+  const review = step.review?.required === true;
+  const quality = step.quality_gate?.enabled === true;
+  if (review && quality) return "human_quality";
+  if (review) return "human";
+  if (quality) return "quality";
+  return "none";
+}
+
+function gatePatch(value: StepGate): Pick<WorkflowStep, "review" | "quality_gate"> {
+  return {
+    review:
+      value === "human" || value === "human_quality"
+        ? { required: true }
+        : undefined,
+    quality_gate:
+      value === "quality" || value === "human_quality"
+        ? { enabled: true }
+        : undefined,
   };
 }
 
@@ -237,6 +351,8 @@ function WorkflowList({
             {workflows.map((workflow) => {
               const isSelected = workflow.id === selectedId;
               const apps = workflowApplicability(workflow);
+              const hasDraft = !!draftRevision(workflow);
+              const hasPublished = !!publishedRevision(workflow);
               return (
                 <button
                   key={workflow.id}
@@ -251,7 +367,7 @@ function WorkflowList({
                 >
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {workflow.name}
+                      {workflowDisplayName(workflow)}
                     </span>
                     {workflow.origin === "system_seeded" && (
                       <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -266,6 +382,24 @@ function WorkflowList({
                         ? t(($) => $.origin.system)
                         : t(($) => $.origin.user)}
                     </Badge>
+                    {hasDraft && (
+                      <Badge
+                        variant="secondary"
+                        className="h-4 rounded-md px-1.5 text-[10px]"
+                      >
+                        {hasPublished
+                          ? t(($) => $.status.unpublished_changes)
+                          : t(($) => $.status.draft)}
+                      </Badge>
+                    )}
+                    {!hasDraft && hasPublished && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 rounded-md px-1.5 text-[10px]"
+                      >
+                        {t(($) => $.status.published)}
+                      </Badge>
+                    )}
                     <span className="truncate text-xs text-muted-foreground">
                       {apps.map((app) => applicabilityLabel(t, app)).join(", ")}
                     </span>
@@ -290,7 +424,13 @@ function ProjectWorkflowBindings({
   const { t } = useT("workflows");
   const updateProject = useUpdateProject();
   const workflowNameById = useMemo(
-    () => new Map(workflows.map((workflow) => [workflow.id, workflow.name])),
+    () =>
+      new Map(
+        workflows.map((workflow) => [
+          workflow.id,
+          workflow.name || publishedSchema(workflow)?.name || workflow.id,
+        ]),
+      ),
     [workflows],
   );
 
@@ -353,7 +493,7 @@ function ProjectWorkflowBindings({
                   </SelectItem>
                   {workflows.map((workflow) => (
                     <SelectItem key={workflow.id} value={workflow.id}>
-                      {workflow.name}
+                      {workflow.name || publishedSchema(workflow)?.name || workflow.id}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -375,6 +515,238 @@ function EmptyEditor() {
   );
 }
 
+function sameStepContract(left: WorkflowStep, right: WorkflowStep): boolean {
+  return (
+    (left.title ?? "") === (right.title ?? "") &&
+    (left.description ?? "") === (right.description ?? "") &&
+    (left.output?.description ?? "") === (right.output?.description ?? "") &&
+    stepGate(left) === stepGate(right) &&
+    left.required === right.required
+  );
+}
+
+function reviewSummary(
+  t: ReturnType<typeof useT<"workflows">>["t"],
+  published: WorkflowSchema | null,
+  draft: WorkflowSchema,
+): string[] {
+  const draftSteps = draft.steps ?? [];
+  if (!published) {
+    return [
+      t(($) => $.review.initial_publish, {
+        count: draftSteps.length,
+      }),
+    ];
+  }
+  const items: string[] = [];
+  const publishedSteps = published.steps ?? [];
+  const publishedById = new Map(
+    publishedSteps.map((step, index) => [step.id, { step, index }]),
+  );
+  const draftById = new Map(
+    draftSteps.map((step, index) => [step.id, { step, index }]),
+  );
+  for (const [id, { step, index }] of draftById) {
+    const before = publishedById.get(id);
+    if (!before) {
+      items.push(
+        t(($) => $.review.step_added, {
+          title: step.title || id,
+          number: String(index + 1),
+        }),
+      );
+      continue;
+    }
+    if (before.index !== index) {
+      items.push(
+        t(($) => $.review.step_moved, {
+          title: step.title || id,
+          from: String(before.index + 1),
+          to: String(index + 1),
+        }),
+      );
+    }
+    if (!sameStepContract(before.step, step)) {
+      items.push(
+        t(($) => $.review.step_changed, {
+          title: step.title || id,
+        }),
+      );
+    }
+  }
+  for (const [id, { step }] of publishedById) {
+    if (!draftById.has(id)) {
+      items.push(
+        t(($) => $.review.step_removed, {
+          title: step.title || id,
+        }),
+      );
+    }
+  }
+  if ((published.name ?? "") !== (draft.name ?? "")) {
+    items.push(t(($) => $.review.name_changed));
+  }
+  if ((published.description ?? "") !== (draft.description ?? "")) {
+    items.push(t(($) => $.review.description_changed));
+  }
+  if (
+    JSON.stringify(published.applicability ?? []) !==
+    JSON.stringify(draft.applicability ?? [])
+  ) {
+    items.push(t(($) => $.review.applicability_changed));
+  }
+  return items.length ? items : [t(($) => $.review.no_changes)];
+}
+
+function ReviewChangesDialog({
+  open,
+  onOpenChange,
+  workflow,
+  draft,
+  published,
+  onPublish,
+  onDiscard,
+  isPublishing,
+  isDiscarding,
+  validation,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  workflow: WorkflowDefinition;
+  draft: WorkflowSchema;
+  published: WorkflowSchema | null;
+  onPublish: () => void;
+  onDiscard: () => void;
+  isPublishing: boolean;
+  isDiscarding: boolean;
+  validation?: WorkflowValidation | null;
+}) {
+  const { t } = useT("workflows");
+  const issues = validation?.issues ?? [];
+  const publishable = validation?.publishable !== false;
+  const summary = reviewSummary(t, published, draft);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[86vh] max-w-3xl grid-rows-none flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.review.title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.review.description)}</DialogDescription>
+        </DialogHeader>
+
+        <Tabs defaultValue="summary" className="min-h-0 flex-1 gap-3">
+          <TabsList
+            variant="line"
+            className="h-8 !flex-row !items-center !justify-start"
+          >
+            <TabsTrigger
+              value="summary"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
+              {t(($) => $.review.summary_tab)}
+            </TabsTrigger>
+            <TabsTrigger
+              value="schema"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
+              {t(($) => $.review.schema_tab)}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent
+            value="summary"
+            className="min-h-0 flex-1 overflow-y-auto rounded-md border bg-background p-3"
+          >
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {summary.map((item) => (
+                  <div
+                    key={item}
+                    className="flex items-start gap-2 rounded-md bg-muted/45 px-3 py-2 text-sm"
+                  >
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+              {issues.length > 0 && (
+                <div className="space-y-2">
+                  {issues.map((issue) => (
+                    <div
+                      key={`${issue.code}-${issue.message}`}
+                      className={cn(
+                        "flex items-start gap-2 rounded-md px-3 py-2 text-sm",
+                        issue.severity === "blocking"
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-warning/10 text-warning",
+                      )}
+                    >
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>{issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent
+            value="schema"
+            className="min-h-0 flex-1 overflow-hidden rounded-md border bg-background"
+          >
+            <div className="grid h-full min-h-[320px] md:grid-cols-2">
+              <div className="min-w-0 border-b md:border-b-0 md:border-r">
+                <div className="border-b px-3 py-2 text-xs font-medium">
+                  {t(($) => $.review.published_schema)}
+                </div>
+                <pre className="h-[280px] overflow-auto p-3 text-xs leading-5 text-muted-foreground">
+                  {published ? formatSchema(published) : t(($) => $.review.none)}
+                </pre>
+              </div>
+              <div className="min-w-0">
+                <div className="border-b px-3 py-2 text-xs font-medium">
+                  {t(($) => $.review.draft_schema)}
+                </div>
+                <pre className="h-[280px] overflow-auto p-3 text-xs leading-5">
+                  {formatSchema(draft)}
+                </pre>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onDiscard}
+            disabled={isDiscarding || isPublishing || !draftRevision(workflow)}
+          >
+            {isDiscarding ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Trash2 className="h-3 w-3" />
+            )}
+            {t(($) => $.review.discard)}
+          </Button>
+          <Button
+            type="button"
+            onClick={onPublish}
+            disabled={!publishable || isPublishing || isDiscarding}
+          >
+            {isPublishing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <GitBranch className="h-3 w-3" />
+            )}
+            {t(($) => $.review.publish)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function WorkflowEditor({
   workflow,
   assignmentWorkflows,
@@ -387,51 +759,52 @@ function WorkflowEditor({
   onSelect: (id: string) => void;
 }) {
   const { t } = useT("workflows");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [body, setBody] = useState("");
-  const [applicability, setApplicability] = useState<WorkflowApplicability[]>([
-    "assignment",
-  ]);
-  const [steps, setSteps] = useState<WorkflowStep[]>([]);
+  const [schema, setSchema] = useState<WorkflowSchema>(EMPTY_SCHEMA);
+  const [schemaText, setSchemaText] = useState(formatSchema(EMPTY_SCHEMA));
+  const [schemaError, setSchemaError] = useState("");
   const [preview, setPreview] = useState("");
   const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [localDraftValidation, setLocalDraftValidation] =
+    useState<WorkflowValidation | null>(null);
+  const lastSavedSchemaRef = useRef("");
+  const updateDraftRef = useRef<ReturnType<typeof useUpdateWorkflowDraft> | null>(
+    null,
+  );
 
-  const updateWorkflow = useUpdateWorkflow();
+  const updateWorkflowDraft = useUpdateWorkflowDraft();
   const publishWorkflow = usePublishWorkflow();
   const forkWorkflow = useForkWorkflow();
   const deleteWorkflow = useDeleteWorkflow();
+  const deleteWorkflowDraft = useDeleteWorkflowDraft();
 
   const isSystem = workflow?.origin === "system_seeded";
-  const isSaving = updateWorkflow.isPending || publishWorkflow.isPending;
+  const hasPublished = !!publishedRevision(workflow);
+  const hasDraft = !!draftRevision(workflow);
+  const isSavingDraft = updateWorkflowDraft.isPending;
+
+  useEffect(() => {
+    updateDraftRef.current = updateWorkflowDraft;
+  }, [updateWorkflowDraft]);
 
   useEffect(() => {
     if (!workflow) return;
-    setName(workflow.name);
-    setDescription(workflow.description);
-    setBody(workflowBody(workflow));
-    setApplicability(workflowApplicability(workflow));
-    setSteps(workflowSteps(workflow));
+    const next = authoringSchema(workflow);
+    const formatted = formatSchema(next);
+    setSchema(next);
+    setSchemaText(formatted);
+    setSchemaError("");
+    lastSavedSchemaRef.current = formatted;
     setPreview("");
     setPreviewWarnings([]);
     setPreviewError("");
     setGraphExpanded(false);
+    setReviewOpen(false);
+    setLocalDraftValidation(draftRevision(workflow)?.validation ?? null);
   }, [workflow]);
-
-  const schema = useMemo(
-    () =>
-      bodyToSchema(workflow, {
-        name,
-        description,
-        body,
-        applicability,
-        steps: steps.map(normalizeStep),
-      }),
-    [workflow, name, description, body, applicability, steps],
-  );
 
   useEffect(() => {
     if (!workflow) return;
@@ -457,49 +830,112 @@ function WorkflowEditor({
     return () => window.clearTimeout(timer);
   }, [schema, t, workflow]);
 
+  const serializedSchema = formatSchema(schema);
+  const isDirty = !isSystem && serializedSchema !== lastSavedSchemaRef.current;
+
+  useEffect(() => {
+    if (!workflow || isSystem || schemaError) return;
+    if (serializedSchema === lastSavedSchemaRef.current) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const saved = await updateDraftRef.current?.mutateAsync({
+          id: workflow.id,
+          schema,
+        });
+        setLocalDraftValidation(saved?.validation ?? null);
+        lastSavedSchemaRef.current = serializedSchema;
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : t(($) => $.editor.save_failed),
+        );
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [isSystem, schema, schemaError, serializedSchema, t, workflow]);
+
   if (!workflow) return <EmptyEditor />;
 
-  const toggleApplicability = (value: WorkflowApplicability) => {
-    setApplicability((prev) => {
-      if (prev.includes(value)) {
-        const next = prev.filter((item) => item !== value);
-        return next.length > 0 ? next : prev;
-      }
-      return [...prev, value];
+  const applySchema = (next: WorkflowSchema) => {
+    const normalized = buildSchema(workflow, next, {
+      steps: normalizeSteps(next.steps ?? []),
     });
+    setSchema(normalized);
+    setSchemaText(formatSchema(normalized));
+    setSchemaError("");
+  };
+
+  const patchSchema = (patch: Partial<WorkflowSchema>) => {
+    applySchema(buildSchema(workflow, schema, patch));
+  };
+
+  const saveDraftNow = async (): Promise<boolean> => {
+    if (!workflow || isSystem || schemaError) return false;
+    const serialized = formatSchema(schema);
+    if (serialized === lastSavedSchemaRef.current) return true;
+    try {
+      const saved = await updateDraftRef.current?.mutateAsync({
+        id: workflow.id,
+        schema,
+      });
+      setLocalDraftValidation(saved?.validation ?? null);
+      lastSavedSchemaRef.current = serialized;
+      return true;
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.editor.save_failed),
+      );
+      return false;
+    }
+  };
+
+  const toggleApplicability = (value: WorkflowApplicability) => {
+    const current = schema.applicability ?? ["assignment"];
+    const next = current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value];
+    patchSchema({ applicability: next.length > 0 ? next : current });
   };
 
   const addStep = () => {
-    setSteps((prev) => [
-      ...prev,
-      {
-        id: `step-${prev.length + 1}`,
-        title: t(($) => $.steps.new_step_title, { number: prev.length + 1 }),
-        order: prev.length + 1,
-      },
-    ]);
+    const prev = schema.steps ?? [];
+    patchSchema({
+      steps: normalizeSteps([
+        ...prev,
+        {
+          id: `step-${prev.length + 1}`,
+          title: t(($) => $.steps.new_step_title, { number: prev.length + 1 }),
+          order: prev.length + 1,
+        },
+      ]),
+    });
   };
 
   const updateStep = (index: number, patch: Partial<WorkflowStep>) => {
-    setSteps((prev) =>
-      prev.map((step, i) => (i === index ? { ...step, ...patch } : step)),
-    );
+    patchSchema({
+      steps: normalizeSteps(
+        (schema.steps ?? []).map((step, i) =>
+          i === index ? { ...step, ...patch } : step,
+        ),
+      ),
+    });
   };
 
   const removeStep = (index: number) => {
-    setSteps((prev) =>
-      prev
-        .filter((_, i) => i !== index)
-        .map((step, i) => ({ ...step, order: i + 1 })),
-    );
+    patchSchema({
+      steps: normalizeSteps(
+        (schema.steps ?? [])
+          .filter((_, i) => i !== index)
+          .map((step, i) => ({ ...step, order: i + 1 })),
+      ),
+    });
   };
 
   const fork = async () => {
     try {
       const forked = await forkWorkflow.mutateAsync({
         id: workflow.id,
-        name: `${workflow.name} copy`,
-        description: workflow.description,
+        name: `${workflowDisplayName(workflow)} copy`,
+        description: workflowDisplayDescription(workflow),
       });
       toast.success(t(($) => $.editor.forked));
       onSelect(forked.id);
@@ -510,19 +946,20 @@ function WorkflowEditor({
     }
   };
 
+  const openReview = async () => {
+    if (!workflow || isSystem || schemaError) return;
+    const saved = await saveDraftNow();
+    if (saved) setReviewOpen(true);
+  };
+
   const publish = async () => {
-    if (!workflow || isSystem || !name.trim()) return;
+    if (!workflow || isSystem || !schema.name?.trim()) return;
+    const saved = await saveDraftNow();
+    if (!saved) return;
     try {
-      await updateWorkflow.mutateAsync({
-        id: workflow.id,
-        name: name.trim(),
-        description: description.trim(),
-      });
-      const updated = await publishWorkflow.mutateAsync({
-        id: workflow.id,
-        schema,
-      });
+      const updated = await publishWorkflow.mutateAsync({ id: workflow.id });
       toast.success(t(($) => $.editor.published));
+      setReviewOpen(false);
       onSelect(updated.id);
     } catch (err) {
       toast.error(
@@ -531,11 +968,31 @@ function WorkflowEditor({
     }
   };
 
+  const discardDraft = async () => {
+    if (!workflow || isSystem || !hasDraft) return;
+    try {
+      if (!hasPublished) {
+        await deleteWorkflow.mutateAsync(workflow.id);
+        toast.success(t(($) => $.editor.deleted));
+      } else {
+        await deleteWorkflowDraft.mutateAsync(workflow.id);
+        toast.success(t(($) => $.editor.draft_discarded));
+      }
+      setReviewOpen(false);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t(($) => $.editor.archive_failed),
+      );
+    }
+  };
+
   const archive = async () => {
     if (!workflow || isSystem) return;
     try {
       await deleteWorkflow.mutateAsync(workflow.id);
-      toast.success(t(($) => $.editor.archived));
+      toast.success(
+        hasPublished ? t(($) => $.editor.archived) : t(($) => $.editor.deleted),
+      );
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : t(($) => $.editor.archive_failed),
@@ -548,12 +1005,32 @@ function WorkflowEditor({
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b px-4">
         <div className="flex min-w-0 items-center gap-2">
           <Workflow className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate text-sm font-medium">{workflow.name}</span>
+          <span className="truncate text-sm font-medium">
+            {schema.name || workflowDisplayName(workflow)}
+          </span>
           {isSystem && (
             <Badge variant="outline" className="h-5 rounded-md">
               <Lock className="h-3 w-3" />
               {t(($) => $.origin.system)}
             </Badge>
+          )}
+          {!isSystem && hasDraft && (
+            <Badge variant="secondary" className="h-5 rounded-md">
+              {hasPublished
+                ? t(($) => $.status.unpublished_changes)
+                : t(($) => $.status.draft)}
+            </Badge>
+          )}
+          {!isSystem && isSavingDraft && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t(($) => $.editor.saving)}
+            </span>
+          )}
+          {!isSystem && !isSavingDraft && isDirty && (
+            <span className="text-xs text-muted-foreground">
+              {t(($) => $.editor.unsaved)}
+            </span>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -582,20 +1059,28 @@ function WorkflowEditor({
                 disabled={deleteWorkflow.isPending}
               >
                 <Trash2 className="h-3 w-3" />
-                {t(($) => $.editor.archive)}
+                {hasPublished
+                  ? t(($) => $.editor.archive)
+                  : t(($) => $.editor.delete)}
               </Button>
               <Button
                 type="button"
                 size="sm"
-                onClick={publish}
-                disabled={!name.trim() || isSaving}
+                onClick={openReview}
+                disabled={
+                  !schema.name?.trim() ||
+                  !!schemaError ||
+                  (!hasDraft && !isDirty) ||
+                  isSavingDraft ||
+                  publishWorkflow.isPending
+                }
               >
-                {isSaving ? (
+                {isSavingDraft || publishWorkflow.isPending ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
                 ) : (
                   <GitBranch className="h-3 w-3" />
                 )}
-                {t(($) => $.editor.publish)}
+                {t(($) => $.review.open)}
               </Button>
             </>
           )}
@@ -603,7 +1088,7 @@ function WorkflowEditor({
       </div>
 
       <Tabs
-        defaultValue="source"
+        defaultValue="steps"
         data-testid="workflow-editor-tabs"
         className="min-h-0 flex-1 flex-col gap-0"
       >
@@ -614,18 +1099,18 @@ function WorkflowEditor({
             className="h-8 !flex-row !items-center !justify-start"
           >
             <TabsTrigger
-              value="source"
-              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              {t(($) => $.tabs.source)}
-            </TabsTrigger>
-            <TabsTrigger
               value="steps"
               className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
             >
               <ListChecks className="h-3.5 w-3.5" />
               {t(($) => $.tabs.steps)}
+            </TabsTrigger>
+            <TabsTrigger
+              value="schema"
+              className="!w-auto !justify-center after:!inset-x-0 after:!bottom-[-5px] after:!top-auto after:!right-auto after:!h-0.5 after:!w-auto"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {t(($) => $.tabs.schema)}
             </TabsTrigger>
             <TabsTrigger
               value="preview"
@@ -640,33 +1125,83 @@ function WorkflowEditor({
           )}
         </div>
 
-        <TabsContent value="source" className="h-full min-h-0 overflow-y-auto p-4">
-          <div className="grid gap-4">
-            <div className="grid gap-2 md:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="workflow-name" className="text-xs">
-                  {t(($) => $.editor.name_label)}
-                </Label>
-                <Input
-                  id="workflow-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={isSystem}
-                />
+        <TabsContent value="schema" className="h-full min-h-0 overflow-y-auto p-4">
+          <div className="grid gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-medium">
+                  {t(($) => $.schema.title)}
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  {t(($) => $.schema.description)}
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="workflow-description" className="text-xs">
-                  {t(($) => $.editor.description_label)}
-                </Label>
-                <Input
-                  id="workflow-description"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  disabled={isSystem}
-                />
-              </div>
+              {!schemaError && (
+                <Badge variant="outline" className="h-6 rounded-md">
+                  <Save className="h-3 w-3" />
+                  {isSavingDraft
+                    ? t(($) => $.editor.saving)
+                    : t(($) => $.editor.autosaved)}
+                </Badge>
+              )}
             </div>
+            {schemaError && (
+              <div className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{schemaError}</span>
+              </div>
+            )}
+            <Textarea
+              value={schemaText}
+              onChange={(e) => {
+                const nextText = e.target.value;
+                setSchemaText(nextText);
+                try {
+                  const parsed = JSON.parse(nextText) as WorkflowSchema;
+                  const normalized = buildSchema(workflow, parsed, {
+                    steps: normalizeSteps(parsed.steps ?? []),
+                  });
+                  setSchemaError("");
+                  setSchema(normalized);
+                } catch (err) {
+                  setSchemaError(
+                    err instanceof Error
+                      ? err.message
+                      : t(($) => $.schema.parse_failed),
+                  );
+                }
+              }}
+              disabled={isSystem}
+              spellCheck={false}
+              className="min-h-[520px] resize-y font-mono text-xs leading-5"
+            />
+          </div>
+        </TabsContent>
 
+        <TabsContent value="steps" className="h-full min-h-0 overflow-y-auto p-4">
+          <div className="mb-4 grid gap-3 rounded-md border bg-muted/15 p-3 md:grid-cols-[minmax(180px,0.35fr)_minmax(220px,1fr)_auto]">
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-name" className="text-xs">
+                {t(($) => $.editor.name_label)}
+              </Label>
+              <Input
+                id="workflow-name"
+                value={schema.name ?? ""}
+                onChange={(e) => patchSchema({ name: e.target.value })}
+                disabled={isSystem}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="workflow-description" className="text-xs">
+                {t(($) => $.editor.description_label)}
+              </Label>
+              <Input
+                id="workflow-description"
+                value={schema.description ?? ""}
+                onChange={(e) => patchSchema({ description: e.target.value })}
+                disabled={isSystem}
+              />
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs">
                 {t(($) => $.editor.applicability_label)}
@@ -681,42 +1216,25 @@ function WorkflowEditor({
                       size="sm"
                       disabled={isSystem}
                       className={cn(
-                        "h-7 px-2 text-xs",
-                        applicability.includes(item) &&
+                        "h-8 px-2 text-xs",
+                        (schema.applicability ?? ["assignment"]).includes(
+                          item,
+                        ) &&
                           "bg-accent text-accent-foreground hover:bg-accent/80",
                       )}
                       onClick={() => toggleApplicability(item)}
                     >
-                      {applicability.includes(item) && (
-                        <Check className="h-3 w-3" />
-                      )}
+                      {(schema.applicability ?? ["assignment"]).includes(
+                        item,
+                      ) && <Check className="h-3 w-3" />}
                       {applicabilityLabel(t, item)}
                     </Button>
                   ),
                 )}
               </div>
             </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="workflow-body" className="text-xs">
-                {t(($) => $.editor.body_label)}
-              </Label>
-              <Textarea
-                id="workflow-body"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                disabled={isSystem}
-                spellCheck={false}
-                className="min-h-[460px] resize-y font-mono text-xs leading-5"
-              />
-              <p className="text-xs text-muted-foreground">
-                {t(($) => $.editor.variables_hint)}
-              </p>
-            </div>
           </div>
-        </TabsContent>
 
-        <TabsContent value="steps" className="h-full min-h-0 overflow-y-auto p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-medium">{t(($) => $.steps.title)}</h2>
@@ -736,13 +1254,13 @@ function WorkflowEditor({
             </Button>
           </div>
 
-          {steps.length === 0 ? (
+          {(schema.steps ?? []).length === 0 ? (
             <div className="mt-4 rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
               {t(($) => $.steps.empty)}
             </div>
           ) : (
             <div className="mt-4 overflow-hidden rounded-md border bg-background">
-              {steps.map((step, index) => (
+              {(schema.steps ?? []).map((step, index) => (
                 <div
                   key={`${step.id}-${index}`}
                   className="grid gap-3 border-b p-3 last:border-b-0 md:grid-cols-[2.25rem_minmax(0,1fr)_2.25rem]"
@@ -752,23 +1270,7 @@ function WorkflowEditor({
                   </div>
 
                   <div className="min-w-0 space-y-3">
-                    <div className="grid gap-3 md:grid-cols-[minmax(140px,0.45fr)_minmax(220px,1fr)_minmax(160px,0.55fr)]">
-                      <div className="space-y-1.5">
-                        <Label
-                          htmlFor={`workflow-step-id-${index}`}
-                          className="text-xs"
-                        >
-                          {t(($) => $.steps.id_label)}
-                        </Label>
-                        <Input
-                          id={`workflow-step-id-${index}`}
-                          value={step.id ?? ""}
-                          onChange={(e) =>
-                            updateStep(index, { id: e.target.value })
-                          }
-                          disabled={isSystem}
-                        />
-                      </div>
+                    <div className="grid gap-3 md:grid-cols-[minmax(220px,0.8fr)_minmax(180px,0.45fr)_minmax(120px,0.3fr)]">
                       <div className="space-y-1.5">
                         <Label
                           htmlFor={`workflow-step-title-${index}`}
@@ -787,35 +1289,68 @@ function WorkflowEditor({
                       </div>
                       <div className="space-y-1.5">
                         <Label
-                          htmlFor={`workflow-step-depends-${index}`}
+                          htmlFor={`workflow-step-gate-${index}`}
                           className="text-xs"
                         >
-                          {t(($) => $.steps.depends_on_label)}
+                          {t(($) => $.steps.gate_label)}
                         </Label>
-                        <Input
-                          id={`workflow-step-depends-${index}`}
-                          value={(step.depends_on ?? []).join(", ")}
-                          onChange={(e) =>
-                            updateStep(index, {
-                              depends_on: e.target.value
-                                .split(",")
-                                .map((item) => item.trim())
-                                .filter(Boolean),
-                            })
+                        <Select
+                          value={stepGate(step)}
+                          onValueChange={(value) =>
+                            updateStep(index, gatePatch(value as StepGate))
                           }
-                          placeholder={t(($) => $.steps.depends_on_placeholder)}
                           disabled={isSystem}
-                        />
+                        >
+                          <SelectTrigger
+                            id={`workflow-step-gate-${index}`}
+                            size="sm"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">
+                              {t(($) => $.steps.gate_none)}
+                            </SelectItem>
+                            <SelectItem value="human">
+                              {t(($) => $.steps.gate_human)}
+                            </SelectItem>
+                            <SelectItem value="quality">
+                              {t(($) => $.steps.gate_quality)}
+                            </SelectItem>
+                            <SelectItem value="human_quality">
+                              {t(($) => $.steps.gate_human_quality)}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
+                      <Button
+                        type="button"
+                        variant={step.required === false ? "outline" : "secondary"}
+                        size="sm"
+                        className="self-end"
+                        disabled={isSystem}
+                        onClick={() =>
+                          updateStep(index, { required: step.required === false })
+                        }
+                      >
+                        {step.required === false ? (
+                          <ChevronDown className="h-3 w-3" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                        {step.required === false
+                          ? t(($) => $.steps.optional)
+                          : t(($) => $.steps.required)}
+                      </Button>
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">
                         <Label
                           htmlFor={`workflow-step-description-${index}`}
                           className="text-xs"
                         >
-                          {t(($) => $.steps.description_label)}
+                          {t(($) => $.steps.purpose_label)}
                         </Label>
                         <Textarea
                           id={`workflow-step-description-${index}`}
@@ -829,41 +1364,19 @@ function WorkflowEditor({
                       </div>
                       <div className="space-y-1.5">
                         <Label
-                          htmlFor={`workflow-step-body-${index}`}
+                          htmlFor={`workflow-step-output-${index}`}
                           className="text-xs"
                         >
-                          {t(($) => $.steps.body_template_label)}
+                          {t(($) => $.steps.output_label)}
                         </Label>
                         <Textarea
-                          id={`workflow-step-body-${index}`}
-                          value={step.body_template ?? ""}
-                          onChange={(e) =>
-                            updateStep(index, { body_template: e.target.value })
-                          }
-                          disabled={isSystem}
-                          spellCheck={false}
-                          className="min-h-20 resize-y font-mono text-xs leading-5"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label
-                          htmlFor={`workflow-step-checklist-${index}`}
-                          className="text-xs"
-                        >
-                          {t(($) => $.steps.checklist_label)}
-                        </Label>
-                        <Textarea
-                          id={`workflow-step-checklist-${index}`}
-                          value={(step.checklist ?? []).join("\n")}
+                          id={`workflow-step-output-${index}`}
+                          value={step.output?.description ?? ""}
                           onChange={(e) =>
                             updateStep(index, {
-                              checklist: e.target.value
-                                .split("\n")
-                                .map((item) => item.trim())
-                                .filter(Boolean),
+                              output: { description: e.target.value },
                             })
                           }
-                          placeholder={t(($) => $.steps.checklist_placeholder)}
                           disabled={isSystem}
                           className="min-h-20 resize-y text-xs leading-5"
                         />
@@ -911,7 +1424,7 @@ function WorkflowEditor({
               <div className="flex h-full min-h-0 flex-col rounded-md border bg-background">
                 <div className="flex h-10 shrink-0 items-center border-b px-3">
                   <h2 className="text-xs font-medium">
-                    {t(($) => $.preview.markdown_title)}
+                    {t(($) => $.preview.instructions_title)}
                   </h2>
                 </div>
                 {previewError ? (
@@ -947,6 +1460,20 @@ function WorkflowEditor({
         projects={projects}
         workflows={assignmentWorkflows}
       />
+      {!isSystem && (
+        <ReviewChangesDialog
+          open={reviewOpen}
+          onOpenChange={setReviewOpen}
+          workflow={workflow}
+          draft={schema}
+          published={publishedSchema(workflow)}
+          onPublish={publish}
+          onDiscard={discardDraft}
+          isPublishing={publishWorkflow.isPending}
+          isDiscarding={deleteWorkflowDraft.isPending || deleteWorkflow.isPending}
+          validation={localDraftValidation}
+        />
+      )}
     </div>
   );
 }
@@ -977,8 +1504,8 @@ export function WorkflowsPage() {
       }
       if (!q) return true;
       return (
-        workflow.name.toLowerCase().includes(q) ||
-        workflow.description.toLowerCase().includes(q)
+        workflowDisplayName(workflow).toLowerCase().includes(q) ||
+        workflowDisplayDescription(workflow).toLowerCase().includes(q)
       );
     });
   }, [workflows, search, filter]);
@@ -1007,6 +1534,40 @@ export function WorkflowsPage() {
             format: "markdown",
             body_template: DEFAULT_WORKFLOW_TEMPLATE,
           },
+          steps: [
+            {
+              id: "context",
+              title: "Read current task",
+              order: 1,
+              description: "Load the issue details and current task state.",
+              output: { description: "The agent knows the requested outcome." },
+            },
+            {
+              id: "discussion",
+              title: "Read latest discussion",
+              order: 2,
+              depends_on: ["context"],
+              description: "Incorporate the newest comments before acting.",
+              output: { description: "Recent owner input is reflected." },
+            },
+            {
+              id: "execute",
+              title: "Execute work",
+              order: 3,
+              depends_on: ["discussion"],
+              description: "Complete the requested change.",
+              output: { description: "The requested deliverable is ready." },
+            },
+            {
+              id: "verify",
+              title: "Verify and report",
+              order: 4,
+              depends_on: ["execute"],
+              description: "Run checks and report the outcome.",
+              output: { description: "Verification evidence is posted." },
+              quality_gate: { enabled: true },
+            },
+          ],
         },
       });
       setSelectedId(workflow.id);

@@ -138,6 +138,8 @@ export type {
   WorkflowSchema,
   WorkflowSchemaRequest,
   WorkflowStep,
+  WorkflowValidation,
+  WorkflowValidationIssue,
   WorkflowVariable,
   CreateWorkflowRequest,
   UpdateWorkflowRequest,

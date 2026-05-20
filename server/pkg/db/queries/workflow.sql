@@ -99,6 +99,13 @@ UPDATE workflow_definition SET
 WHERE id = $1 AND workspace_id = $2 AND origin = 'user'
 RETURNING *;
 
+-- name: DeleteDraftOnlyWorkflowDefinition :exec
+DELETE FROM workflow_definition
+WHERE id = $1
+  AND workspace_id = $2
+  AND origin = 'user'
+  AND current_published_revision_id IS NULL;
+
 -- name: GetWorkflowRevision :one
 SELECT * FROM workflow_revision
 WHERE id = $1;
@@ -136,6 +143,10 @@ UPDATE workflow_revision SET
     updated_at = now()
 WHERE id = $1 AND status = 'draft'
 RETURNING *;
+
+-- name: DeleteWorkflowDraftRevision :exec
+DELETE FROM workflow_revision
+WHERE id = $1 AND status = 'draft';
 
 -- name: PublishWorkflowRevision :one
 UPDATE workflow_revision SET

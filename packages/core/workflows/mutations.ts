@@ -64,6 +64,18 @@ export function usePublishWorkflow() {
   });
 }
 
+export function useDeleteWorkflowDraft() {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteWorkflowDraft(id),
+    onSettled: (_data, _err, id) => {
+      qc.invalidateQueries({ queryKey: workflowKeys.detail(wsId, id) });
+      qc.invalidateQueries({ queryKey: workflowKeys.all(wsId) });
+    },
+  });
+}
+
 export function useForkWorkflow() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();

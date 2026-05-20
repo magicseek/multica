@@ -666,7 +666,14 @@ export class ApiClient {
     });
   }
 
-  async createComment(issueId: string, content: string, type?: string, parentId?: string, attachmentIds?: string[]): Promise<Comment> {
+  async createComment(
+    issueId: string,
+    content: string,
+    type?: string,
+    parentId?: string,
+    attachmentIds?: string[],
+    options?: { suppressAgentTrigger?: boolean },
+  ): Promise<Comment> {
     return this.fetch(`/api/issues/${issueId}/comments`, {
       method: "POST",
       body: JSON.stringify({
@@ -674,6 +681,7 @@ export class ApiClient {
         type: type ?? "comment",
         ...(parentId ? { parent_id: parentId } : {}),
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
+        ...(options?.suppressAgentTrigger ? { suppress_agent_trigger: true } : {}),
       }),
     });
   }
@@ -1317,6 +1325,10 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  async deleteWorkflowDraft(id: string): Promise<void> {
+    return this.fetch(`/api/workflows/${id}/draft`, { method: "DELETE" });
   }
 
   async publishWorkflow(

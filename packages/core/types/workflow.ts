@@ -20,12 +20,32 @@ export interface WorkflowStep {
   body_template?: string;
   description?: string;
   checklist?: string[];
+  output?: {
+    description?: string;
+  };
+  review?: {
+    required?: boolean;
+  };
+  quality_gate?: {
+    enabled?: boolean;
+  };
 }
 
 export interface WorkflowGate {
   id: string;
   title: string;
   description?: string;
+}
+
+export interface WorkflowValidationIssue {
+  code: string;
+  message: string;
+  severity: "blocking" | "warning" | string;
+}
+
+export interface WorkflowValidation {
+  publishable: boolean;
+  issues: WorkflowValidationIssue[];
 }
 
 export interface WorkflowSchema {
@@ -51,6 +71,7 @@ export interface WorkflowRevision {
   revision_number: number;
   status: WorkflowRevisionStatus;
   schema: WorkflowSchema;
+  validation?: WorkflowValidation | null;
   created_by: string | null;
   published_at: string | null;
   deprecated_at: string | null;
@@ -67,7 +88,10 @@ export interface WorkflowDefinition {
   system_key: string | null;
   forked_from_definition_id: string | null;
   current_published_revision_id: string | null;
+  published_revision?: WorkflowRevision | null;
+  draft_revision?: WorkflowRevision | null;
   current_revision?: WorkflowRevision | null;
+  has_unpublished_changes?: boolean;
   created_by: string | null;
   archived_at: string | null;
   created_at: string;

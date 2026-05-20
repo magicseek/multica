@@ -48,21 +48,36 @@ type Variable struct {
 }
 
 type Step struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name,omitempty"`
-	Title        string   `json:"title"`
-	Order        int      `json:"order,omitempty"`
-	Required     bool     `json:"required,omitempty"`
-	DependsOn    []string `json:"depends_on,omitempty"`
-	BodyTemplate string   `json:"body_template,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Checklist    []string `json:"checklist,omitempty"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name,omitempty"`
+	Title        string       `json:"title"`
+	Order        int          `json:"order,omitempty"`
+	Required     *bool        `json:"required,omitempty"`
+	DependsOn    []string     `json:"depends_on,omitempty"`
+	BodyTemplate string       `json:"body_template,omitempty"`
+	Description  string       `json:"description,omitempty"`
+	Checklist    []string     `json:"checklist,omitempty"`
+	Output       *Output      `json:"output,omitempty"`
+	Review       *Review      `json:"review,omitempty"`
+	QualityGate  *QualityGate `json:"quality_gate,omitempty"`
 }
 
 type Gate struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
+}
+
+type Output struct {
+	Description string `json:"description,omitempty"`
+}
+
+type Review struct {
+	Required bool `json:"required,omitempty"`
+}
+
+type QualityGate struct {
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 type RenderContext struct {
@@ -73,6 +88,17 @@ type RenderContext struct {
 type RenderResult struct {
 	Markdown string   `json:"rendered_markdown"`
 	Warnings []string `json:"warnings"`
+}
+
+type ValidationIssue struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+}
+
+type ValidationResult struct {
+	Publishable bool              `json:"publishable"`
+	Issues      []ValidationIssue `json:"issues"`
 }
 
 func SystemSeeds() []Seed {
@@ -185,23 +211,20 @@ func DefaultUserSchema(name, description string) []byte {
 	return raw
 }
 
-func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, error) {
+func NormalizeDraftSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, ValidationResult, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
-		return DefaultUserSchema(fallbackName, fallbackDescription), nil
+		raw = DefaultUserSchema(fallbackName, fallbackDescription)
 	}
 
 	var s Schema
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, fmt.Errorf("schema must be a JSON object: %w", err)
+		return nil, ValidationResult{}, fmt.Errorf("schema must be a JSON object: %w", err)
 	}
 	if s.SchemaVersion == 0 && s.Version != 0 {
 		s.SchemaVersion = s.Version
 	}
 	if s.SchemaVersion == 0 {
 		s.SchemaVersion = 1
-	}
-	if s.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported schema_version %d", s.SchemaVersion)
 	}
 	s.Version = 0
 	if strings.TrimSpace(s.Name) == "" {
@@ -210,14 +233,6 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 	if strings.TrimSpace(s.Description) == "" {
 		s.Description = strings.TrimSpace(fallbackDescription)
 	}
-	if len(s.Applicability) == 0 {
-		return nil, fmt.Errorf("schema applicability is required")
-	}
-	for _, item := range s.Applicability {
-		if item != "assignment" && item != "comment" {
-			return nil, fmt.Errorf("unsupported workflow applicability %q", item)
-		}
-	}
 	if s.Source.Format == "" && s.Source.Mode != "" {
 		s.Source.Format = s.Source.Mode
 	}
@@ -225,14 +240,71 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 		s.Source.Format = "markdown"
 	}
 	s.Source.Mode = ""
-	if err := validateSteps(s.Steps); err != nil {
-		return nil, err
-	}
 	normalized, err := json.Marshal(s)
 	if err != nil {
-		return nil, fmt.Errorf("normalize schema: %w", err)
+		return nil, ValidationResult{}, fmt.Errorf("normalize schema: %w", err)
+	}
+	return normalized, ValidateSchema(normalized), nil
+}
+
+func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, error) {
+	normalized, validation, err := NormalizeDraftSchema(raw, fallbackName, fallbackDescription)
+	if err != nil {
+		return nil, err
+	}
+	if !validation.Publishable {
+		return nil, fmt.Errorf("%s", validation.Issues[0].Message)
 	}
 	return normalized, nil
+}
+
+func ValidateSchema(raw []byte) ValidationResult {
+	result := ValidationResult{Publishable: true}
+	addBlocking := func(code, message string) {
+		result.Publishable = false
+		result.Issues = append(result.Issues, ValidationIssue{
+			Code:     code,
+			Message:  message,
+			Severity: "blocking",
+		})
+	}
+
+	var s Schema
+	if err := json.Unmarshal(raw, &s); err != nil {
+		addBlocking("schema_parse_failed", "schema must be a JSON object")
+		return result
+	}
+	if s.SchemaVersion != 1 {
+		addBlocking("unsupported_schema_version", fmt.Sprintf("unsupported schema_version %d", s.SchemaVersion))
+	}
+	if len(s.Applicability) == 0 {
+		addBlocking("missing_applicability", "schema applicability is required")
+	}
+	for _, item := range s.Applicability {
+		if item != "assignment" && item != "comment" {
+			addBlocking("unsupported_applicability", fmt.Sprintf("unsupported workflow applicability %q", item))
+		}
+	}
+	if err := validateSteps(s.Steps); err != nil {
+		addBlocking("invalid_steps", err.Error())
+	}
+	return result
+}
+
+func SchemaMetadata(raw []byte, fallbackName, fallbackDescription string) (string, string) {
+	var s Schema
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return strings.TrimSpace(fallbackName), strings.TrimSpace(fallbackDescription)
+	}
+	name := strings.TrimSpace(s.Name)
+	if name == "" {
+		name = strings.TrimSpace(fallbackName)
+	}
+	description := strings.TrimSpace(s.Description)
+	if description == "" {
+		description = strings.TrimSpace(fallbackDescription)
+	}
+	return name, description
 }
 
 func validateSteps(steps []Step) error {
@@ -293,6 +365,15 @@ func Render(raw []byte, ctx RenderContext) RenderResult {
 			if desc != "" {
 				fmt.Fprintf(&b, "   - %s\n", desc)
 			}
+			if step.Output != nil && strings.TrimSpace(step.Output.Description) != "" {
+				fmt.Fprintf(&b, "   - Done when: %s\n", strings.TrimSpace(step.Output.Description))
+			}
+			if step.Review != nil && step.Review.Required {
+				b.WriteString("   - Gate: human review required\n")
+			}
+			if step.QualityGate != nil && step.QualityGate.Enabled {
+				b.WriteString("   - Gate: quality check required\n")
+			}
 			for _, item := range step.Checklist {
 				if trimmed := strings.TrimSpace(item); trimmed != "" {
 					fmt.Fprintf(&b, "   - %s\n", trimmed)
@@ -346,7 +427,7 @@ func templateSteps(slug string) []Step {
 	case execprotocol.TrellisTaskSlug:
 		return []Step{
 			{ID: "context", Title: "Context first", Order: 1, Description: "Load issue details, comments, and relevant project resources."},
-			{ID: "trellis-gate", Title: "Trellis availability gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect Trellis state and continue, start, or fall back intentionally."},
+			{ID: "trellis-gate", Title: "Trellis setup gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect existing Trellis state or initialize it, then continue or start the issue task."},
 			{ID: "contract", Title: "Work contract", Order: 3, DependsOn: []string{"trellis-gate"}, Description: "Write the outcome, acceptance criteria, constraints, and verification into Trellis."},
 			{ID: "implement", Title: "Plan and implement", Order: 4, DependsOn: []string{"contract"}, Description: "Move in progress and execute inside Trellis task scope."},
 			{ID: "check", Title: "Check and update spec", Order: 5, DependsOn: []string{"implement"}, Description: "Run Trellis checks, targeted verification, and spec updates when durable behavior changes."},
