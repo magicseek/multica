@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  type MenuItemConstructorOptions,
+} from "electron";
 import { homedir } from "os";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
@@ -59,6 +68,84 @@ let runtimeConfigResult: RuntimeConfigResult = {
   ok: false,
   error: { message: "Runtime config has not loaded yet" },
 };
+
+function shouldDisableApplicationMenu(): boolean {
+  const viteEnv = import.meta.env as ImportMetaEnv & {
+    readonly VITE_MULTICA_DISABLE_APP_MENU?: string;
+  };
+  return (
+    process.env.MULTICA_DISABLE_APP_MENU === "1" ||
+    viteEnv.VITE_MULTICA_DISABLE_APP_MENU === "1"
+  );
+}
+
+function configureApplicationMenu(): void {
+  if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  // Automated desktop QA tools enumerate the macOS app menu through
+  // Accessibility. Electron's default menu can spin on NSMenuItem inspection
+  // in that path, so let the dev launcher opt into a menu-free shell.
+  if (shouldDisableApplicationMenu()) {
+    app.setActivationPolicy("accessory");
+    app.dock?.hide();
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  const viewSubmenu: MenuItemConstructorOptions[] = [
+    { role: "resetZoom" },
+    { role: "zoomIn" },
+    { role: "zoomOut" },
+    { type: "separator" },
+    { role: "togglefullscreen" },
+  ];
+  if (is.dev) {
+    viewSubmenu.push({ type: "separator" }, { role: "toggleDevTools" });
+  }
+
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: app.getName(),
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" },
+        ],
+      },
+      {
+        label: "View",
+        submenu: viewSubmenu,
+      },
+      {
+        label: "Window",
+        submenu: [
+          { role: "minimize" },
+          { role: "close" },
+        ],
+      },
+    ]),
+  );
+}
 
 // --- Deep link helpers ---------------------------------------------------
 
@@ -172,6 +259,11 @@ function createWindow(): void {
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
   });
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (!mainWindow?.isVisible()) {
+      mainWindow?.show();
+    }
+  });
 
   // Detect OS language changes while the app is running. Electron has no
   // dedicated event for this on any platform, so we poll on focus regain —
@@ -208,8 +300,11 @@ function createWindow(): void {
 
   installContextMenu(mainWindow.webContents);
 
-  if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
-    mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+  if (is.dev) {
+    const rendererUrl =
+      process.env["ELECTRON_RENDERER_URL"] ||
+      `http://localhost:${process.env.DESKTOP_RENDERER_PORT || "5173"}`;
+    mainWindow.loadURL(rendererUrl);
   } else {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
@@ -305,6 +400,7 @@ if (!gotTheLock) {
       const icon = nativeImage.createFromPath(BUNDLED_ICON_PATH);
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     }
+    configureApplicationMenu();
 
     app.on("browser-window-created", (_, window) => {
       optimizer.watchWindowShortcuts(window);
