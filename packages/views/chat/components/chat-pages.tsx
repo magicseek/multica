@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  Eye,
   FileText,
   FolderKanban,
   MessageSquare,
@@ -57,6 +58,14 @@ import type {
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -676,7 +685,25 @@ type PendingProposalItem = {
   item: ChatIssueProposalItem;
 };
 
-function ProposedIssuesColumn({
+function proposalPriorityLabel(
+  t: ReturnType<typeof useT<"chat">>["t"],
+  priority: string | null,
+): string {
+  switch (priority) {
+    case "urgent":
+      return t(($) => $.pages.session.priority.urgent);
+    case "high":
+      return t(($) => $.pages.session.priority.high);
+    case "medium":
+      return t(($) => $.pages.session.priority.medium);
+    case "low":
+      return t(($) => $.pages.session.priority.low);
+    default:
+      return t(($) => $.pages.session.priority.none);
+  }
+}
+
+export function ProposedIssuesColumn({
   items,
   selectedIds,
   isApproving,
@@ -691,18 +718,17 @@ function ProposedIssuesColumn({
 }) {
   const { t } = useT("chat");
   const selectedCount = items.filter(({ item }) => selectedIds.has(item.id)).length;
+  const [preview, setPreview] = useState<PendingProposalItem | null>(null);
 
   return (
     <div className="flex w-[280px] shrink-0 flex-col rounded-xl bg-brand/5 p-2 ring-1 ring-brand/15">
-      <div className="mb-2 flex items-center justify-between gap-2 px-1.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-background text-brand">
-            <Sparkles className="size-3.5" />
+      <div className="mb-2 flex items-center justify-between px-1.5">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+            <Sparkles className="h-3 w-3 text-brand" />
+            {t(($) => $.pages.session.proposed_lane_title)}
           </span>
-          <span className="truncate text-sm font-medium">{t(($) => $.pages.session.proposed_lane_title)}</span>
-          <span className="shrink-0 rounded-full bg-background px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-            {items.length}
-          </span>
+          <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
       </div>
       <div className="min-h-[200px] flex-1 space-y-2 overflow-y-auto rounded-lg p-1">
@@ -712,17 +738,40 @@ function ProposedIssuesColumn({
           </p>
         ) : (
           items.map(({ proposal, item }) => (
-            <div key={item.id} className="rounded-lg border bg-background p-3 text-sm shadow-xs">
+            <div
+              key={item.id}
+              onClick={() => setPreview({ proposal, item })}
+              className="group/proposal cursor-pointer rounded-lg border bg-background p-3 text-left text-sm shadow-xs transition-colors hover:border-brand/35 hover:bg-brand/5"
+            >
               <div className="flex items-start gap-2">
-                <Checkbox
-                  checked={selectedIds.has(item.id)}
-                  onCheckedChange={(checked) => onSelectItem(item.id, checked === true)}
-                  className="mt-0.5"
-                />
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <Checkbox
+                    checked={selectedIds.has(item.id)}
+                    onCheckedChange={(checked) => onSelectItem(item.id, checked === true)}
+                    className="mt-0.5"
+                    aria-label={t(($) => $.pages.session.select_proposed_issue, { title: item.title })}
+                  />
+                </div>
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 font-medium">{item.title}</div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">{proposal.title}</div>
                 </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="mt-[-0.125rem] size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/proposal:opacity-100 focus-visible:opacity-100"
+                  aria-label={t(($) => $.pages.session.preview_issue, { title: item.title })}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setPreview({ proposal, item });
+                  }}
+                >
+                  <Eye className="size-3.5" />
+                </Button>
               </div>
               {item.description && (
                 <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{item.description}</p>
@@ -762,7 +811,110 @@ function ProposedIssuesColumn({
           </Button>
         </div>
       )}
+      <ProposedIssuePreviewDialog
+        preview={preview}
+        selected={preview ? selectedIds.has(preview.item.id) : false}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null);
+        }}
+        onSelectItem={(checked) => {
+          if (!preview) return;
+          onSelectItem(preview.item.id, checked);
+        }}
+      />
     </div>
+  );
+}
+
+function ProposedIssuePreviewDialog({
+  preview,
+  selected,
+  onOpenChange,
+  onSelectItem,
+}: {
+  preview: PendingProposalItem | null;
+  selected: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelectItem: (checked: boolean) => void;
+}) {
+  const { t } = useT("chat");
+  const labels = preview
+    ? proposalLabelsToString(preview.item.labels)
+      .split(",")
+      .map((label) => label.trim())
+      .filter(Boolean)
+    : [];
+
+  return (
+    <Dialog open={!!preview} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[min(92vw,42rem)] max-w-none sm:max-w-none">
+        <DialogHeader>
+          <DialogTitle>{preview?.item.title}</DialogTitle>
+          <DialogDescription>
+            {preview
+              ? t(($) => $.pages.session.preview_source, {
+                  proposal: preview.proposal.title,
+                })
+              : null}
+          </DialogDescription>
+        </DialogHeader>
+
+        {preview && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="text-xs">
+                {proposalPriorityLabel(t, preview.item.priority)}
+              </Badge>
+              {labels.map((label) => (
+                <Badge key={label} variant="secondary" className="max-w-full truncate text-xs">
+                  {label}
+                </Badge>
+              ))}
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <div className="mb-1 text-xs font-medium text-muted-foreground">
+                {t(($) => $.pages.session.issue_description_label)}
+              </div>
+              {preview.item.description ? (
+                <p className="whitespace-pre-wrap text-sm leading-6">
+                  {preview.item.description}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t(($) => $.pages.session.preview_no_description)}
+                </p>
+              )}
+            </div>
+
+            {preview.proposal.summary && (
+              <div className="rounded-lg border bg-background p-3">
+                <div className="mb-1 text-xs font-medium text-muted-foreground">
+                  {t(($) => $.pages.session.preview_proposal_summary)}
+                </div>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  {preview.proposal.summary}
+                </p>
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm">
+              <Checkbox
+                checked={selected}
+                onCheckedChange={(checked) => onSelectItem(checked === true)}
+              />
+              <span>{t(($) => $.pages.session.preview_include_in_create)}</span>
+            </label>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            {t(($) => $.pages.session.preview_close)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
