@@ -144,6 +144,7 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 - **Recents** date grouping is a presentation aid and does not create a new **Chat Session** category.
 - The old **Workspace** sidebar section heading is removed; primary workspace navigation remains flat until expandable **Projects** and **Recents** sections.
 - Existing direct URLs for **Runtimes**, **Workflows**, and **Skills** remain addressable, but sidebar discovery moves under **Settings**.
+- Public product labels may diverge from canonical domain terms during a frontend rewrite. Resolved: preserve the existing terms in data model, API, and implementation contracts, and use a separate display vocabulary for user-facing navigation and copy.
 - Older **Project-Associated Chat Sessions** are recovered through the owning **Project** detail `Chats` view, not through **Recents**.
 - The owning **Project** detail `Chats` view remains the complete history surface for that **Project**'s **Project-Associated Chat Sessions**.
 - When a **Project** has more associated chat history than the sidebar subset, the sidebar links to the owning **Project** detail `Chats` view for the full list.
@@ -213,6 +214,10 @@ _Avoid_: editing the system seed directly
 A versioned schema for a workflow definition that can be drafted, published, deprecated, and snapshotted.
 _Avoid_: silent in-place template mutation
 
+**Workflow Draft Revision**:
+An unpublished, mutable workflow revision used to hold edits before they are reviewed and published for future workflow runs.
+_Avoid_: browser-only unsaved edits, mutating a published workflow in place
+
 **Project Workflow Binding**:
 The default workflow selected for issues that belong to a project.
 _Avoid_: agent workflow, project prompt
@@ -225,6 +230,90 @@ _Avoid_: skip workflow, bypass workflow
 The immutable workflow content captured for a specific agent task when the task is queued.
 _Avoid_: live workflow reference during execution
 
+**Workflow Run**:
+A server-owned execution instance created from a workflow snapshot for one agent task.
+_Avoid_: browser-driven flow, live workflow mutation
+
+**Workflow Step Run**:
+A server-owned execution state record for one step inside a workflow run.
+_Avoid_: prompt-only step, UI-only step
+
+**Workflow Step Run Status**:
+A Multica runtime state for a workflow step run, such as pending, ready, running, waiting review, waiting quality, waiting manual, waiting external, paused, blocked, failed, completed, or skipped.
+_Avoid_: ai-desk uppercase step status enum
+
+**Workflow Step Execution Kind**:
+The workflow schema's declaration of whether a step is completed by the assigned agent, by a human/manual action, or by an external actor.
+_Avoid_: daemon runtime mode, ai-desk execution mode enum
+
+**Workflow Step Contract**:
+The user-facing editing contract for one workflow step: its title, purpose, expected completion output, required status, and review or quality expectations.
+_Avoid_: exposing every workflow step schema field as the default editor
+
+**Workflow Step Completion Expectation**:
+A user-facing description of how a workspace member or agent can tell that a workflow step is complete.
+_Avoid_: forcing every step to produce a named artifact
+
+**Workflow Step Gate**:
+The user-facing gate setting on a workflow step that summarizes whether the run continues immediately, waits for human approval, runs an agent quality check, or requires both.
+_Avoid_: exposing review and quality gate internals as separate default step fields
+
+**Manual Workflow Step**:
+A workflow step that a human workspace member completes through Multica.
+_Avoid_: unclaimable agent step
+
+**External Workflow Step**:
+A workflow step that waits for an actor or system outside first-version Multica workflow execution.
+_Avoid_: hidden integration, fake agent step
+
+**Workflow Execution Batch**:
+A daemon execution pass that may process one or more ready workflow step runs while preserving step-level state.
+_Avoid_: cold-start every step, hidden whole-workflow loop
+
+**Workflow Execution Command**:
+A Multica CLI command used by an agent to read or update workflow run, step run, artifact, or quality state.
+_Avoid_: first-version MCP-only workflow control
+
+**Workflow Step Retry**:
+Re-execution of a failed, rejected, blocked, or otherwise retryable workflow step run inside the same workflow run.
+_Avoid_: hidden workflow rerun
+
+**Workflow Rerun**:
+A newly queued agent task that creates a new workflow snapshot and workflow run.
+_Avoid_: mutating current run workflow content
+
+**Workflow Artifact**:
+A step-scoped deliverable produced or revised during a workflow run.
+_Avoid_: terminal output, untracked file
+
+**Workflow Artifact Version**:
+An immutable revision of a workflow artifact produced by initial execution or retry.
+_Avoid_: overwritten artifact
+
+**Workflow Artifact Input**:
+A declared artifact that a workflow step can read or requires from earlier step output.
+_Avoid_: implicit dependency edge
+
+**Workflow Artifact Template**:
+Schema-embedded instructions or files describing the expected shape of a workflow artifact.
+_Avoid_: external catalog dependency in first-version migration
+
+**Workflow Review**:
+A human or agent decision on a workflow artifact before dependent step runs proceed.
+_Avoid_: informal comment-only approval
+
+**Workflow Quality Gate**:
+A workflow-defined evaluation that records whether a workflow artifact satisfies the step's quality criteria.
+_Avoid_: optional lint note, hidden rubric
+
+**Workflow Quality Gate Result**:
+A recorded quality evaluation outcome for a workflow artifact, including its producer and whether it is blocking.
+_Avoid_: anonymous platform verdict
+
+**Party Mode**:
+An ai-desk workflow feature for simulated multi-role step discussion or review that Multica intentionally does not migrate.
+_Avoid_: legacy party mode metadata, first-version workflow execution requirement
+
 **Workflow Source**:
 The editable template body and metadata fields inside a workflow definition's canonical schema.
 _Avoid_: hidden prompt, generated-only workflow
@@ -236,6 +325,14 @@ _Avoid_: separate workflow system, visual-only diagram
 **Workflow Schema**:
 The canonical structured representation of a workflow definition, including metadata, source fields, variables, steps, gates, and artifacts.
 _Avoid_: secondary Markdown truth, UI-only schema
+
+**Workflow Schema YAML**:
+The user-visible YAML representation of a workflow definition's canonical schema, used for authoring review, copy, import, export, and migration.
+_Avoid_: daemon-interpreted YAML script, independent source of truth
+
+**Workflow Schema Editor**:
+The advanced workflow builder surface for editing or inspecting the complete workflow schema, typically rendered with YAML syntax but labeled as Schema in the product UI.
+_Avoid_: YAML tab, Markdown Source
 
 **Workflow Applicability**:
 The trigger types a workflow revision is valid for, such as assignment, comment response, chat, or autopilot run.
@@ -252,6 +349,26 @@ _Avoid_: hard capability gate in the first version
 **Workflow Preview**:
 A UI rendering of the resolved workflow content before it is saved or assigned to execution.
 _Avoid_: raw-only editor, blind prompt injection
+
+**Workflow Builder**:
+The Multica UI surface for editing workflow schemas using the product's shared UI components and design system.
+_Avoid_: ai-desk UI clone, dependency-first graph canvas
+
+**Workflow Change Review**:
+The pre-publish confirmation surface that compares an active draft revision against the current published revision before an authorized human publishes the draft.
+_Avoid_: workflow artifact review, preview tab
+
+**Workflow Schema Import**:
+A definition-time conversion from an external workflow document into Multica's canonical workflow schema.
+_Avoid_: runtime YAML, unvalidated template paste
+
+**Workflow Import Warning**:
+A non-blocking notice that an imported workflow document included unsupported, intentionally skipped, or suspicious-but-recoverable content.
+_Avoid_: silent migration loss
+
+**Workflow Schema Export**:
+A definition-time rendering of a Multica workflow schema for migration, review, or backup.
+_Avoid_: second workflow source of truth
 
 **Direct Task Workflow**:
 A lightweight workflow definition for focused execution that still preserves minimum context, execution, verification, and reporting requirements.
@@ -270,22 +387,101 @@ _Avoid_: silently continuing the full project workflow
 - A **Workspace** owns zero or more **Workflow Definitions**.
 - A **Workspace** may include **System-Seeded Workflow Definitions**.
 - A **System-Seeded Workflow Definition** can be copied into a **Workflow Fork**.
+- A **Workflow Fork** starts as a draft-only **Workflow Definition** until the user publishes it.
+- A user-created **Workflow Definition** starts with a **Workflow Draft Revision** and no published revision.
 - A **Workflow Definition** has exactly one canonical **Workflow Schema**.
 - A **Workflow Definition** evolves through **Workflow Revisions**.
 - A **Workflow Revision** may be draft, published, or deprecated.
+- A **Workflow Draft Revision** is the required intermediate state for workflow edits before those edits can affect newly queued workflow runs.
+- A **Workflow Definition** has at most one active **Workflow Draft Revision** at a time.
+- A **Workflow Revision** stores its **Workflow Schema** as one versioned definition payload rather than splitting definition steps, artifacts, and gates into separate editable definition records.
+- A **Workflow Revision** may expose **Workflow Schema YAML** as its reviewable definition artifact while storing the normalized **Workflow Schema** for validation, preview, snapshotting, and execution.
 - A **Workflow Schema** includes **Workflow Source** and may include a **Workflow Step Graph**.
 - A **Workflow Schema** declares **Workflow Applicability**.
+- **Workflow Schema YAML** and the **Workflow Builder** are two editing projections over the same **Workflow Schema** and must round-trip without creating a second persisted model.
+- **Workflow Schema YAML** is generated from the normalized **Workflow Schema**; user-entered YAML formatting and comments are not retained after save.
 - A **Workflow Preview** renders from the **Workflow Schema** using Multica's current UI library and design system.
+- A **Workflow Builder** edits **Workflow Schemas** without introducing a new graph-canvas dependency in the first version.
+- The workflow builder labels the full YAML-backed definition surface as **Workflow Schema Editor** or Schema rather than YAML or Markdown Source.
+- A **Workflow Builder** opens the active **Workflow Draft Revision** by default when one exists, while execution and selectors continue to use the published revision.
+- A **Workflow Builder** presents **Workflow Step Contracts** as the default step editing surface and keeps lower-level schema fields in advanced editing surfaces.
+- A **Workflow Builder** presents workflow steps as a linear main path by default; dependency edges are inferred from order unless the user opens an advanced step-graph surface.
+- A **Workflow Builder** automatically saves edits into the active **Workflow Draft Revision**, while publishing remains an explicit user action.
+- A **Workflow Draft Revision** may contain a structurally parseable but not publishable schema; publishing requires full validation.
+- Invalid **Workflow Schema YAML** that cannot be parsed is not saved to the server in the first version; the builder keeps it as local unsaved editor state until the syntax is fixed.
+- Workflow draft responses include backend-derived publishability and validation issues for the draft schema.
+- Editing a published workflow creates the active **Workflow Draft Revision** on the first actual change, not when the builder is merely opened.
+- Workflow metadata that affects understanding or execution selection, including name, description, and applicability, is edited through the active **Workflow Draft Revision** rather than mutating the published definition in place.
+- A **Workflow Step Contract** uses a **Workflow Step Completion Expectation** by default; it declares explicit **Workflow Artifacts** only when an output must be reviewed, reused by later steps, or retained as a deliverable.
+- A **Workflow Step Contract** uses one **Workflow Step Gate** in the default editor instead of exposing review and quality-gate internals as separate required configuration groups.
+- **Workflow Step Contracts** are projections over **Workflow Schema** fields and do not introduce UI-only persisted fields.
+- Workflow change review compares the active **Workflow Draft Revision** against the current published revision; draft-only workflows show an initial publish preview.
+- Workflow change review defaults to a **Workflow Step Contract** diff and provides a **Workflow Schema YAML** diff for complete definition review.
+- Workflow change review can show non-publishable draft changes, but publishing is blocked by blocking validation issues.
+- **Workflow Change Review** is a pre-publish action or dialog, not a persistent builder tab.
+- Publishing a **Workflow Draft Revision** requires an authorized human to confirm in workflow change review, but first-version workflow authoring does not create a separate approval workflow.
+- **Workflow Schema Import** and **Workflow Schema Export** are definition-time operations; runtime execution uses normalized **Workflow Schemas**, **Workflow Snapshots**, and **Workflow Runs**.
+- **Workflow Schema Import** fails on structural errors that would make execution invalid and emits **Workflow Import Warnings** for intentionally skipped or recoverable fields.
+- **Workflow Builder** belongs in Settings because it configures workflow definitions.
 - A **Project** may have exactly one **Project Workflow Binding**.
 - An **Issue** may have at most one **Issue Workflow Override**.
 - **Project Workflow Bindings** and **Issue Workflow Overrides** can only select **Workflow Definitions** with a published **Workflow Revision** for the target trigger.
+- Workflow selection controls only list **Workflow Definitions** with a published revision for the target trigger; draft-only workflow definitions remain visible only in workflow-authoring surfaces.
 - Workflow selectors filter choices by **Workflow Applicability**.
+- Workflow selectors and workflow runs display published workflow metadata, while the **Workflow Builder** displays draft metadata when an active draft exists.
+- Draft-only **Workflow Definitions** may be deleted because they have no runnable published revision; published workflow definitions are archived rather than hard-deleted.
+- Discarding an active **Workflow Draft Revision** is irreversible in the first version and leaves the published revision unchanged.
+- Workflow definition API responses expose published and draft revisions separately; `current_published_revision_id` remains the execution pointer and must not be overloaded to mean active draft.
 - An **Issue Workflow Override** takes precedence over a **Project Workflow Binding**.
 - A **Project Workflow Binding** takes precedence over the workspace default workflow.
 - An issue assignment **Agent Task** resolves workflow selection and stores exactly one **Workflow Snapshot** when the task is queued.
 - A comment-triggered **Agent Task** defaults to the **Comment Response Workflow** instead of inheriting the project's full workflow.
 - A comment-triggered **Agent Task** uses the full issue workflow only when the triggering action explicitly requests it.
 - An existing **Workflow Snapshot** is not changed by later edits or publishes.
+- A **Workflow Run** is created from exactly one **Workflow Snapshot** as soon as the agent task is queued.
+- First-version workflow execution creates one **Workflow Run** for one agent-task queue row.
+- A **Workflow Run** does not change its workflow content after creation; corrections require a new workflow revision and a newly queued run.
+- A **Workflow Run** with an incorrect workflow snapshot is cancelled or rerun from a corrected workflow revision rather than repaired in place.
+- A **Workflow Step Retry** preserves the current **Workflow Run** and **Workflow Snapshot**.
+- A **Workflow Rerun** creates a new agent-task queue row, **Workflow Snapshot**, and **Workflow Run**.
+- A **Workflow Run** contains one or more **Workflow Step Runs**.
+- **Workflow Runs**, **Workflow Step Runs**, **Workflow Artifacts**, **Workflow Reviews**, and **Workflow Quality Gates** are materialized runtime records, not editable workflow definition records.
+- A **Workflow Step Run** records step-level status, dependency readiness, execution metadata, and review or quality state when the workflow schema requires those features.
+- **Workflow Step Run Status** uses Multica runtime language rather than ai-desk step status names.
+- A **Workflow Step Execution Kind** describes step intent only; assignment, runtime, and daemon selection remain owned by Multica task and agent routing.
+- A **Manual Workflow Step** can be completed by a human workspace member with optional artifact attachment or change request.
+- An **External Workflow Step** can be represented as waiting or blocked in the first version, but does not trigger an external integration.
+- A **Workflow Execution Batch** may execute multiple ready **Workflow Step Runs** using the same work directory or agent session.
+- A **Workflow Execution Batch** stops before a **Workflow Step Run** that requires human review, a blocking quality gate, a pause, user input, or recovery from failure.
+- First-version agents control workflow execution through **Workflow Execution Commands** exposed by the Multica CLI.
+- First-version workflow execution respects **Workflow Step Graph** dependencies but executes ready **Workflow Step Runs** in deterministic topological order rather than parallelizing branches.
+- A **Workflow Step Run** may produce zero or more **Workflow Artifacts**.
+- A **Workflow Artifact Input** describes data flow into a **Workflow Step Run** and is distinct from **Workflow Step Graph** dependency readiness.
+- A **Workflow Artifact Template** is embedded in the workflow schema for first-version migration and snapshot behavior.
+- A **Workflow Artifact** may store reviewable text, Markdown, JSON, or other explicitly saved content on the server.
+- **Workflow Artifact Versions** are immutable; retries create new artifact versions instead of overwriting prior reviewable content.
+- Local task outputs that are not explicitly saved as **Workflow Artifacts** remain governed by **Output Metadata** privacy boundaries.
+- A **Workflow Review** belongs to a **Workflow Artifact** or to the **Workflow Step Run** that produced it.
+- A required **Workflow Review** is approved or rejected by a human workspace member.
+- An agent may submit a **Workflow Artifact** or **Workflow Quality Gate** result, but may not approve its own required **Workflow Review** in the first version.
+- A **Workflow Quality Gate** evaluates a **Workflow Artifact** using criteria captured by the workflow schema and stores its result with the **Workflow Step Run**.
+- A **Workflow Quality Gate** may be blocking or non-blocking according to the workflow schema.
+- A first-version **Workflow Quality Gate Result** may be produced by the executing agent and must expose that provenance.
+- An agent-produced **Workflow Quality Gate Result** is not presented as a server-trusted platform verdict.
+- Dependent **Workflow Step Runs** wait for required **Workflow Artifacts**, **Workflow Reviews**, and **Workflow Quality Gates** when the workflow schema declares them.
+- **Party Mode** fields from ai-desk workflows are ignored during migration and are not retained as legacy workflow metadata.
+- ai-desk workflow engine labels such as `NONE` and `AETHER` are not migrated as Multica workflow concepts; their supported behavior is represented through workflow schema capabilities and run semantics.
+- ai-desk workflow-level automatic sidecar agents are not migrated as a Multica workflow concept; multi-agent workflow behavior must be designed through Multica-native assignment, mention, or squad semantics.
+- ai-desk `AUTOMATION` workflow type is replaced by Multica **Autopilot** behavior rather than migrated as a workflow type.
+- ai-desk `OFFICIAL` workflow source maps to **System-Seeded Workflow Definition**; ai-desk `PUBLIC` and `PERSONAL` imports map to user-owned **Workflow Definitions** in the target workspace.
+- ai-desk workflow participants and editor collaborators are not migrated as workflow-specific ACLs; imported workflows follow Multica workspace permissions.
+- ai-desk `ticket_required` is not migrated as a Multica workflow field; issue, chat, comment, and autopilot trigger fit are expressed through **Workflow Applicability** and **Autopilot**.
+- ai-desk historical tasks, steps, artifacts, and workflow runs are not migrated into Multica workflow runtime tables.
+- ai-desk AI-generated workflow creation is not part of first-version workflow migration.
+- A daemon executes work for a **Workflow Run** and reports state back, but does not own the workflow definition or mutate the workflow snapshot.
+- Browser surfaces edit **Workflow Definitions** and observe **Workflow Runs**; they do not orchestrate workflow execution state.
+- **Workflow Runs** are primarily observed from the issue, task, chat, or autopilot context that created them rather than from a top-level workflow-run navigation surface.
+- Completing a **Workflow Run** does not automatically post issue comments or change issue status; the workflow's explicit final reporting step remains responsible for user-visible delivery.
 - An **Agent** may declare **Workflow Capability**, but does not own a default workflow.
 - A mismatch between **Workflow Capability** and selected workflow features produces a **Workflow Capability Warning**.
 - A **Workflow Capability Warning** is recorded with the **Workflow Snapshot** but does not block first-version execution.
@@ -302,9 +498,73 @@ _Avoid_: silently continuing the full project workflow
 - "workflow" was used to mean both a reusable template and a running task process. Resolved: use **Workflow Definition** for the editable template and **Workflow Snapshot** for the per-task execution copy.
 - "skip workflow" suggests bypassing execution governance. Resolved: use **Issue Workflow Override** to choose a lighter **Workflow Definition** instead.
 - Markdown source and step graph could drift if stored independently. Resolved: **Workflow Schema** is the only source of truth; Markdown is an editable field and rendered output, not a second persisted model.
+- YAML could become a daemon-interpreted runtime script, but that would couple execution recovery to a text format. Resolved: **Workflow Schema YAML** is the user-visible definition artifact; publish/import compiles it into the normalized **Workflow Schema**, and workflow runs execute from snapshots of that normalized schema.
+- Workflow authoring could retain raw user-entered YAML text, but that would create drift between raw YAML, normalized schema, and the builder projection. Resolved: saved YAML is canonical generated output from the normalized **Workflow Schema**, with explanatory comments limited to templates/help views.
+- The full definition editor could be labeled YAML because it uses YAML syntax, but that exposes the file format rather than the product concept. Resolved: the UI labels this surface Schema / **Workflow Schema Editor**.
 - Built-in templates could remain hardcoded or become editable. Resolved: built-ins enter workspaces as read-only **System-Seeded Workflow Definitions**; user changes happen through **Workflow Forks**.
 - Saving a workflow edit could silently affect task execution. Resolved: edits create draft **Workflow Revisions**; only publishing makes a revision available for new task resolution.
+- Workflow edits could live only in browser state until publish, but that prevents durable review, reload recovery, and YAML inspection before publishing. Resolved: workflow edits persist as **Workflow Draft Revisions** before publish.
+- Workflow definitions could allow multiple active drafts, but that would require branch naming, merge behavior, conflict handling, and per-draft selection. Resolved: each **Workflow Definition** has at most one active **Workflow Draft Revision**.
+- Forking a system workflow could immediately create a published user workflow, but that would make an unreviewed copy selectable for runs. Resolved: **Workflow Forks** start draft-only and cannot be bound or queued until published.
+- Creating a user workflow could immediately publish its initial revision, but that would bypass review for a runnable configuration. Resolved: user-created **Workflow Definitions** start draft-only and become selectable only after publish.
+- Project and issue selectors could show draft-only workflows as disabled options, but that turns an execution selector into an authoring status surface. Resolved: workflow selection controls show published, applicable workflow definitions only.
+- Workflow Builder could default to the published revision and hide draft changes behind a toggle, but that makes saved draft edits look lost. Resolved: builder opens the active draft by default and clearly labels the published revision that remains active for execution.
+- Review changes could compare arbitrary historical workflow revisions, but first-version authoring only needs the pending publish decision. Resolved: Review changes compares active draft against current published, with draft-only workflows using an initial publish preview.
+- Review changes could show only YAML diff, but that would make users inspect implementation-shaped fields before understanding process changes. Resolved: Review changes defaults to **Workflow Step Contract** diff and keeps **Workflow Schema YAML** diff available for full auditability.
+- Review changes could hide until a draft is publishable, but users need to understand and fix invalid drafts. Resolved: Review changes can open for non-publishable drafts, while Publish is disabled for blocking validation issues.
+- Review changes could be a builder tab beside Preview, but that confuses authoring preview with the human publish decision. Resolved: **Workflow Change Review** is an action/dialog shown when draft changes exist.
+- Publishing workflow definition changes could create a separate approval request, but that would expand workflow authoring into another governance workflow before permissions and notifications are designed. Resolved: first-version publish approval is the authorized human confirmation inside Review changes.
+- Workflow Builder could require manual save before review or publish, but that makes draft review depend on hidden unsaved browser state. Resolved: builder autosaves draft revisions and keeps publish as the explicit runnable-configuration boundary.
+- Draft autosave could require full publish validation, but partial edits often pass through temporarily invalid states. Resolved: draft save accepts structurally parseable schemas with validation issues, while publish enforces full execution validation.
+- Invalid YAML could be saved as raw draft source, but that would make `workflow_revision.schema` alternate between executable schema and invalid text. Resolved: unparseable **Workflow Schema YAML** remains local unsaved editor state until it can be parsed.
+- Draft validation could live only in the browser, but publishability rules must match server behavior. Resolved: backend responses include derived draft validation issues and publishability.
+- Opening a published workflow could eagerly create a draft, but that would produce meaningless draft changes for read-only inspection. Resolved: the first actual edit creates the active **Workflow Draft Revision**.
+- Workflow metadata edits could update the definition row immediately while step edits remain in draft, but that would make selectors and reviews describe a different workflow than the one currently published. Resolved: semantic metadata edits are part of the active **Workflow Draft Revision** and affect runnable selection only after publish.
+- Selectors could display draft metadata for a workflow with pending changes, but then the selected name would not match the published revision used for execution. Resolved: execution selectors and workflow runs display published metadata; builder surfaces display draft metadata with clear draft-change state.
+- Draft-only workflows could be archived like published workflows, but they have no execution history or selector references to preserve. Resolved: draft-only workflow definitions may be deleted, while published workflow definitions are archived and active drafts may be discarded.
+- Discarded drafts could be recoverable through a trash or version browser, but that adds another history surface before workflow authoring is stable. Resolved: discarding an active **Workflow Draft Revision** is irreversible after confirmation.
+- Workflow APIs could keep a single `current_revision`, but that becomes ambiguous once the builder opens drafts by default while execution uses published revisions. Resolved: API responses expose published and draft revisions separately, with `current_published_revision_id` reserved for execution.
+- Workflow definition steps, artifacts, and gates could be normalized as separate editable records, but that would complicate draft, publish, fork, import, export, and snapshot behavior. Resolved: **Workflow Schema** remains one canonical versioned definition payload, while execution state is materialized through **Workflow Runs** and related runtime records.
+- Workflow Builder could copy ai-desk's ReactFlow canvas, but that would introduce a new dependency before the schema and run contract are stable. Resolved: first-version **Workflow Builder** uses Multica shared UI components, structured inspectors, drag ordering where useful, and graph preview without a new graph-canvas dependency.
+- Workflow Builder could expose raw step schema fields by default, but that makes users edit implementation details before confirming the step's intent. Resolved: the default step editor uses **Workflow Step Contracts** and moves raw identifiers, dependencies, templates, artifact details, and route internals to advanced surfaces.
+- Step Contract UI could store separate simplified fields and translate later, but that would create another model to keep in sync with YAML and execution. Resolved: **Workflow Step Contracts** are direct projections over **Workflow Schema** fields.
+- Workflow Builder could make users author arbitrary DAG dependencies in the default step list, but first-version execution is serial and deterministic even when the schema has branches. Resolved: the default builder uses a linear main path with advanced editing for non-linear dependency graphs.
+- Workflow Builder could require every step to name a **Workflow Artifact**, but that forces users to invent implementation outputs for ordinary progress steps. Resolved: default steps use **Workflow Step Completion Expectations** and only introduce explicit artifacts when output needs review, reuse, or durable retention.
+- Workflow Builder could show required human review and quality gates as separate always-visible field groups, but that makes every step feel like a governance form. Resolved: the default editor uses one **Workflow Step Gate** with detailed reviewer, blocking, rubric, and artifact-target settings in advanced surfaces.
+- Workflow run UI could live under Settings next to the builder, but running workflows belong to the work item that triggered them. Resolved: Settings owns **Workflow Builder** for definitions; issue, task, chat, or autopilot surfaces own **Workflow Run** observation.
+- Workflow completion could automatically comment or close issues, but that risks duplicate or context-free reporting. Resolved: final user-visible reporting remains an explicit workflow step executed by the agent or human, while the server only derives **Workflow Run** state.
+- YAML import and export could be treated as a peripheral migration tool, but ai-desk workflow authoring uses YAML as the reviewable definition artifact. Resolved: first-version workflow migration includes **Workflow Schema YAML** for review, copy, import, and export, while runtime execution uses normalized schema snapshots rather than direct YAML interpretation.
+- Workflow import could fail on every unsupported ai-desk field or silently drop them, but both choices are poor for migration. Resolved: structural errors fail import; intentionally skipped or recoverable fields produce **Workflow Import Warnings** and continue.
+- ai-desk supports creating workflows with AI-generated YAML, but that would add unstable schema generation and repair to the migration surface. Resolved: first-version migration excludes AI-generated workflow creation; future Multica workflow proposal flows can be designed separately.
+- Workflow artifact content could remain daemon-local, but review, quality gates, and dependent steps need stable cross-device inputs. Resolved: explicit **Workflow Artifacts** are server-stored reviewable content, while ordinary local outputs remain **Output Metadata** unless explicitly saved as artifacts.
+- Step retry could overwrite the existing artifact, but that would erase review and quality history. Resolved: retries create new **Workflow Artifact Versions**, with UI defaulting to the latest version while preserving history.
+- Workflow reviews could allow agent self-approval, but that would collapse human review into automated quality evaluation. Resolved: first-version required **Workflow Reviews** are approved or rejected by human workspace members.
+- Quality gates could always block or never block later steps. Resolved: **Workflow Quality Gates** declare blocking behavior in the workflow schema; blocking gates hold dependent **Workflow Step Runs**, non-blocking gates record reports and warnings.
+- Quality gates could require a server-side evaluator in the first version, but ai-desk gates are often prompt/rubric driven and expensive to rehost immediately. Resolved: first-version **Workflow Quality Gate Results** may be agent-produced with explicit provenance, not anonymous platform verdicts.
+- Step-level execution state could imply a cold-started daemon task for every step, increasing token and runtime overhead. Resolved: **Workflow Step Runs** remain independent state units, while a **Workflow Execution Batch** may reuse session and work directory across consecutive ready steps until a blocking boundary is reached.
+- Workflow step control could be exposed first through MCP tools, but Multica already has a daemon-to-agent CLI contract. Resolved: first-version workflow execution uses **Workflow Execution Commands** in the Multica CLI; MCP can be added later as an ergonomic layer.
+- A workflow DAG could execute ready branches in parallel, but that would introduce artifact merge, session concurrency, workdir write conflict, review ordering, and token attribution complexity. Resolved: first-version **Workflow Step Graph** execution is serial and deterministic even when the graph contains independent ready branches.
+- Step dependencies and artifact inputs could be merged during import, but that would conflate control flow with data flow. Resolved: `depends_on_steps` controls **Workflow Step Run** readiness; **Workflow Artifact Inputs** declare readable or required artifact data, with import warnings for suspicious mismatches rather than automatic graph rewrites.
+- ai-desk artifact templates could be migrated as a reusable catalog first, but that would add another dependency before workflow definitions can be self-contained. Resolved: first-version migration embeds **Workflow Artifact Templates** in the workflow schema; unresolved ai-desk template references produce import warnings.
+- ai-desk step statuses could be copied directly, but their names encode ai-desk UI and service history. Resolved: **Workflow Step Run Status** uses Multica-oriented states for readiness, execution, review, quality, manual, external, pause, block, failure, completion, and skip.
 - Workflow resolution could happen when an agent claims work, but that would let delayed claims observe newer publishes than the user assigned. Resolved: issue assignment tasks snapshot workflow at queue time.
+- Workflow runs could be created lazily when a daemon claims work, but that would delay visibility and risk observing workflow edits made after assignment. Resolved: **Workflow Snapshot**, **Workflow Run**, and initial **Workflow Step Runs** are created at agent-task queue time.
+- A workflow run could span multiple agent-task queue rows, but that would complicate existing task lifecycle, usage, cancellation, and runtime recovery semantics. Resolved: first-version **Workflow Run** has a 1:1 relationship with the queue row that created it.
+- Workflow content could be patched during a running workflow, but that would make execution history ambiguous. Resolved: a **Workflow Run** is immutable with respect to workflow content after creation.
+- Current-run workflow repair could reduce friction, but it breaks snapshot immutability and auditability. Resolved: incorrect workflow content is fixed by editing or publishing a new **Workflow Revision** and starting a new **Workflow Run**.
+- Retry could mean either redoing one failed step or starting over with a new workflow snapshot. Resolved: **Workflow Step Retry** re-executes a retryable step inside the same run; **Workflow Rerun** creates a new queue row and workflow run.
+- Workflow execution ownership could live in the browser, daemon, or server. Resolved: **Workflow Runs** are server-owned; daemons execute and report, while browser surfaces edit definitions and observe runs.
+- Workflow steps could be rendered only as prompt sections, but that would lose dependency, artifact, review, pause, and quality behavior. Resolved: step execution uses **Workflow Step Runs**, not prompt-only rendering.
+- Step execution could omit artifact, review, and quality concepts at first, but that would make the ai-desk workflow model impossible to preserve without later schema churn. Resolved: first-version **Workflow Step Runs** include **Workflow Artifacts**, **Workflow Reviews**, and **Workflow Quality Gates** as first-class run semantics.
+- Party Mode could be migrated with ai-desk workflows, but it would force an early decision between simulated roles and Multica's real multi-agent model. Resolved: **Party Mode** is intentionally not migrated; future Multica multi-agent workflow design will define its own model.
+- ai-desk `WorkflowEngine` labels could be preserved, but they describe ai-desk execution paths rather than Multica domain concepts. Resolved: Multica does not migrate `NONE` or `AETHER`; it models supported behavior through schema capabilities and **Workflow Run** semantics.
+- ai-desk workflow templates can pre-attach sidecar agents to tasks, but that conflicts with Multica's assignment, mention, and squad model. Resolved: these sidecar-agent fields are not migrated; future multi-agent workflows must be designed using Multica-native collaboration semantics.
+- ai-desk `WORKFLOW` and `AUTOMATION` could be preserved as workflow types, but Multica separates execution templates from autonomous triggering. Resolved: ai-desk `AUTOMATION` maps to **Autopilot** behavior, not to a Multica workflow type.
+- ai-desk workflow source and participant models could be migrated directly, but that would introduce a second workflow ACL model. Resolved: `OFFICIAL` becomes **System-Seeded Workflow Definition**, `PUBLIC` and `PERSONAL` become user-owned **Workflow Definitions**, and ai-desk workflow participants are not migrated.
+- ai-desk `ticket_required` could be carried over, but Multica uses trigger applicability rather than ticket presence as the workflow boundary. Resolved: `ticket_required` is not migrated; equivalent behavior is represented by **Workflow Applicability** or **Autopilot**.
+- ai-desk historical workflow task data could be migrated, but it would carry incompatible issue, agent, runtime, permission, and state-machine assumptions into new Multica runtime tables. Resolved: migration imports workflow definitions/templates only; ai-desk historical runs remain outside Multica workflow runtime state.
+- ai-desk step `ExecutionMode` could be copied as `MANUAL`, `BUILT_IN_AGENT`, `LOCAL_AGENT`, and `EXTERNAL_AGENT`, but those names mix step intent with ai-desk runtime routing. Resolved: Multica uses **Workflow Step Execution Kind** values such as agent, manual, and external; `agent` runs through the current Multica assignment/runtime path.
+- Manual and external steps could both require full first-version integrations, but that would over-expand the migration. Resolved: **Manual Workflow Steps** get a minimal human completion loop; **External Workflow Steps** are representable as waiting or blocked without external system execution.
 - Comment mentions could inherit the full project workflow, but that would make lightweight collaboration unexpectedly heavy. Resolved: comment-triggered tasks default to **Comment Response Workflow** and require explicit opt-in for full workflow execution.
 - Workflows could accidentally be bound to incompatible triggers. Resolved: **Workflow Applicability** is declared in schema and used by UI/API selection rules.
 - Agent-level workflow defaults would reintroduce assignment-dependent workflow changes. Resolved: agents declare **Workflow Capability** only; they do not select the workflow by default.
