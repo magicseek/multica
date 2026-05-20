@@ -2246,6 +2246,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
 
+	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
+
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
@@ -3000,6 +3002,7 @@ func convertTaskRepositoriesForEnv(repositories []TaskRepositoryData) []execenv.
 				MachineLabel:   r.Binding.MachineLabel,
 				DaemonID:       r.Binding.DaemonID,
 				RuntimeID:      r.Binding.RuntimeID,
+				LocalPath:      r.Binding.LocalPath,
 				Available:      r.Binding.Available,
 				CurrentDaemon:  r.Binding.CurrentDaemon,
 				CurrentRuntime: r.Binding.CurrentRuntime,

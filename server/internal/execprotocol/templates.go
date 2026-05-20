@@ -64,7 +64,7 @@ This agent has the execution protocol setting enabled. Follow this protocol for 
 	TrellisTaskSlug: {
 		Slug:        TrellisTaskSlug,
 		Name:        "Trellis task",
-		Description: "Trellis-oriented workflow for direct assignment tasks in repositories that carry Trellis metadata.",
+		Description: "Trellis-oriented workflow for direct assignment tasks in project repositories, initializing Trellis state when absent.",
 		Content: strings.TrimSpace(`
 ## Trellis Task Protocol
 
@@ -79,7 +79,7 @@ This agent has the Trellis execution protocol template selected. Use it for assi
    - In the checked-out worktree, look for .trellis/ and .trellis/workflow.md.
    - If Trellis state exists, run `+"`$trellis-continue`"+` to load the current task pointer, phase index, and workflow rules before editing.
    - If no Trellis task exists for this issue, run `+"`$trellis-start`"+` or create a new Trellis task following .trellis/workflow.md, then record the Multica issue id in that task's context.
-   - If the repository has no Trellis state, fall back to the standard assignment protocol, report that Trellis is unavailable in the final comment, and do not invent .trellis/ files unless the issue explicitly asks for setup.
+   - If the repository has no Trellis state, initialize Trellis for that repository first, then run `+"`$trellis-start`"+` and create a Trellis task for this issue. Treat initialization as part of the selected workflow, not as a reason to fall back.
 
 3. **Work Contract**
    - Synthesize the issue body, latest comments, Agent Identity, Skills, and Trellis task context into a small work contract: requested outcome, acceptance criteria, constraints, and expected verification.

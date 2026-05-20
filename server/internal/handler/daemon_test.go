@@ -1680,6 +1680,100 @@ func TestClaimTask_FirstClassRepositoryBindingMustBelongToClaimingDaemon(t *test
 	}
 }
 
+func TestClaimTask_FirstClassLocalRepositoryIncludesCurrentBindingPath(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	repo := createHandlerTestRepositoryWithState(t, "Project local repo", "local_dir")
+	const localPath = "/Users/tester/workspace/project-local-repo"
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO repository_binding (
+			repository_id, workspace_id, owner_user_id, daemon_id, runtime_id, machine_label,
+			binding_kind, local_path, state, metadata
+		) VALUES ($1, $2, $3, 'claiming-daemon', $4, 'Current Mac', 'local_dir', $5, 'ready', $6::jsonb)
+	`, repo.ID, testWorkspaceID, testUserID, runtimeID, localPath, `{"last_verified_path":"`+localPath+`"}`); err != nil {
+		t.Fatalf("create repository_binding: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM repository_binding WHERE repository_id = $1`, repo.ID)
+	})
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Claim local binding project").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_repository (project_id, repository_id, workspace_id, role, position)
+		VALUES ($1, $2, $3, 'primary', 0)
+	`, projectID, repo.ID, testWorkspaceID); err != nil {
+		t.Fatalf("create project_repository: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, $2, 'first-class local repo', 'todo', 'medium', $3, 'member', 88014, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "claiming-daemon")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repositories []TaskRepositoryData `json:"repositories"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil || len(resp.Task.Repositories) != 1 {
+		t.Fatalf("expected project repository payload, got %+v", resp.Task)
+	}
+	gotRepo := resp.Task.Repositories[0]
+	if gotRepo.Binding == nil || gotRepo.Binding.LocalPath != localPath {
+		t.Fatalf("current ready binding should expose local_path to daemon claim, got %+v", gotRepo.Binding)
+	}
+	if !gotRepo.Binding.CurrentDaemon || !gotRepo.Binding.CurrentRuntime {
+		t.Fatalf("current binding flags not set: %+v", gotRepo.Binding)
+	}
+}
+
 // When the issue's project has no github_repo resources, the claim handler
 // must fall back to workspace repos (the pre-override behavior).
 func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {

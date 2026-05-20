@@ -67,6 +67,7 @@ type TaskRepositoryBindingData struct {
 	MachineLabel   string `json:"machine_label,omitempty"`
 	DaemonID       string `json:"daemon_id,omitempty"`
 	RuntimeID      string `json:"runtime_id,omitempty"`
+	LocalPath      string `json:"local_path,omitempty"`
 	Available      bool   `json:"available"`
 	CurrentDaemon  bool   `json:"current_daemon,omitempty"`
 	CurrentRuntime bool   `json:"current_runtime,omitempty"`

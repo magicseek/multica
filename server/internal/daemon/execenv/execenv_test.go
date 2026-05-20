@@ -380,7 +380,7 @@ func TestInjectRuntimeConfigRendersMixedRepositoryContext(t *testing.T) {
 		"Checkout: `multica repo checkout https://github.com/org/remote-app.git` (default branch: `main`)",
 		"**Managed scratch** (`secondary`, source: `agent_managed`, id: `repo-managed`)",
 		"Remote checkout: unavailable because this repository has no `remote_url`.",
-		"Local binding execution is not available in this slice",
+		"Local checkout: unavailable because no current-runtime binding was provided.",
 		"Binding: `daemon_workdir` is `ready` on Troy MacBook",
 	} {
 		if !strings.Contains(s, want) {
@@ -392,6 +392,66 @@ func TestInjectRuntimeConfigRendersMixedRepositoryContext(t *testing.T) {
 	}
 	if strings.Contains(s, "/Users/troy") {
 		t.Fatalf("repository context must not render local paths: %s", s)
+	}
+}
+
+func TestLocalRepositoryBindingMaterializesCheckoutLink(t *testing.T) {
+	t.Parallel()
+	workDir := t.TempDir()
+	localRepo := t.TempDir()
+	ctx := TaskContextForEnv{
+		Repositories: []RepositoryContextForEnv{
+			{
+				ID:               "repo-local",
+				Name:             "Local App",
+				SourceState:      "local_dir",
+				Role:             "primary",
+				BindingAvailable: true,
+				Binding: &RepositoryBindingContextForEnv{
+					ID:             "binding-local",
+					Kind:           "local_dir",
+					State:          "ready",
+					MachineLabel:   "Troy MacBook",
+					LocalPath:      localRepo,
+					Available:      true,
+					CurrentDaemon:  true,
+					CurrentRuntime: true,
+				},
+			},
+		},
+	}
+	ctx.Repositories = MaterializeLocalRepositoryBindings(workDir, ctx.Repositories, discardLogger())
+	if len(ctx.Repositories) != 1 || ctx.Repositories[0].LocalCheckoutPath != "repositories/1-local-app" {
+		t.Fatalf("LocalCheckoutPath = %+v", ctx.Repositories)
+	}
+	linkPath := filepath.Join(workDir, ctx.Repositories[0].LocalCheckoutPath)
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("read local repository symlink: %v", err)
+	}
+	if target != localRepo {
+		t.Fatalf("local repository symlink target = %q, want %q", target, localRepo)
+	}
+
+	if _, err := InjectRuntimeConfig(workDir, "codex", ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(workDir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	s := string(content)
+	for _, want := range []string{
+		"**Local App** (`primary`, source: `local_dir`, id: `repo-local`)",
+		"Local checkout: `cd repositories/1-local-app`",
+		"Binding: `local_dir` is `ready` on Troy MacBook (current runtime)",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("AGENTS.md missing %q", want)
+		}
+	}
+	if strings.Contains(s, localRepo) {
+		t.Fatalf("AGENTS.md should render the workdir checkout link, not the private local path: %s", s)
 	}
 }
 
@@ -1192,6 +1252,7 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 			"`$trellis-continue`",
 			"`$trellis-start`",
 			"`$trellis-finish-work`",
+			"initialize Trellis for that repository first",
 			"`multica issue status issue-1 in_progress`",
 			"`multica issue comment add issue-1",
 			"`multica issue status issue-1 in_review`",
@@ -1203,6 +1264,7 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 		for _, notWant := range []string{
 			"## Task Execution Protocol",
+			"fall back to the standard assignment protocol",
 			"AETHER",
 		} {
 			if strings.Contains(s, notWant) {

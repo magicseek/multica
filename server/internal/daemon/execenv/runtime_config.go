@@ -68,9 +68,11 @@ func appendRepositoryContext(b *strings.Builder, repo RepositoryContextForEnv) {
 			fmt.Fprintf(b, " (default branch: `%s`)", repo.DefaultBranch)
 		}
 		b.WriteString("\n")
+	} else if repo.LocalCheckoutPath != "" {
+		fmt.Fprintf(b, "  - Local checkout: `cd %s`\n", repo.LocalCheckoutPath)
 	} else {
 		b.WriteString("  - Remote checkout: unavailable because this repository has no `remote_url`.\n")
-		b.WriteString("  - Local binding execution is not available in this slice; do not run `multica repo checkout` for this repository until it has a remote URL.\n")
+		b.WriteString("  - Local checkout: unavailable because no current-runtime binding was provided.\n")
 	}
 	if repo.Binding != nil {
 		fmt.Fprintf(b, "  - Binding: `%s` is `%s`", repo.Binding.Kind, repo.Binding.State)
