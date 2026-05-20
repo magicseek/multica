@@ -524,12 +524,17 @@ export function useCreateComment(issueId: string) {
       type,
       parentId,
       attachmentIds,
+      suppressAgentTrigger,
     }: {
       content: string;
       type?: string;
       parentId?: string;
       attachmentIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds),
+      suppressAgentTrigger?: boolean;
+    }) =>
+      api.createComment(issueId, content, type, parentId, attachmentIds, {
+        suppressAgentTrigger,
+      }),
     onSuccess: (comment) => {
       const entry: TimelineEntry = {
         type: "comment",

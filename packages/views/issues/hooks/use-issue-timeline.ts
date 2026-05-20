@@ -260,11 +260,19 @@ export function useIssueTimeline(issueId: string, userId?: string) {
   // --- Mutation functions ---
 
   const submitComment = useCallback(
-    async (content: string, attachmentIds?: string[]) => {
+    async (
+      content: string,
+      attachmentIds?: string[],
+      options?: { suppressAgentTrigger?: boolean },
+    ) => {
       if (!content.trim() || submitting || !userId) return;
       setSubmitting(true);
       try {
-        await createComment({ content, attachmentIds });
+        await createComment({
+          content,
+          attachmentIds,
+          suppressAgentTrigger: options?.suppressAgentTrigger,
+        });
       } catch {
         toast.error(t(($) => $.comment.send_failed));
       } finally {

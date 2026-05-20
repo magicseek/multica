@@ -277,6 +277,15 @@
     "status_failed": "Failed",
     "status_cancelled": "Cancelled"
   },
+  "workflow_activity": {
+    "title": "Workflow run",
+    "steps_count": "{{completed}}/{{total}} steps",
+    "percent": "{{percent}}%",
+    "no_steps": "No workflow steps recorded",
+    "comment_placeholder": "Comment on this workflow run...",
+    "send_comment": "Send",
+    "comment_prefix": "Workflow run comment for {{name}}:"
+  },
   "terminate_dialog": {
     "title": "Stop this task?",
     "body": "The task will be cancelled and cannot be resumed.",
