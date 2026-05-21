@@ -1,6 +1,7 @@
 package execenv
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -242,5 +243,87 @@ func TestCopyFile(t *testing.T) {
 	fi, _ := os.Lstat(dst)
 	if fi.Mode()&os.ModeSymlink != 0 {
 		t.Error("expected regular file, not symlink")
+	}
+}
+
+func TestCloneFileCreatesIndependentRegularFileWhenAvailable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	if err := cloneFile(src, dst); err != nil {
+		if errors.Is(err, errCloneUnsupported) {
+			t.Skipf("copy-on-write clone unsupported on this filesystem: %v", err)
+		}
+		t.Fatalf("cloneFile: %v", err)
+	}
+
+	fi, err := os.Lstat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected cloned file to be a regular file, not a symlink")
+	}
+
+	if err := os.WriteFile(dst, []byte("changed"), 0o644); err != nil {
+		t.Fatalf("rewrite dst: %v", err)
+	}
+	srcData, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read src: %v", err)
+	}
+	if string(srcData) != "original" {
+		t.Fatalf("clone aliases source after destination write: src = %q", srcData)
+	}
+}
+
+func TestCopyFileKeepsSourceAndDestinationIndependent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	if err := os.WriteFile(src, []byte("source-v1"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	if err := os.WriteFile(src, []byte("source-v2"), 0o644); err != nil {
+		t.Fatalf("rewrite src: %v", err)
+	}
+	dstData, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(dstData) != "source-v1" {
+		t.Fatalf("destination changed after source rewrite: dst = %q", dstData)
+	}
+}
+
+func TestCopyFileUsesCanonicalFileMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "script.sh")
+	dst := filepath.Join(dir, "copied.sh")
+	if err := os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o644 {
+		t.Fatalf("dst mode = %v, want 0644", got)
 	}
 }

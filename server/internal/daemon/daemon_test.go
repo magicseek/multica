@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
 )
@@ -1934,5 +1935,77 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 	// given that the runner blocks on runCtx.Done().
 	if usageIdx < pollStatusIdx {
 		t.Fatalf("usage reported before poll-status (order: %v) — poll-status must come first", order)
+	}
+}
+
+func TestReusableEnvRootForChatLocalBindingUsesRememberedRoot(t *testing.T) {
+	t.Parallel()
+
+	workDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+	envRoot := filepath.Join(t.TempDir(), "env-root")
+	if err := os.MkdirAll(filepath.Join(envRoot, "codex-home"), 0o755); err != nil {
+		t.Fatalf("create env root: %v", err)
+	}
+
+	d := &Daemon{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	task := Task{WorkspaceID: "ws-1", ChatSessionID: "chat-1"}
+	d.rememberReusableEnvRoot("codex", task, workDir, envRoot)
+
+	if got := d.reusableEnvRootForTask("codex", task, workDir); got != envRoot {
+		t.Fatalf("reusable env root = %q, want %q", got, envRoot)
+	}
+	if got := d.reusableEnvRootForTask("claude", task, workDir); got != "" {
+		t.Fatalf("provider mismatch should not reuse env root, got %q", got)
+	}
+	if got := d.reusableEnvRootForTask("codex", task, filepath.Join(t.TempDir(), "other")); got != "" {
+		t.Fatalf("workdir mismatch should not reuse env root, got %q", got)
+	}
+}
+
+func TestReusableEnvRootForChatLocalBindingScansLatestGCMeta(t *testing.T) {
+	t.Parallel()
+
+	workspacesRoot := t.TempDir()
+	workspaceID := "ws-scan"
+	chatID := "chat-scan"
+	workDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create workdir: %v", err)
+	}
+
+	oldRoot := filepath.Join(workspacesRoot, workspaceID, "oldroot")
+	newRoot := filepath.Join(workspacesRoot, workspaceID, "newroot")
+	for _, root := range []string{oldRoot, newRoot} {
+		if err := os.MkdirAll(filepath.Join(root, "codex-home"), 0o755); err != nil {
+			t.Fatalf("create codex home: %v", err)
+		}
+	}
+	if err := execenv.WriteGCMeta(oldRoot, execenv.GCMeta{
+		Kind:          execenv.GCKindChat,
+		WorkspaceID:   workspaceID,
+		ChatSessionID: chatID,
+	}, slog.Default()); err != nil {
+		t.Fatalf("write old gc meta: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := execenv.WriteGCMeta(newRoot, execenv.GCMeta{
+		Kind:          execenv.GCKindChat,
+		WorkspaceID:   workspaceID,
+		ChatSessionID: chatID,
+	}, slog.Default()); err != nil {
+		t.Fatalf("write new gc meta: %v", err)
+	}
+
+	d := &Daemon{
+		cfg:    Config{WorkspacesRoot: workspacesRoot},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	task := Task{WorkspaceID: workspaceID, ChatSessionID: chatID}
+
+	if got := d.reusableEnvRootForTask("codex", task, workDir); got != newRoot {
+		t.Fatalf("scanned reusable env root = %q, want latest %q", got, newRoot)
 	}
 }

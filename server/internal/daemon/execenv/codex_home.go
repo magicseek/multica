@@ -280,6 +280,17 @@ func copyFileIfExists(src, dst string) error {
 
 // copyFile copies src to dst unconditionally.
 func copyFile(src, dst string) error {
+	if err := cloneFile(src, dst); err == nil {
+		if err := os.Chmod(dst, 0o644); err != nil {
+			_ = os.Remove(dst)
+		} else {
+			return nil
+		}
+	}
+	return copyFileByStream(src, dst)
+}
+
+func copyFileByStream(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)

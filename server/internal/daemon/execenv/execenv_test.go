@@ -2478,6 +2478,48 @@ func TestReuseRestoresCodexPluginCache(t *testing.T) {
 	}
 }
 
+func TestReuseSupportsExternalWorkDirWithExplicitRoot(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	envRoot := filepath.Join(t.TempDir(), "env-root")
+	workDir := filepath.Join(t.TempDir(), "external-workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("create external workdir: %v", err)
+	}
+
+	reused := Reuse(ReuseParams{
+		RootDir:         envRoot,
+		WorkDir:         workDir,
+		ExternalWorkDir: true,
+		Provider:        "codex",
+		Task:            TaskContextForEnv{ChatSessionID: "chat-external-reuse"},
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+	if reused.RootDir != envRoot {
+		t.Fatalf("RootDir = %q, want %q", reused.RootDir, envRoot)
+	}
+	if reused.WorkDir != workDir {
+		t.Fatalf("WorkDir = %q, want %q", reused.WorkDir, workDir)
+	}
+	if !reused.ExternalWorkDir {
+		t.Fatal("expected ExternalWorkDir to be preserved")
+	}
+	if reused.CodexHome != filepath.Join(envRoot, "codex-home") {
+		t.Fatalf("CodexHome = %q, want under explicit root", reused.CodexHome)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "output")); err != nil {
+		t.Fatalf("output dir not restored under explicit root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "logs")); err != nil {
+		t.Fatalf("logs dir not restored under explicit root: %v", err)
+	}
+}
+
 func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
@@ -2840,6 +2882,57 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	}
 	if string(data) != "v2" {
 		t.Errorf("after Reuse, user skill content = %q, want %q", data, "v2")
+	}
+}
+
+func TestReuseLeavesUnchangedUserSkillFilesInPlace(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	userSkill := filepath.Join(sharedHome, "skills", "summarize")
+	if err := os.MkdirAll(userSkill, 0o755); err != nil {
+		t.Fatalf("seed user skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("stable"), 0o644); err != nil {
+		t.Fatalf("seed SKILL.md: %v", err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "ws-user-skill-stable",
+		TaskID:         "aabbccdd-1111-2222-3333-444455556666",
+		AgentName:      "Codex Agent",
+		Provider:       "codex",
+		Task:           TaskContextForEnv{IssueID: "stable-user-skill-test"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	dst := filepath.Join(env.CodexHome, "skills", "summarize", "SKILL.md")
+	before, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat seeded skill: %v", err)
+	}
+
+	reused := Reuse(ReuseParams{
+		WorkDir:  env.WorkDir,
+		Provider: "codex",
+		Task:     TaskContextForEnv{IssueID: "stable-user-skill-test"},
+	}, testLogger())
+	if reused == nil {
+		t.Fatal("Reuse returned nil")
+	}
+
+	after, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat reused skill: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged user skill was removed and copied again instead of being reused in place")
 	}
 }
 

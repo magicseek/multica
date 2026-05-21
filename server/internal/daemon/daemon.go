@@ -131,6 +131,9 @@ type Daemon struct {
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
 
+	reusableEnvRootsMu sync.Mutex
+	reusableEnvRoots   map[string]string // local reuse key -> env root path
+
 	// repositoryOperationLocks serializes local repository mutations inside this
 	// daemon process. The key is a binding ID when available, otherwise the
 	// repository ID for create_binding operations that create the binding path.
@@ -169,6 +172,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		agentVersions:             make(map[string]string),
 		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
+		reusableEnvRoots:          make(map[string]string),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
@@ -2025,6 +2029,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	d.rememberReusableEnvRoot(provider, task, result.WorkDir, result.EnvRoot)
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
@@ -2226,6 +2231,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			OpenclawBin:  openclawBin,
 			Task:         taskCtx,
 		}, d.logger)
+	} else if task.PriorWorkDir != "" && hasLocalBoundWorkDir && task.PriorWorkDir == localBoundWorkDir {
+		if reusableRoot := d.reusableEnvRootForTask(provider, task, localBoundWorkDir); reusableRoot != "" {
+			d.markActiveEnvRoot(reusableRoot)
+			defer d.unmarkActiveEnvRoot(reusableRoot)
+			env = execenv.Reuse(execenv.ReuseParams{
+				RootDir:         reusableRoot,
+				WorkDir:         localBoundWorkDir,
+				ExternalWorkDir: true,
+				Provider:        provider,
+				CodexVersion:    codexVersion,
+				OpenclawBin:     openclawBin,
+				Task:            taskCtx,
+			}, d.logger)
+			if env == nil {
+				d.logger.Warn("execenv: failed to reuse local binding env root", "env_root", reusableRoot, "local_workdir", localBoundWorkDir)
+			}
+		}
 	} else if task.PriorWorkDir != "" && hasLocalBoundWorkDir && task.PriorWorkDir != localBoundWorkDir {
 		d.logger.Info("execenv: ignoring prior workdir because current local binding owns cwd", "prior_workdir", task.PriorWorkDir, "local_workdir", localBoundWorkDir)
 	}
@@ -2355,11 +2377,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	reused := task.PriorWorkDir != "" && env.WorkDir == task.PriorWorkDir
+	reusedEnvRoot := task.PriorWorkDir != "" && env.RootDir != predictedRoot
 	taskLog.Info("starting agent",
 		"provider", provider,
 		"workdir", env.WorkDir,
+		"env_root", env.RootDir,
 		"model", entry.Model,
 		"reused", reused,
+		"reused_env_root", reusedEnvRoot,
 	)
 	if task.PriorSessionID != "" {
 		taskLog.Info("resuming session", "session_id", task.PriorSessionID)
@@ -3035,6 +3060,119 @@ func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.Pr
 		}
 	}
 	return result
+}
+
+func reusableEnvRootKey(provider string, task Task, workDir string) string {
+	if provider == "" || task.WorkspaceID == "" || task.ChatSessionID == "" || workDir == "" {
+		return ""
+	}
+	return strings.Join([]string{
+		task.WorkspaceID,
+		provider,
+		"chat",
+		task.ChatSessionID,
+		filepath.Clean(workDir),
+	}, "\x00")
+}
+
+func (d *Daemon) rememberReusableEnvRoot(provider string, task Task, workDir, envRoot string) {
+	key := reusableEnvRootKey(provider, task, workDir)
+	if key == "" || envRoot == "" {
+		return
+	}
+	if !d.usableReusableEnvRoot(provider, envRoot) {
+		return
+	}
+	d.reusableEnvRootsMu.Lock()
+	defer d.reusableEnvRootsMu.Unlock()
+	if d.reusableEnvRoots == nil {
+		d.reusableEnvRoots = make(map[string]string)
+	}
+	d.reusableEnvRoots[key] = envRoot
+}
+
+func (d *Daemon) reusableEnvRootForTask(provider string, task Task, workDir string) string {
+	key := reusableEnvRootKey(provider, task, workDir)
+	if key == "" {
+		return ""
+	}
+	d.reusableEnvRootsMu.Lock()
+	envRoot := ""
+	if d.reusableEnvRoots != nil {
+		envRoot = d.reusableEnvRoots[key]
+	}
+	d.reusableEnvRootsMu.Unlock()
+	if envRoot != "" {
+		if d.usableReusableEnvRoot(provider, envRoot) {
+			return envRoot
+		}
+		d.reusableEnvRootsMu.Lock()
+		delete(d.reusableEnvRoots, key)
+		d.reusableEnvRootsMu.Unlock()
+	}
+
+	envRoot = d.scanReusableChatEnvRoot(provider, task)
+	if envRoot == "" {
+		return ""
+	}
+	d.rememberReusableEnvRoot(provider, task, workDir, envRoot)
+	return envRoot
+}
+
+func (d *Daemon) usableReusableEnvRoot(provider, envRoot string) bool {
+	if envRoot == "" {
+		return false
+	}
+	info, err := os.Stat(envRoot)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if provider == "codex" {
+		info, err = os.Stat(filepath.Join(envRoot, "codex-home"))
+		return err == nil && info.IsDir()
+	}
+	return true
+}
+
+func (d *Daemon) scanReusableChatEnvRoot(provider string, task Task) string {
+	if provider != "codex" || d.cfg.WorkspacesRoot == "" || task.WorkspaceID == "" || task.ChatSessionID == "" {
+		return ""
+	}
+	workspaceRoot := filepath.Join(d.cfg.WorkspacesRoot, task.WorkspaceID)
+	entries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		return ""
+	}
+
+	var bestRoot string
+	var bestCompletedAt time.Time
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		envRoot := filepath.Join(workspaceRoot, entry.Name())
+		if !d.usableReusableEnvRoot(provider, envRoot) {
+			continue
+		}
+		meta, err := execenv.ReadGCMeta(envRoot)
+		if err != nil ||
+			meta.Kind != execenv.GCKindChat ||
+			meta.WorkspaceID != task.WorkspaceID ||
+			meta.ChatSessionID != task.ChatSessionID {
+			continue
+		}
+		completedAt := meta.CompletedAt
+		if completedAt.IsZero() {
+			if info, statErr := os.Stat(filepath.Join(envRoot, ".gc_meta.json")); statErr == nil {
+				completedAt = info.ModTime()
+			}
+		}
+		if bestRoot == "" || completedAt.After(bestCompletedAt) {
+			bestRoot = envRoot
+			bestCompletedAt = completedAt
+		}
+	}
+	return bestRoot
 }
 
 // markActiveEnvRoot records that a task is currently using the given env root,

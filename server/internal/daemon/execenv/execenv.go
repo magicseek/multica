@@ -186,6 +186,16 @@ func LocalBindingWorkDir(ctx TaskContextForEnv) (string, bool) {
 	return "", false
 }
 
+func pathWithinRoot(root, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) && !filepath.IsAbs(rel))
+}
+
 // Prepare creates an isolated execution environment for a task.
 // The workdir starts empty (no repo checkouts). The agent checks out repos
 // on demand via `multica repo checkout <url>`.
@@ -273,11 +283,13 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 // the per-provider knobs (CodexVersion, OpenclawBin) so callers can pass
 // the same resolved binary path on both first-run and reuse paths.
 type ReuseParams struct {
-	WorkDir      string
-	Provider     string
-	CodexVersion string            // only used when Provider == "codex"
-	OpenclawBin  string            // only used when Provider == "openclaw"; empty = PATH lookup
-	Task         TaskContextForEnv // refreshed context files / skills
+	RootDir         string // optional env root; defaults to filepath.Dir(WorkDir)
+	WorkDir         string
+	ExternalWorkDir bool
+	Provider        string
+	CodexVersion    string            // only used when Provider == "codex"
+	OpenclawBin     string            // only used when Provider == "openclaw"; empty = PATH lookup
+	Task            TaskContextForEnv // refreshed context files / skills
 }
 
 // Reuse wraps an existing workdir into an Environment and refreshes context files.
@@ -286,11 +298,26 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if _, err := os.Stat(params.WorkDir); err != nil {
 		return nil
 	}
+	rootDir := params.RootDir
+	if rootDir == "" {
+		rootDir = filepath.Dir(params.WorkDir)
+	}
+	if rootDir == "" || rootDir == "." {
+		return nil
+	}
+	for _, dir := range []string{rootDir, filepath.Join(rootDir, "output"), filepath.Join(rootDir, "logs")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			logger.Warn("execenv: restore env root failed", "dir", dir, "error", err)
+			return nil
+		}
+	}
+	externalWorkDir := params.ExternalWorkDir || !pathWithinRoot(rootDir, params.WorkDir)
 
 	env := &Environment{
-		RootDir: filepath.Dir(params.WorkDir),
-		WorkDir: params.WorkDir,
-		logger:  logger,
+		RootDir:         rootDir,
+		WorkDir:         params.WorkDir,
+		ExternalWorkDir: externalWorkDir,
+		logger:          logger,
 	}
 
 	task := params.Task
@@ -423,8 +450,9 @@ func localRepositoryLinkName(name, id string, index int) string {
 // workspace-assigned skills. Workspace skills win on name conflict — they are
 // written last and seedUserCodexSkills already pre-filters their names.
 //
-// The skills directory is wiped first so two stale-state classes that the
-// Reuse path would otherwise leak are gone:
+// The user-skill sync prunes stale top-level directories, and each workspace
+// skill directory is wiped immediately before rewrite so two stale-state
+// classes that the Reuse path would otherwise leak are gone:
 //
 //   - A name now claimed by a workspace skill that previously held only a
 //     user-seeded copy — support files from the user version would otherwise
@@ -440,14 +468,17 @@ func localRepositoryLinkName(name, id string, index int) string {
 // they use for workspace skills).
 func hydrateCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv, logger *slog.Logger) error {
 	skillsDir := filepath.Join(codexHome, "skills")
-	if err := os.RemoveAll(skillsDir); err != nil {
-		return fmt.Errorf("clear codex skills dir: %w", err)
-	}
 	if err := seedUserCodexSkills(codexHome, workspaceSkills, logger); err != nil {
 		logger.Warn("execenv: seed user codex skills failed", "error", err)
 	}
 	if len(workspaceSkills) == 0 {
 		return nil
+	}
+	for _, skill := range workspaceSkills {
+		dir := filepath.Join(skillsDir, sanitizeSkillName(skill.Name))
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("clear codex workspace skill dir: %w", err)
+		}
 	}
 	return writeSkillFiles(skillsDir, workspaceSkills)
 }
