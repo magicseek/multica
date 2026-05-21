@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -267,6 +268,60 @@ func TestRunIssueCreateStampsChatOriginAndDefaultsProjectFromEnv(t *testing.T) {
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_CHAT_SESSION_ID", chatSessionID)
 	t.Setenv("MULTICA_CHAT_PROJECT_ID", projectID)
+
+	cmd := newIssueCreateTestCmd()
+	_ = cmd.Flags().Set("title", "Chat-created issue")
+	if err := runIssueCreate(cmd, nil); err != nil {
+		t.Fatalf("runIssueCreate: %v", err)
+	}
+	if got := body["origin_type"]; got != "chat_session" {
+		t.Fatalf("origin_type = %#v, want chat_session", got)
+	}
+	if got := body["origin_id"]; got != chatSessionID {
+		t.Fatalf("origin_id = %#v, want %s", got, chatSessionID)
+	}
+	if got := body["project_id"]; got != projectID {
+		t.Fatalf("project_id = %#v, want %s", got, projectID)
+	}
+}
+
+func TestRunIssueCreateStampsChatOriginFromRuntimeEnvFile(t *testing.T) {
+	resetRuntimeEnvForTest(t)
+	const (
+		chatSessionID = "11111111-2222-3333-4444-555555555555"
+		projectID     = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	)
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/issues" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":         "issue-1",
+			"identifier": "MUL-1",
+			"title":      "Chat-created issue",
+			"status":     "todo",
+			"priority":   "none",
+		})
+	}))
+	defer srv.Close()
+
+	runtimeEnvPath := filepath.Join(t.TempDir(), "runtime-env.json")
+	data := []byte(`{"MULTICA_CHAT_SESSION_ID":"` + chatSessionID + `","MULTICA_CHAT_PROJECT_ID":"` + projectID + `"}`)
+	if err := os.WriteFile(runtimeEnvPath, data, 0o600); err != nil {
+		t.Fatalf("write runtime env: %v", err)
+	}
+	t.Setenv(runtimeEnvFileEnv, runtimeEnvPath)
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_CHAT_SESSION_ID", "")
+	t.Setenv("MULTICA_CHAT_PROJECT_ID", "")
 
 	cmd := newIssueCreateTestCmd()
 	_ = cmd.Flags().Set("title", "Chat-created issue")

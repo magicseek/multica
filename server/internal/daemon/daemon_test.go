@@ -1965,6 +1965,54 @@ func TestReusableEnvRootForChatLocalBindingUsesRememberedRoot(t *testing.T) {
 	}
 }
 
+func TestCodexChatRunnerUsesOnlyExternalChatWorkdirs(t *testing.T) {
+	t.Parallel()
+
+	env := &execenv.Environment{
+		RootDir:         filepath.Join(t.TempDir(), "env-root"),
+		WorkDir:         filepath.Join(t.TempDir(), "repo"),
+		ExternalWorkDir: true,
+	}
+	task := Task{ChatSessionID: "chat-1"}
+	if !shouldUseCodexChatRunner("codex", task, env) {
+		t.Fatal("expected codex chat runner for external chat workdir")
+	}
+	if shouldUseCodexChatRunner("codex", Task{}, env) {
+		t.Fatal("missing chat session must not enable runner")
+	}
+	if shouldUseCodexChatRunner("codex", Task{ChatSessionID: "chat-1", WorkflowRun: &WorkflowRun{ID: "run-1"}}, env) {
+		t.Fatal("workflow tasks must keep per-task process env")
+	}
+	env.ExternalWorkDir = false
+	if shouldUseCodexChatRunner("codex", task, env) {
+		t.Fatal("isolated per-task workdir must not enable runner")
+	}
+}
+
+func TestDynamicAgentRuntimeEnvOnlyIncludesDynamicKeys(t *testing.T) {
+	t.Parallel()
+
+	got := dynamicAgentRuntimeEnv(map[string]string{
+		"MULTICA_TOKEN":           "secret",
+		"MULTICA_TASK_ID":         "task-1",
+		"MULTICA_TASK_SLOT":       "2",
+		"MULTICA_AGENT_ID":        "agent-1",
+		"MULTICA_CHAT_SESSION_ID": "",
+	})
+	if got["MULTICA_TASK_ID"] != "task-1" || got["MULTICA_TASK_SLOT"] != "2" {
+		t.Fatalf("missing dynamic values: %#v", got)
+	}
+	if _, ok := got["MULTICA_TOKEN"]; ok {
+		t.Fatalf("runtime env must not include token: %#v", got)
+	}
+	if _, ok := got["MULTICA_AGENT_ID"]; ok {
+		t.Fatalf("runtime env should leave stable agent id in process env: %#v", got)
+	}
+	if _, ok := got["MULTICA_CHAT_SESSION_ID"]; ok {
+		t.Fatalf("runtime env should omit empty values: %#v", got)
+	}
+}
+
 func TestReusableEnvRootForChatLocalBindingScansLatestGCMeta(t *testing.T) {
 	t.Parallel()
 

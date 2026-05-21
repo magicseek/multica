@@ -54,6 +54,32 @@ func TestPredictRootDir(t *testing.T) {
 	}
 }
 
+func TestWriteRuntimeEnvFileFiltersEmptyValues(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path, err := WriteRuntimeEnvFile(root, map[string]string{
+		"MULTICA_TASK_ID":   "task-1",
+		"MULTICA_TASK_SLOT": "",
+		"":                  "ignored",
+	})
+	if err != nil {
+		t.Fatalf("WriteRuntimeEnvFile: %v", err)
+	}
+	if path != RuntimeEnvFilePath(root) {
+		t.Fatalf("path = %q, want %q", path, RuntimeEnvFilePath(root))
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read runtime env: %v", err)
+	}
+	if strings.Contains(string(data), "MULTICA_TASK_SLOT") || strings.Contains(string(data), "ignored") {
+		t.Fatalf("runtime env should omit empty keys/values, got %s", data)
+	}
+	if !strings.Contains(string(data), `"MULTICA_TASK_ID": "task-1"`) {
+		t.Fatalf("runtime env missing task id, got %s", data)
+	}
+}
+
 func TestSanitizeName(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

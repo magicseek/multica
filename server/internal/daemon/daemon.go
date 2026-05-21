@@ -2367,6 +2367,23 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			agentEnv[k] = v
 		}
 	}
+
+	runnerKey := ""
+	runtimeEnvFile := ""
+	var runtimeEnv map[string]string
+	if shouldUseCodexChatRunner(provider, task, env) {
+		runtimeEnvPath := execenv.RuntimeEnvFilePath(env.RootDir)
+		if runtimeEnvPath != "" {
+			runtimeEnv = dynamicAgentRuntimeEnv(agentEnv)
+			for _, key := range dynamicAgentEnvKeys {
+				delete(agentEnv, key)
+			}
+			agentEnv["MULTICA_RUNTIME_ENV_FILE"] = runtimeEnvPath
+			runnerKey = codexChatRunnerKey(task, env, agentName)
+			taskLog.Info("codex runner enabled", "env_root", env.RootDir, "runtime_env_file", runtimeEnvPath)
+			runtimeEnvFile = runtimeEnvPath
+		}
+	}
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
@@ -2424,6 +2441,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
 		McpConfig:                 mcpConfig,
+		RunnerKey:                 runnerKey,
+		RuntimeEnvFile:            runtimeEnvFile,
+		RuntimeEnv:                runtimeEnv,
 	}
 	// Some providers do not reliably load the per-task runtime config files we
 	// write into the task workdir:
@@ -3173,6 +3193,53 @@ func (d *Daemon) scanReusableChatEnvRoot(provider string, task Task) string {
 		}
 	}
 	return bestRoot
+}
+
+var dynamicAgentEnvKeys = []string{
+	"MULTICA_TASK_ID",
+	"MULTICA_TASK_SLOT",
+	"MULTICA_WORKFLOW_RUN_ID",
+	"MULTICA_AUTOPILOT_RUN_ID",
+	"MULTICA_AUTOPILOT_ID",
+	"MULTICA_QUICK_CREATE_TASK_ID",
+	"MULTICA_CHAT_SESSION_ID",
+	"MULTICA_CHAT_PROJECT_ID",
+}
+
+func shouldUseCodexChatRunner(provider string, task Task, env *execenv.Environment) bool {
+	return provider == "codex" &&
+		task.ChatSessionID != "" &&
+		task.WorkflowRun == nil &&
+		task.AutopilotRunID == "" &&
+		task.AutopilotID == "" &&
+		task.QuickCreatePrompt == "" &&
+		env != nil &&
+		env.RootDir != "" &&
+		env.WorkDir != "" &&
+		env.ExternalWorkDir
+}
+
+func dynamicAgentRuntimeEnv(agentEnv map[string]string) map[string]string {
+	values := make(map[string]string, len(dynamicAgentEnvKeys))
+	for _, key := range dynamicAgentEnvKeys {
+		if value := agentEnv[key]; value != "" {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+func codexChatRunnerKey(task Task, env *execenv.Environment, agentName string) string {
+	parts := []string{
+		"codex-chat",
+		task.WorkspaceID,
+		task.ChatSessionID,
+		task.AgentID,
+		agentName,
+		env.RootDir,
+		env.WorkDir,
+	}
+	return strings.Join(parts, "\x00")
 }
 
 // markActiveEnvRoot records that a task is currently using the given env root,

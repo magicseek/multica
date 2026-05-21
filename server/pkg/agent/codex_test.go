@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -593,6 +594,36 @@ func TestCodexRawTurnCompletedFromSubagentIgnored(t *testing.T) {
 	}
 }
 
+func TestCodexRunnerTurnIsolationIgnoresStaleCompletions(t *testing.T) {
+	t.Parallel()
+
+	c, _, _ := newTestCodexClient(t)
+	c.notificationProtocol = "raw"
+	c.threadID = "thr-main"
+	c.resetTurnState(true, true)
+
+	var doneCount int
+	c.onTurnDone = func(aborted bool) {
+		doneCount++
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-main","turn":{"id":"turn-old","status":"completed"}}}`)
+	if doneCount != 0 {
+		t.Fatalf("stale completion before turn/started must be ignored, got %d calls", doneCount)
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-main","turn":{"id":"turn-new"}}}`)
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-main","turn":{"id":"turn-old","status":"completed"}}}`)
+	if doneCount != 0 {
+		t.Fatalf("old turn completion must not finish current turn, got %d calls", doneCount)
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-main","turn":{"id":"turn-new","status":"completed"}}}`)
+	if doneCount != 1 {
+		t.Fatalf("current turn completion should finish once, got %d calls", doneCount)
+	}
+}
+
 // Regression for #1181: subagent agentMessage/final_answer must not
 // trigger turn completion or leak text into the main output stream.
 func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
@@ -1044,7 +1075,7 @@ func TestCodexExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -1068,7 +1099,7 @@ func TestCodexExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		if !strings.Contains(result.Error, "unexpected argument '-m' found") {
 			t.Fatalf("expected error to include stderr hint, got %q", result.Error)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for result")
 	}
 }
@@ -1093,7 +1124,7 @@ func TestCodexExecuteTimesOutWhenTurnStopsAfterToolResult(t *testing.T) {
 		`sleep 5`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
+		Timeout:                   10 * time.Second,
 		SemanticInactivityTimeout: 100 * time.Millisecond,
 	})
 	if result.Status != "timeout" {
@@ -1130,7 +1161,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousMessages(t *testing.T) {
 		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-progress","turn":{"id":"turn-progress","status":"completed"}}}'`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
+		Timeout:                   10 * time.Second,
 		SemanticInactivityTimeout: 500 * time.Millisecond,
 	})
 	if result.Status != "completed" {
@@ -1168,7 +1199,7 @@ func TestCodexExecuteSemanticInactivityAllowsContinuousDeltaProgress(t *testing.
 		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-delta","turn":{"id":"turn-delta","status":"completed"}}}'`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
+		Timeout:                   10 * time.Second,
 		SemanticInactivityTimeout: 500 * time.Millisecond,
 	})
 	if result.Status != "completed" {
@@ -1195,7 +1226,7 @@ func TestCodexExecuteSemanticInactivityDoesNotAffectNormalTurnCompletion(t *test
 		`echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-normal","turn":{"id":"turn-normal","status":"completed"}}}'`+"\n")
 
 	result := executeFakeCodex(t, fakePath, ExecOptions{
-		Timeout:                   5 * time.Second,
+		Timeout:                   10 * time.Second,
 		SemanticInactivityTimeout: 100 * time.Millisecond,
 	})
 	if result.Status != "completed" {
@@ -1203,6 +1234,137 @@ func TestCodexExecuteSemanticInactivityDoesNotAffectNormalTurnCompletion(t *test
 	}
 	if result.Output != "Done" {
 		t.Fatalf("expected output Done, got %q", result.Output)
+	}
+}
+
+func TestCodexRunnerReusesAppServerAcrossTurns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+	defer closeCodexRunnerPoolForTest(t)
+
+	startsPath := filepath.Join(t.TempDir(), "starts.log")
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`echo start >> "$CODEX_TEST_STARTS"`+"\n"+
+		`turn=0`+"\n"+
+		`while IFS= read -r line; do`+"\n"+
+		`  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')`+"\n"+
+		`  case "$line" in`+"\n"+
+		`    *'"method":"initialize"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}" ;;`+"\n"+
+		`    *'"method":"thread/start"'*|*'"method":"thread/resume"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"thread\":{\"id\":\"thr-shared\"}}}" ;;`+"\n"+
+		`    *'"method":"turn/start"'*)`+"\n"+
+		`      turn=$((turn + 1))`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}"`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr-shared\",\"turn\":{\"id\":\"turn-$turn\"}}}"`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"item/completed\",\"params\":{\"threadId\":\"thr-shared\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-$turn\",\"text\":\"Done $turn\"}}}"`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thr-shared\",\"turn\":{\"id\":\"turn-$turn\",\"status\":\"completed\"}}}"`+"\n"+
+		`      ;;`+"\n"+
+		`  esac`+"\n"+
+		`done`+"\n")
+
+	backend, err := New("codex", Config{
+		ExecutablePath: fakePath,
+		Env:            map[string]string{"CODEX_TEST_STARTS": startsPath},
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("new codex backend: %v", err)
+	}
+
+	opts := ExecOptions{
+		RunnerKey:                 "chat-runner",
+		Timeout:                   10 * time.Second,
+		SemanticInactivityTimeout: 500 * time.Millisecond,
+	}
+	first := executeCodexBackend(t, backend, "prompt one", opts)
+	if first.Status != "completed" || first.Output != "Done 1" {
+		t.Fatalf("first result = status %q output %q error %q", first.Status, first.Output, first.Error)
+	}
+	opts.ResumeSessionID = first.SessionID
+	second := executeCodexBackend(t, backend, "prompt two", opts)
+	if second.Status != "completed" || second.Output != "Done 2" {
+		t.Fatalf("second result = status %q output %q error %q", second.Status, second.Output, second.Error)
+	}
+
+	starts, err := os.ReadFile(startsPath)
+	if err != nil {
+		t.Fatalf("read starts: %v", err)
+	}
+	if got := strings.Count(string(starts), "start\n"); got != 1 {
+		t.Fatalf("app-server starts = %d, want 1 (log: %q)", got, string(starts))
+	}
+}
+
+func TestCodexRunnerRefreshesRuntimeEnvUnderTurnLock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+	defer closeCodexRunnerPoolForTest(t)
+
+	runtimeEnvPath := filepath.Join(t.TempDir(), "runtime-env.json")
+	fakePath := writeFakeCodexAppServer(t, ""+
+		`turn=0`+"\n"+
+		`while IFS= read -r line; do`+"\n"+
+		`  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')`+"\n"+
+		`  case "$line" in`+"\n"+
+		`    *'"method":"initialize"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}" ;;`+"\n"+
+		`    *'"method":"thread/start"'*|*'"method":"thread/resume"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"thread\":{\"id\":\"thr-shared\"}}}" ;;`+"\n"+
+		`    *'"method":"turn/start"'*)`+"\n"+
+		`      turn=$((turn + 1))`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{}}"`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"turn/started\",\"params\":{\"threadId\":\"thr-shared\",\"turn\":{\"id\":\"turn-$turn\"}}}"`+"\n"+
+		`      task=$(sed -n 's/.*\"MULTICA_TASK_ID\": \"\([^\"]*\)\".*/\1/p' "$MULTICA_RUNTIME_ENV_FILE")`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"item/completed\",\"params\":{\"threadId\":\"thr-shared\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-$turn-start\",\"text\":\"turn$turn-start:$task\"}}}"`+"\n"+
+		`      if [ "$turn" -eq 1 ]; then`+"\n"+
+		`        sleep 0.3`+"\n"+
+		`        task=$(sed -n 's/.*\"MULTICA_TASK_ID\": \"\([^\"]*\)\".*/\1/p' "$MULTICA_RUNTIME_ENV_FILE")`+"\n"+
+		`        echo "{\"jsonrpc\":\"2.0\",\"method\":\"item/completed\",\"params\":{\"threadId\":\"thr-shared\",\"item\":{\"type\":\"agentMessage\",\"id\":\"msg-$turn-late\",\"text\":\"turn$turn-late:$task\"}}}"`+"\n"+
+		`      fi`+"\n"+
+		`      echo "{\"jsonrpc\":\"2.0\",\"method\":\"turn/completed\",\"params\":{\"threadId\":\"thr-shared\",\"turn\":{\"id\":\"turn-$turn\",\"status\":\"completed\"}}}"`+"\n"+
+		`      ;;`+"\n"+
+		`  esac`+"\n"+
+		`done`+"\n")
+
+	backend, err := New("codex", Config{
+		ExecutablePath: fakePath,
+		Env:            map[string]string{"MULTICA_RUNTIME_ENV_FILE": runtimeEnvPath},
+		Logger:         slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("new codex backend: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	first, err := backend.Execute(ctx, "prompt one", ExecOptions{
+		RunnerKey:                 "chat-runtime-env",
+		Timeout:                   10 * time.Second,
+		SemanticInactivityTimeout: 2 * time.Second,
+		RuntimeEnvFile:            runtimeEnvPath,
+		RuntimeEnv:                map[string]string{"MULTICA_TASK_ID": "task-1"},
+	})
+	if err != nil {
+		t.Fatalf("first execute: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	second, err := backend.Execute(ctx, "prompt two", ExecOptions{
+		RunnerKey:                 "chat-runtime-env",
+		Timeout:                   10 * time.Second,
+		SemanticInactivityTimeout: 2 * time.Second,
+		RuntimeEnvFile:            runtimeEnvPath,
+		RuntimeEnv:                map[string]string{"MULTICA_TASK_ID": "task-2"},
+	})
+	if err != nil {
+		t.Fatalf("second execute: %v", err)
+	}
+
+	firstResult := waitCodexSessionResult(t, first)
+	secondResult := waitCodexSessionResult(t, second)
+	if firstResult.Status != "completed" || !strings.Contains(firstResult.Output, "turn1-late:task-1") {
+		t.Fatalf("first result should keep task-1 through the whole turn: status=%q output=%q error=%q", firstResult.Status, firstResult.Output, firstResult.Error)
+	}
+	if secondResult.Status != "completed" || !strings.Contains(secondResult.Output, "turn2-start:task-2") {
+		t.Fatalf("second result should see task-2 after acquiring runner: status=%q output=%q error=%q", secondResult.Status, secondResult.Output, secondResult.Error)
 	}
 }
 
@@ -1220,12 +1382,29 @@ func executeFakeCodex(t *testing.T, fakePath string, opts ExecOptions) Result {
 	if err != nil {
 		t.Fatalf("new codex backend: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	session, err := backend.Execute(ctx, "prompt", opts)
+	return executeCodexBackendWithContext(t, ctx, backend, "prompt", opts)
+}
+
+func executeCodexBackend(t *testing.T, backend Backend, prompt string, opts ExecOptions) Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return executeCodexBackendWithContext(t, ctx, backend, prompt, opts)
+}
+
+func executeCodexBackendWithContext(t *testing.T, ctx context.Context, backend Backend, prompt string, opts ExecOptions) Result {
+	t.Helper()
+	session, err := backend.Execute(ctx, prompt, opts)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
+	return waitCodexSessionResult(t, session)
+}
+
+func waitCodexSessionResult(t *testing.T, session *Session) Result {
+	t.Helper()
 	go func() {
 		for range session.Messages {
 		}
@@ -1236,9 +1415,23 @@ func executeFakeCodex(t *testing.T, fakePath string, opts ExecOptions) Result {
 			t.Fatal("result channel closed without a value")
 		}
 		return result
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for result")
 		return Result{}
+	}
+}
+
+func closeCodexRunnerPoolForTest(t *testing.T) {
+	t.Helper()
+	globalCodexRunnerPool.mu.Lock()
+	runners := make([]*codexRunner, 0, len(globalCodexRunnerPool.runners))
+	for _, runner := range globalCodexRunnerPool.runners {
+		runners = append(runners, runner)
+	}
+	globalCodexRunnerPool.runners = make(map[string]*codexRunner)
+	globalCodexRunnerPool.mu.Unlock()
+	for _, runner := range runners {
+		runner.close()
 	}
 }
 

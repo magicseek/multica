@@ -3,8 +3,11 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -28,6 +31,7 @@ var codexBlockedArgs = map[string]blockedArgMode{
 const (
 	codexStderrTailBytes                  = 2048
 	defaultCodexSemanticInactivityTimeout = 10 * time.Minute
+	codexRunnerIdleTTL                    = 10 * time.Minute
 )
 
 // codexBackend implements Backend by spawning `codex app-server --listen stdio://`
@@ -51,7 +55,14 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	if _, err := exec.LookPath(execPath); err != nil {
 		return nil, fmt.Errorf("codex executable not found at %q: %w", execPath, err)
 	}
+	if opts.RunnerKey != "" {
+		return b.executeWithRunner(ctx, prompt, opts, execPath)
+	}
 
+	return b.executeOneShot(ctx, prompt, opts, execPath)
+}
+
+func (b *codexBackend) executeOneShot(ctx context.Context, prompt string, opts ExecOptions, execPath string) (*Session, error) {
 	timeout := opts.Timeout
 	if timeout == 0 {
 		timeout = 20 * time.Minute
@@ -176,16 +187,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		var finalError string
 
 		// 1. Initialize handshake
-		_, err := c.request(runCtx, "initialize", map[string]any{
-			"clientInfo": map[string]any{
-				"name":    "multica-agent-sdk",
-				"title":   "Multica Agent SDK",
-				"version": "0.2.0",
-			},
-			"capabilities": map[string]any{
-				"experimentalApi": true,
-			},
-		})
+		_, err := c.request(runCtx, "initialize", codexInitializeParams())
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
@@ -292,31 +294,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		finalOutput := output.String()
 		outputMu.Unlock()
 
-		// Build usage map from accumulated codex usage.
-		// First check JSON-RPC notifications (often empty for Codex).
-		var usageMap map[string]TokenUsage
 		c.usageMu.Lock()
 		u := c.usage
 		c.usageMu.Unlock()
-
-		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
-		// Codex writes token_count events to ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
-		if u.InputTokens == 0 && u.OutputTokens == 0 {
-			if scanned := scanCodexSessionUsage(startTime); scanned != nil {
-				u = scanned.usage
-				if scanned.model != "" && opts.Model == "" {
-					opts.Model = scanned.model
-				}
-			}
-		}
-
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
-			}
-			usageMap = map[string]TokenUsage{model: u}
-		}
+		usageMap := codexUsageMap(startTime, &opts, u)
 
 		resCh <- Result{
 			Status:     finalStatus,
@@ -329,6 +310,515 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
+}
+
+var globalCodexRunnerPool = &codexRunnerPool{runners: make(map[string]*codexRunner)}
+
+type codexRunnerPool struct {
+	mu      sync.Mutex
+	runners map[string]*codexRunner
+}
+
+type codexRunner struct {
+	key        string
+	cfg        Config
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stderr     *stderrTail
+	client     *codexClient
+	cancel     context.CancelFunc
+	readerDone chan struct{}
+	turnSem    chan struct{}
+	idleMu     sync.Mutex
+	idleTimer  *time.Timer
+	closeOnce  sync.Once
+}
+
+func (b *codexBackend) executeWithRunner(ctx context.Context, prompt string, opts ExecOptions, execPath string) (*Session, error) {
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = 20 * time.Minute
+	}
+	acquireCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	args := buildCodexArgs(opts, b.cfg.Logger)
+	key := codexRunnerPoolKey(opts.RunnerKey, execPath, args, opts.Cwd, b.cfg.Env)
+	runner, err := globalCodexRunnerPool.acquire(acquireCtx, key, b.cfg, execPath, args, opts.Cwd)
+	if err != nil {
+		return nil, err
+	}
+	return runner.execute(ctx, prompt, opts), nil
+}
+
+func (p *codexRunnerPool) acquire(initCtx context.Context, key string, cfg Config, execPath string, args []string, cwd string) (*codexRunner, error) {
+	var stale *codexRunner
+	p.mu.Lock()
+	if p.runners == nil {
+		p.runners = make(map[string]*codexRunner)
+	}
+	if existing := p.runners[key]; existing != nil {
+		if !existing.isClosed() {
+			existing.stopIdleTimer()
+			p.mu.Unlock()
+			cfg.Logger.Info("codex reusing app-server runner", "cwd", cwd)
+			return existing, nil
+		}
+		delete(p.runners, key)
+		stale = existing
+	}
+	p.mu.Unlock()
+
+	if stale != nil {
+		stale.close()
+	}
+
+	runner, err := newCodexRunner(initCtx, key, cfg, execPath, args, cwd)
+	if err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	if existing := p.runners[key]; existing != nil && !existing.isClosed() {
+		p.mu.Unlock()
+		runner.close()
+		return existing, nil
+	}
+	p.runners[key] = runner
+	p.mu.Unlock()
+	return runner, nil
+}
+
+func (p *codexRunnerPool) remove(key string, runner *codexRunner) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.runners[key] == runner {
+		delete(p.runners, key)
+	}
+}
+
+func newCodexRunner(initCtx context.Context, key string, cfg Config, execPath string, args []string, cwd string) (*codexRunner, error) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(runCtx, execPath, args...)
+	hideAgentWindow(cmd)
+	cfg.Logger.Info("agent command", "exec", execPath, "args", args, "runner", "codex")
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	cmd.Env = buildEnv(cfg.Env)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("codex stdout pipe: %w", err)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("codex stdin pipe: %w", err)
+	}
+	stderrBuf := newStderrTail(newLogWriter(cfg.Logger, "[codex:stderr] "), codexStderrTailBytes)
+	cmd.Stderr = stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start codex: %w", err)
+	}
+	cfg.Logger.Info("codex started reusable app-server", "pid", cmd.Process.Pid, "cwd", cwd)
+
+	runner := &codexRunner{
+		key:        key,
+		cfg:        cfg,
+		cmd:        cmd,
+		stdin:      stdin,
+		stderr:     stderrBuf,
+		cancel:     cancel,
+		readerDone: make(chan struct{}),
+		turnSem:    make(chan struct{}, 1),
+	}
+	runner.turnSem <- struct{}{}
+	runner.client = &codexClient{
+		cfg:                  cfg,
+		stdin:                stdin,
+		pending:              make(map[int]*pendingRPC),
+		notificationProtocol: "unknown",
+	}
+
+	go func() {
+		defer close(runner.readerDone)
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			runner.client.handleLine(line)
+		}
+		runner.client.closeAllPending(fmt.Errorf("codex process exited"))
+	}()
+
+	if _, err := runner.client.request(initCtx, "initialize", codexInitializeParams()); err != nil {
+		runner.close()
+		return nil, fmt.Errorf("%s", withAgentStderr(fmt.Sprintf("codex initialize failed: %v", err), "codex", stderrBuf.Tail()))
+	}
+	runner.client.notify("initialized")
+	return runner, nil
+}
+
+func (r *codexRunner) execute(ctx context.Context, prompt string, opts ExecOptions) *Session {
+	msgCh := make(chan Message, 256)
+	resCh := make(chan Result, 1)
+
+	go func() {
+		defer close(msgCh)
+		defer close(resCh)
+
+		startTime := time.Now()
+		timeout := opts.Timeout
+		if timeout == 0 {
+			timeout = 20 * time.Minute
+		}
+		runCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		select {
+		case <-r.turnSem:
+			defer func() { r.turnSem <- struct{}{} }()
+		case <-runCtx.Done():
+			status := "aborted"
+			errMsg := "execution cancelled"
+			if runCtx.Err() == context.DeadlineExceeded {
+				status = "timeout"
+				errMsg = fmt.Sprintf("codex timed out after %s while waiting for reusable app-server runner", timeout)
+			}
+			resCh <- Result{
+				Status:     status,
+				Error:      errMsg,
+				DurationMs: time.Since(startTime).Milliseconds(),
+			}
+			return
+		}
+
+		if r.isClosed() {
+			resCh <- Result{
+				Status:     "failed",
+				Error:      withAgentStderr("codex app-server runner exited", "codex", r.stderr.Tail()),
+				DurationMs: time.Since(startTime).Milliseconds(),
+			}
+			globalCodexRunnerPool.remove(r.key, r)
+			return
+		}
+
+		if opts.RuntimeEnvFile != "" {
+			if err := writeCodexRuntimeEnvFile(opts.RuntimeEnvFile, opts.RuntimeEnv); err != nil {
+				resCh <- Result{
+					Status:     "failed",
+					Error:      fmt.Sprintf("codex runtime env refresh failed: %v", err),
+					DurationMs: time.Since(startTime).Milliseconds(),
+				}
+				r.scheduleIdleClose()
+				return
+			}
+		}
+
+		semanticInactivityTimeout := opts.SemanticInactivityTimeout
+		if semanticInactivityTimeout == 0 {
+			semanticInactivityTimeout = defaultCodexSemanticInactivityTimeout
+		}
+
+		semanticActivityCh := make(chan string, 256)
+		turnDone := make(chan bool, 1)
+		var outputMu sync.Mutex
+		var output strings.Builder
+
+		r.client.resetTurnState(true, true)
+		defer r.client.configureCallbacks(nil, nil, nil)
+
+		finalStatus := "completed"
+		var finalError string
+		fatalRunner := false
+
+		threadID, resumed, err := r.client.startOrResumeThread(runCtx, opts, r.cfg.Logger)
+		if err != nil {
+			finalStatus = "failed"
+			finalError = withAgentStderr(err.Error(), "codex", r.stderr.Tail())
+			fatalRunner = true
+		} else {
+			r.client.threadID = threadID
+			r.client.configureCallbacks(
+				func(msg Message) {
+					logCodexAgentMessage(r.cfg.Logger, msg)
+					if msg.Type == MessageText {
+						outputMu.Lock()
+						output.WriteString(msg.Content)
+						outputMu.Unlock()
+					}
+					trySend(msgCh, msg)
+					trySendString(semanticActivityCh, describeCodexSemanticActivity(msg))
+				},
+				func(description string) {
+					r.cfg.Logger.Debug("codex semantic activity observed", "activity", description)
+					trySendString(semanticActivityCh, description)
+				},
+				func(aborted bool) {
+					select {
+					case turnDone <- aborted:
+					default:
+					}
+				},
+			)
+			if resumed {
+				r.cfg.Logger.Info("codex thread resumed", "thread_id", threadID)
+			} else {
+				r.cfg.Logger.Info("codex thread started", "thread_id", threadID)
+			}
+		}
+
+		if finalError == "" {
+			_, err = r.client.request(runCtx, "turn/start", map[string]any{
+				"threadId": threadID,
+				"input": []map[string]any{
+					{"type": "text", "text": prompt},
+				},
+			})
+			if err != nil {
+				finalStatus = "failed"
+				finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", r.stderr.Tail())
+				fatalRunner = true
+			}
+		}
+
+		if finalError == "" {
+			lastSemanticActivity := time.Now()
+			lastSemanticActivityDescription := "turn/start"
+			semanticTimer := time.NewTimer(semanticInactivityTimeout)
+			defer semanticTimer.Stop()
+
+			waitingForTurn := true
+			for waitingForTurn {
+				select {
+				case aborted := <-turnDone:
+					waitingForTurn = false
+					switch {
+					case aborted:
+						finalStatus = "aborted"
+						finalError = "turn was aborted"
+						fatalRunner = true
+					default:
+						if errMsg := r.client.getTurnError(); errMsg != "" {
+							finalStatus = "failed"
+							finalError = errMsg
+						}
+					}
+				case activity := <-semanticActivityCh:
+					lastSemanticActivity = time.Now()
+					lastSemanticActivityDescription = activity
+					resetTimer(semanticTimer, semanticInactivityTimeout)
+				case <-semanticTimer.C:
+					waitingForTurn = false
+					finalStatus = "timeout"
+					finalError = fmt.Sprintf("codex semantic inactivity timeout after %s without agent progress (last activity: %s)", semanticInactivityTimeout, lastSemanticActivityDescription)
+					fatalRunner = true
+					r.cfg.Logger.Warn("codex semantic inactivity timeout",
+						"pid", r.cmd.Process.Pid,
+						"thread_id", threadID,
+						"turn_id", r.client.turnID,
+						"timeout", semanticInactivityTimeout.String(),
+						"last_activity", lastSemanticActivityDescription,
+						"idle_for", time.Since(lastSemanticActivity).Round(time.Millisecond).String(),
+					)
+				case <-r.readerDone:
+					waitingForTurn = false
+					finalStatus = "failed"
+					finalError = withAgentStderr("codex app-server runner exited", "codex", r.stderr.Tail())
+					fatalRunner = true
+				case <-runCtx.Done():
+					waitingForTurn = false
+					fatalRunner = true
+					if runCtx.Err() == context.DeadlineExceeded {
+						finalStatus = "timeout"
+						finalError = fmt.Sprintf("codex timed out after %s", timeout)
+					} else {
+						finalStatus = "aborted"
+						finalError = "execution cancelled"
+					}
+				}
+			}
+		}
+
+		duration := time.Since(startTime)
+		r.cfg.Logger.Info("codex finished", "pid", r.cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String(), "runner", "codex")
+
+		outputMu.Lock()
+		finalOutput := output.String()
+		outputMu.Unlock()
+
+		r.client.usageMu.Lock()
+		u := r.client.usage
+		r.client.usageMu.Unlock()
+		usageMap := codexUsageMap(startTime, &opts, u)
+
+		if fatalRunner {
+			globalCodexRunnerPool.remove(r.key, r)
+		}
+		resCh <- Result{
+			Status:     finalStatus,
+			Output:     finalOutput,
+			Error:      finalError,
+			SessionID:  threadID,
+			DurationMs: duration.Milliseconds(),
+			Usage:      usageMap,
+		}
+
+		if fatalRunner {
+			r.close()
+		} else {
+			r.scheduleIdleClose()
+		}
+	}()
+
+	return &Session{Messages: msgCh, Result: resCh}
+}
+
+func (r *codexRunner) isClosed() bool {
+	select {
+	case <-r.readerDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *codexRunner) close() {
+	r.stopIdleTimer()
+	r.closeOnce.Do(func() {
+		_ = r.stdin.Close()
+		r.cancel()
+		_ = r.cmd.Wait()
+		<-r.readerDone
+	})
+}
+
+func (r *codexRunner) scheduleIdleClose() {
+	r.idleMu.Lock()
+	defer r.idleMu.Unlock()
+	if r.idleTimer != nil {
+		r.idleTimer.Stop()
+	}
+	r.idleTimer = time.AfterFunc(codexRunnerIdleTTL, func() {
+		globalCodexRunnerPool.remove(r.key, r)
+		r.close()
+	})
+}
+
+func (r *codexRunner) stopIdleTimer() {
+	r.idleMu.Lock()
+	defer r.idleMu.Unlock()
+	if r.idleTimer != nil {
+		r.idleTimer.Stop()
+		r.idleTimer = nil
+	}
+}
+
+func codexInitializeParams() map[string]any {
+	return map[string]any{
+		"clientInfo": map[string]any{
+			"name":    "multica-agent-sdk",
+			"title":   "Multica Agent SDK",
+			"version": "0.2.0",
+		},
+		"capabilities": map[string]any{
+			"experimentalApi": true,
+		},
+	}
+}
+
+func codexUsageMap(startTime time.Time, opts *ExecOptions, u TokenUsage) map[string]TokenUsage {
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		if scanned := scanCodexSessionUsage(startTime); scanned != nil {
+			u = scanned.usage
+			if scanned.model != "" && opts.Model == "" {
+				opts.Model = scanned.model
+			}
+		}
+	}
+	if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+		return nil
+	}
+	model := opts.Model
+	if model == "" {
+		model = "unknown"
+	}
+	return map[string]TokenUsage{model: u}
+}
+
+func writeCodexRuntimeEnvFile(path string, values map[string]string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create runtime env dir: %w", err)
+	}
+	filtered := make(map[string]string, len(values))
+	for key, value := range values {
+		if key == "" || value == "" {
+			continue
+		}
+		filtered[key] = value
+	}
+	data, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal runtime env: %w", err)
+	}
+	data = append(data, '\n')
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".runtime-env.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create runtime env temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write runtime env temp: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod runtime env temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close runtime env temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace runtime env file: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func codexRunnerPoolKey(runnerKey string, execPath string, args []string, cwd string, env map[string]string) string {
+	payload := struct {
+		RunnerKey string            `json:"runner_key"`
+		ExecPath  string            `json:"exec_path"`
+		Args      []string          `json:"args"`
+		Cwd       string            `json:"cwd"`
+		Env       map[string]string `json:"env"`
+	}{
+		RunnerKey: runnerKey,
+		ExecPath:  execPath,
+		Args:      args,
+		Cwd:       cwd,
+		Env:       env,
+	}
+	data, _ := json.Marshal(payload)
+	sum := sha256.Sum256(data)
+	return runnerKey + "\x00" + hex.EncodeToString(sum[:])
 }
 
 // startOrResumeThread picks between Codex's thread/resume and thread/start
@@ -442,12 +932,14 @@ type codexClient struct {
 	pending            map[int]*pendingRPC
 	threadID           string
 	turnID             string
+	callbackMu         sync.RWMutex
 	onMessage          func(Message)
 	onSemanticActivity func(description string)
 	onTurnDone         func(aborted bool)
 
 	notificationProtocol string // "unknown", "legacy", "raw"
 	turnStarted          bool
+	requireTurnStarted   bool
 	completedTurnIDs     map[string]bool
 
 	usageMu sync.Mutex
@@ -472,6 +964,57 @@ func (c *codexClient) getTurnError() string {
 	c.turnErrorMu.Lock()
 	defer c.turnErrorMu.Unlock()
 	return c.turnError
+}
+
+func (c *codexClient) configureCallbacks(onMessage func(Message), onSemanticActivity func(string), onTurnDone func(bool)) {
+	c.callbackMu.Lock()
+	defer c.callbackMu.Unlock()
+	c.onMessage = onMessage
+	c.onSemanticActivity = onSemanticActivity
+	c.onTurnDone = onTurnDone
+}
+
+func (c *codexClient) resetTurnState(preserveThreadID bool, requireTurnStarted bool) {
+	if !preserveThreadID {
+		c.threadID = ""
+	}
+	c.turnID = ""
+	c.turnStarted = false
+	c.requireTurnStarted = requireTurnStarted
+	c.completedTurnIDs = nil
+	c.turnErrorMu.Lock()
+	c.turnError = ""
+	c.turnErrorMu.Unlock()
+	c.usageMu.Lock()
+	c.usage = TokenUsage{}
+	c.usageMu.Unlock()
+}
+
+func (c *codexClient) emitMessage(msg Message) {
+	c.callbackMu.RLock()
+	fn := c.onMessage
+	c.callbackMu.RUnlock()
+	if fn != nil {
+		fn(msg)
+	}
+}
+
+func (c *codexClient) emitSemanticActivity(description string) {
+	c.callbackMu.RLock()
+	fn := c.onSemanticActivity
+	c.callbackMu.RUnlock()
+	if fn != nil {
+		fn(description)
+	}
+}
+
+func (c *codexClient) emitTurnDone(aborted bool) {
+	c.callbackMu.RLock()
+	fn := c.onTurnDone
+	c.callbackMu.RUnlock()
+	if fn != nil {
+		fn(aborted)
+	}
 }
 
 type pendingRPC struct {
@@ -698,64 +1241,50 @@ func (c *codexClient) handleEvent(msg map[string]any) {
 	switch msgType {
 	case "task_started":
 		c.turnStarted = true
-		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
-		}
+		c.emitMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
 	case "agent_message":
 		text, _ := msg["message"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
+		if text != "" {
+			c.emitMessage(Message{Type: MessageText, Content: text})
 		}
 	case "exec_command_begin":
 		callID, _ := msg["call_id"].(string)
 		command, _ := msg["command"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "exec_command",
-				CallID: callID,
-				Input:  map[string]any{"command": command},
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "exec_command",
+			CallID: callID,
+			Input:  map[string]any{"command": command},
+		})
 	case "exec_command_end":
 		callID, _ := msg["call_id"].(string)
 		output, _ := msg["output"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "exec_command",
-				CallID: callID,
-				Output: output,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "exec_command",
+			CallID: callID,
+			Output: output,
+		})
 	case "patch_apply_begin":
 		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "patch_apply",
+			CallID: callID,
+		})
 	case "patch_apply_end":
 		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "patch_apply",
+			CallID: callID,
+		})
 	case "task_complete":
 		// Extract usage from legacy task_complete if present.
 		c.extractUsageFromMap(msg)
-		if c.onTurnDone != nil {
-			c.onTurnDone(false)
-		}
+		c.emitTurnDone(false)
 	case "turn_aborted":
-		if c.onTurnDone != nil {
-			c.onTurnDone(true)
-		}
+		c.emitTurnDone(true)
 	}
 }
 
@@ -779,13 +1308,19 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 		if turnID := extractNestedString(params, "turn", "id"); turnID != "" {
 			c.turnID = turnID
 		}
-		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
-		}
+		c.emitMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
 
 	case "turn/completed":
 		turnID := extractNestedString(params, "turn", "id")
 		status := extractNestedString(params, "turn", "status")
+		if c.requireTurnStarted {
+			if !c.turnStarted {
+				return
+			}
+			if c.turnID != "" && turnID != "" && turnID != c.turnID {
+				return
+			}
+		}
 		threadID, _ := params["threadId"].(string)
 		c.cfg.Logger.Info("codex turn/completed received", "thread_id", threadID, "turn_id", turnID, "status", status)
 		aborted := status == "cancelled" || status == "canceled" ||
@@ -816,9 +1351,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 			c.extractUsageFromMap(turn)
 		}
 
-		if c.onTurnDone != nil {
-			c.onTurnDone(aborted)
-		}
+		c.emitTurnDone(aborted)
 
 	case "error":
 		// Top-level protocol error. Retrying notifications (willRetry=true) are
@@ -839,9 +1372,7 @@ func (c *codexClient) handleRawNotification(method string, params map[string]any
 	case "thread/status/changed":
 		statusType := extractNestedString(params, "status", "type")
 		if statusType == "idle" && c.turnStarted {
-			if c.onTurnDone != nil {
-				c.onTurnDone(false)
-			}
+			c.emitTurnDone(false)
 		}
 
 	default:
@@ -855,8 +1386,11 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
-	if isCodexItemProgressActivity(method) && c.onSemanticActivity != nil {
-		c.onSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
+	if c.requireTurnStarted && !c.turnStarted {
+		return
+	}
+	if isCodexItemProgressActivity(method) {
+		c.emitSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
 	if item == nil {
 		return
@@ -865,54 +1399,44 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	switch {
 	case method == "item/started" && itemType == "commandExecution":
 		command, _ := item["command"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "exec_command",
-				CallID: itemID,
-				Input:  map[string]any{"command": command},
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "exec_command",
+			CallID: itemID,
+			Input:  map[string]any{"command": command},
+		})
 
 	case method == "item/completed" && itemType == "commandExecution":
 		output, _ := item["aggregatedOutput"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "exec_command",
-				CallID: itemID,
-				Output: output,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "exec_command",
+			CallID: itemID,
+			Output: output,
+		})
 
 	case method == "item/started" && itemType == "fileChange":
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: itemID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolUse,
+			Tool:   "patch_apply",
+			CallID: itemID,
+		})
 
 	case method == "item/completed" && itemType == "fileChange":
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "patch_apply",
-				CallID: itemID,
-			})
-		}
+		c.emitMessage(Message{
+			Type:   MessageToolResult,
+			Tool:   "patch_apply",
+			CallID: itemID,
+		})
 
 	case method == "item/completed" && itemType == "agentMessage":
 		text, _ := item["text"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
+		if text != "" {
+			c.emitMessage(Message{Type: MessageText, Content: text})
 		}
 		phase, _ := item["phase"].(string)
 		if phase == "final_answer" && c.turnStarted {
-			if c.onTurnDone != nil {
-				c.onTurnDone(false)
-			}
+			c.emitTurnDone(false)
 		}
 	}
 }

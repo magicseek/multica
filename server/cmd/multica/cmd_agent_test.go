@@ -105,6 +105,27 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 	})
 }
 
+func TestNewAPIClientUsesRuntimeEnvTaskID(t *testing.T) {
+	resetRuntimeEnvForTest(t)
+	path := filepath.Join(t.TempDir(), "runtime-env.json")
+	if err := os.WriteFile(path, []byte(`{"MULTICA_TASK_ID":"task-from-runtime"}`), 0o600); err != nil {
+		t.Fatalf("write runtime env: %v", err)
+	}
+	t.Setenv(runtimeEnvFileEnv, path)
+	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:1234")
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	client, err := newAPIClient(testCmd())
+	if err != nil {
+		t.Fatalf("newAPIClient: %v", err)
+	}
+	if client.TaskID != "task-from-runtime" {
+		t.Fatalf("client.TaskID = %q, want task-from-runtime", client.TaskID)
+	}
+}
+
 // TestParseCustomEnv covers the --custom-env flag parser used by both
 // `agent create` and `agent update`. The flag accepts a JSON object of
 // string keys and values; the only clear signal is the explicit "{}"
@@ -752,7 +773,6 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 	}
 }
 
-
 // TestAgentAvatarMissingFileFlag rejects when --file is not provided.
 func TestAgentAvatarMissingFileFlag(t *testing.T) {
 	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
@@ -889,13 +909,13 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		json.NewEncoder(w).Encode(map[string]any{
-			"id":         "agent-123",
-			"name":       "TestAgent",
-			"status":     "active",
+			"id":           "agent-123",
+			"name":         "TestAgent",
+			"status":       "active",
 			"runtime_mode": "cloud",
-			"visibility": "workspace",
-			"avatar_url": "https://cdn.example.com/avatar.png",
-			"description": "A test agent",
+			"visibility":   "workspace",
+			"avatar_url":   "https://cdn.example.com/avatar.png",
+			"description":  "A test agent",
 		})
 	}))
 	defer srv.Close()
