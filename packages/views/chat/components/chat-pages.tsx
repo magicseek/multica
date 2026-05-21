@@ -555,7 +555,7 @@ function ChatOutputsPanel({ sessionId }: { sessionId: string }) {
   const workflowRunDetailQuery = useQuery(
     workflowRunDetailOptions(wsId, latestWorkflowRunId),
   );
-  const outputs = data?.outputs ?? [];
+  const outputs = useMemo(() => data?.outputs ?? [], [data?.outputs]);
   const outputTaskIds = useMemo(
     () =>
       Array.from(
