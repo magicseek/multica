@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { DRAFT_NEW_SESSION } from "@multica/core/chat";
@@ -43,6 +43,7 @@ import {
 import {
   useApproveChatIssueProposal,
   useCreateChatSession,
+  useSendChatMessage,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
 import { projectDetailOptions } from "@multica/core/projects/queries";
@@ -52,7 +53,6 @@ import type {
   ChatIssueProposal,
   ChatIssueProposalItem,
   ChatMessage,
-  ChatPendingTask,
   ChatSession,
   Issue,
   IssueStatus,
@@ -189,28 +189,14 @@ export function ChatNewPage() {
     [ensureSession, uploadWithToast],
   );
 
-  const startChat = useMutation({
-    mutationFn: async ({ content, attachmentIds }: { content: string; attachmentIds?: string[] }) => {
+  const startChat = useSendChatMessage({
+    resolveSessionId: async (content) => {
       if (!agentId) throw new Error(t(($) => $.pages.new.no_agent_error));
       const sessionId = await ensureSession(content);
       if (!sessionId) throw new Error(t(($) => $.pages.new.no_agent_error));
-      const result = await api.sendChatMessage(sessionId, content, attachmentIds);
-      return { sessionId, result };
+      return sessionId;
     },
-    onSuccess: async ({ sessionId, result }) => {
-      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
-        task_id: result.task_id,
-        status: "queued",
-        created_at: result.created_at,
-      });
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.session(wsId, sessionId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) }),
-      ]);
+    onSuccess: ({ sessionId }) => {
       navigation.push(wsPaths.chatSession(sessionId));
     },
     onError: (err) => {
@@ -270,24 +256,8 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
   const presenceDetail = useAgentPresenceDetail(wsId, session?.agent_id);
   const availability = presenceDetail === "loading" ? undefined : presenceDetail.availability;
   const pendingTaskId = pendingTaskQuery.data?.task_id ?? null;
-  const sendMessage = useMutation({
-    mutationFn: ({ content, attachmentIds }: { content: string; attachmentIds?: string[] }) =>
-      api.sendChatMessage(sessionId, content, attachmentIds),
-    onSuccess: async (result) => {
-      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
-        task_id: result.task_id,
-        status: "queued",
-        created_at: result.created_at,
-      });
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) }),
-        qc.invalidateQueries({ queryKey: chatKeys.session(wsId, sessionId) }),
-      ]);
-    },
+  const sendMessage = useSendChatMessage({
+    resolveSessionId: async () => sessionId,
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.send_failed));
     },

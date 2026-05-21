@@ -1,11 +1,18 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useWorkspaceId } from "../hooks";
 import { chatKeys } from "./queries";
 import { issueKeys } from "../issues/queries";
 import { labelKeys } from "../labels/queries";
 import { createLogger } from "../logger";
-import type { ChatSession, UpdateChatIssueProposalItemRequest } from "../types";
+import type {
+  ChatMessage,
+  ChatPendingTask,
+  ChatSession,
+  PendingChatTasksResponse,
+  SendChatMessageResponse,
+  UpdateChatIssueProposalItemRequest,
+} from "../types";
 
 const logger = createLogger("chat.mut");
 
@@ -34,6 +41,137 @@ export function useCreateChatSession() {
       qc.invalidateQueries({ queryKey: chatKeys.sidebar(wsId) });
     },
   });
+}
+
+export interface SendChatMessageVariables {
+  content: string;
+  attachmentIds?: string[];
+}
+
+export interface SendChatMessageMutationResult {
+  sessionId: string;
+  result: SendChatMessageResponse;
+}
+
+interface UseSendChatMessageOptions {
+  resolveSessionId: (content: string) => Promise<string | null>;
+  onSessionResolved?: (sessionId: string) => void;
+  onSuccess?: (data: SendChatMessageMutationResult) => void | Promise<void>;
+  onError?: (err: unknown, variables: SendChatMessageVariables) => void;
+  noSessionMessage?: string;
+}
+
+export function useSendChatMessage(options: UseSendChatMessageOptions) {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+
+  return useMutation({
+    mutationFn: async (variables: SendChatMessageVariables): Promise<SendChatMessageMutationResult> => {
+      const sessionId = await options.resolveSessionId(variables.content);
+      if (!sessionId) {
+        throw new Error(options.noSessionMessage ?? "No chat session available");
+      }
+
+      const sentAt = new Date().toISOString();
+      const optimisticID = `optimistic-${Date.now()}`;
+      const optimisticTaskID = `optimistic-${optimisticID}`;
+      const optimistic: ChatMessage = {
+        id: optimisticID,
+        chat_session_id: sessionId,
+        role: "user",
+        content: variables.content,
+        task_id: null,
+        created_at: sentAt,
+      };
+
+      // Write the optimistic message + pending task before route/session owners
+      // publish the session id. New-chat surfaces then mount against a warm
+      // messages cache instead of flashing a skeleton while the POST is in flight.
+      qc.setQueryData<ChatMessage[]>(
+        chatKeys.messages(sessionId),
+        (old) => (old ? [...old, optimistic] : [optimistic]),
+      );
+      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+        task_id: optimisticTaskID,
+        status: "queued",
+        created_at: sentAt,
+      });
+      patchPendingChatTaskAggregate(qc, wsId, {
+        task_id: optimisticTaskID,
+        status: "queued",
+        chat_session_id: sessionId,
+      });
+      options.onSessionResolved?.(sessionId);
+
+      try {
+        const result = await api.sendChatMessage(sessionId, variables.content, variables.attachmentIds);
+        // The POST response is enough to replace temporary ids; websocket
+        // recovery can still refetch later, but send itself does not force a
+        // transcript roundtrip.
+        qc.setQueryData<ChatMessage[] | undefined>(
+          chatKeys.messages(sessionId),
+          (old) => old?.map((m) => (
+            m.id === optimisticID
+              ? { ...m, id: result.message_id, task_id: result.task_id }
+              : m
+          )),
+        );
+        qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+          task_id: result.task_id,
+          status: "queued",
+          created_at: result.created_at,
+        });
+        patchPendingChatTaskAggregate(qc, wsId, {
+          task_id: result.task_id,
+          status: "queued",
+          chat_session_id: sessionId,
+        });
+        return { sessionId, result };
+      } catch (err) {
+        qc.setQueryData<ChatMessage[] | undefined>(
+          chatKeys.messages(sessionId),
+          (old) => old?.filter((m) => m.id !== optimisticID),
+        );
+        qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+        removePendingChatTaskFromAggregate(qc, wsId, sessionId);
+        throw err;
+      }
+    },
+    onSuccess: (data) => options.onSuccess?.(data),
+    onError: (err, variables) => options.onError?.(err, variables),
+  });
+}
+
+function patchPendingChatTaskAggregate(
+  qc: QueryClient,
+  wsId: string,
+  task: PendingChatTasksResponse["tasks"][number],
+) {
+  qc.setQueryData<PendingChatTasksResponse | undefined>(
+    chatKeys.pendingTasks(wsId),
+    (old) => {
+      if (!old) return old;
+      return {
+        tasks: [
+          task,
+          ...old.tasks.filter((t) => t.chat_session_id !== task.chat_session_id),
+        ],
+      };
+    },
+  );
+}
+
+function removePendingChatTaskFromAggregate(
+  qc: QueryClient,
+  wsId: string,
+  sessionId: string,
+) {
+  qc.setQueryData<PendingChatTasksResponse | undefined>(
+    chatKeys.pendingTasks(wsId),
+    (old) => old
+      ? { tasks: old.tasks.filter((t) => t.chat_session_id !== sessionId) }
+      : old,
+  );
 }
 
 /**

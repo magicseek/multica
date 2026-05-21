@@ -46,6 +46,7 @@ import {
   useCreateChatSession,
   useDeleteChatSession,
   useMarkChatSessionRead,
+  useSendChatMessage,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
 import { repositoryListOptions } from "@multica/core/repositories";
@@ -61,7 +62,7 @@ import {
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatResize } from "./use-chat-resize";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, ChatMessage, ChatPendingTask, ChatSession, Repository } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatSession, Repository } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
@@ -273,8 +274,23 @@ export function ChatWindow() {
     [ensureSession, uploadWithToast, qc, setActiveSession],
   );
 
+  const sendMessage = useSendChatMessage({
+    resolveSessionId: ensureSession,
+    onSessionResolved: setActiveSession,
+    onSuccess: ({ sessionId, result }) => {
+      apiLogger.info("sendChatMessage.success", {
+        sessionId,
+        messageId: result.message_id,
+        taskId: result.task_id,
+      });
+    },
+    onError: (err) => {
+      apiLogger.error("sendChatMessage.error", err);
+    },
+  });
+
   const handleSend = useCallback(
-    async (content: string, attachmentIds?: string[]) => {
+    (content: string, attachmentIds?: string[]) => {
       if (!activeAgent) {
         apiLogger.warn("sendChatMessage skipped: no active agent");
         return;
@@ -296,74 +312,13 @@ export function ChatWindow() {
         attachmentCount: attachmentIds?.length ?? 0,
       });
 
-      const sessionId = await ensureSession(finalContent);
-      if (!sessionId) {
-        apiLogger.warn("sendChatMessage aborted: ensureSession returned null");
-        return;
-      }
-
-      // Optimistic burst — everything that gives the user "I sent a message
-      // and the agent is now working" feedback fires BEFORE the HTTP roundtrip.
-      // Pre-#status-pill the pending-task seed lived after `await
-      // sendChatMessage` and the pill blinked in a few hundred ms after the
-      // user's message — small but visible "did it actually send?" gap.
-      const sentAt = new Date().toISOString();
-      const optimistic: ChatMessage = {
-        id: `optimistic-${Date.now()}`,
-        chat_session_id: sessionId,
-        role: "user",
-        content: finalContent,
-        task_id: null,
-        created_at: sentAt,
-      };
-      // Seed cache BEFORE flipping activeSessionId. If we set the active
-      // session first, useQuery's first subscription to the new key sees no
-      // cached data and renders ChatMessageSkeleton for one frame — the
-      // "new-chat first-message" white flash. Priming the cache first means
-      // the very first read after activeSessionId flips hits data
-      // synchronously and ChatMessageList mounts directly.
-      qc.setQueryData<ChatMessage[]>(
-        chatKeys.messages(sessionId),
-        (old) => (old ? [...old, optimistic] : [optimistic]),
-      );
-      // Seed the pending-task with a temporary id so the StatusPill mounts
-      // and starts ticking the instant the user clicks send. Real task_id
-      // and server-authoritative created_at land below; until then the pill
-      // is anchored to the local clock (drift is the request RTT, ~50–200ms,
-      // which doesn't change the rendered "Ns" value).
-      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
-        task_id: `optimistic-${optimistic.id}`,
-        status: "queued",
-        created_at: sentAt,
-      });
-      // Cache primed → safe to publish the new active session. Idempotent
-      // when the session was already active (existing-conversation send).
-      setActiveSession(sessionId);
-      apiLogger.debug("sendChatMessage.optimistic", { sessionId, optimisticId: optimistic.id });
-
-      const result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
-      apiLogger.info("sendChatMessage.success", {
-        sessionId,
-        messageId: result.message_id,
-        taskId: result.task_id,
-      });
-      // Replace the temporary task_id with the server's real one (so the WS
-      // task: handlers can match against it) and snap the anchor to the
-      // server's created_at — keeping the elapsed-seconds reading stable.
-      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
-        task_id: result.task_id,
-        status: "queued",
-        created_at: result.created_at,
-      });
-      qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+      sendMessage.mutate({ content: finalContent, attachmentIds });
     },
     [
       activeSessionId,
       activeAgent,
       anchorCandidate,
-      ensureSession,
-      qc,
-      setActiveSession,
+      sendMessage,
     ],
   );
 
@@ -608,7 +563,7 @@ export function ChatWindow() {
         onSend={handleSend}
         onUploadFile={handleUploadFile}
         onStop={handleStop}
-        isRunning={!!pendingTaskId}
+        isRunning={!!pendingTaskId || sendMessage.isPending}
         disabled={isSessionArchived}
         noAgent={noAgent}
         agentName={activeAgent?.name}
