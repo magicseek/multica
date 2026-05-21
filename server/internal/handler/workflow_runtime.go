@@ -36,6 +36,7 @@ type WorkflowRunResponse struct {
 	Reviews              []WorkflowReviewResponse            `json:"reviews,omitempty"`
 	QualityGateResults   []WorkflowQualityGateResultResponse `json:"quality_gate_results,omitempty"`
 	InputRequests        []WorkflowInputRequestResponse      `json:"input_requests,omitempty"`
+	CurrentStep          *WorkflowStepRunResponse            `json:"current_step,omitempty"`
 }
 
 type WorkflowStepRunResponse struct {
@@ -197,6 +198,7 @@ func workflowRunToResponse(
 		for i, step := range steps {
 			resp.Steps[i] = workflowStepRunToResponseForRun(run, step)
 		}
+		resp.CurrentStep = workflowCurrentStepResponse(run, steps)
 	}
 	if artifacts != nil {
 		resp.Artifacts = make([]WorkflowArtifactResponse, len(artifacts))
@@ -223,6 +225,22 @@ func workflowRunToResponse(
 		}
 	}
 	return resp
+}
+
+func workflowCurrentStepResponse(run db.WorkflowRun, steps []db.WorkflowStepRun) *WorkflowStepRunResponse {
+	if run.Status == "completed" || run.Status == "cancelled" || run.Status == "failed" || run.Status == "blocked" {
+		return nil
+	}
+	for _, status := range []string{"running", "ready"} {
+		for _, step := range steps {
+			if step.Status != status {
+				continue
+			}
+			resp := workflowStepRunToResponseForRun(run, step)
+			return &resp
+		}
+	}
+	return nil
 }
 
 func workflowStepRunToResponse(step db.WorkflowStepRun) WorkflowStepRunResponse {

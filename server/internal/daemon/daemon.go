@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -2205,6 +2206,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if task.WorkflowRun != nil {
 		taskCtx.WorkflowRunID = task.WorkflowRun.ID
+		taskCtx.WorkflowCurrentStep = workflowCurrentStepForEnv(task.WorkflowRun.CurrentStep)
 	}
 
 	// Mark candidate env roots as active before any env work so the GC loop
@@ -2313,6 +2315,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if task.WorkflowRun != nil && task.WorkflowRun.ID != "" {
 		agentEnv["MULTICA_WORKFLOW_RUN_ID"] = task.WorkflowRun.ID
+		if task.WorkflowRun.CurrentStep != nil && task.WorkflowRun.CurrentStep.ID != "" {
+			agentEnv["MULTICA_WORKFLOW_STEP_RUN_ID"] = task.WorkflowRun.CurrentStep.ID
+		}
 	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
@@ -3107,6 +3112,36 @@ func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.Pr
 	return result
 }
 
+func workflowCurrentStepForEnv(step *WorkflowStepRun) *execenv.WorkflowStepContextForEnv {
+	if step == nil || step.ID == "" {
+		return nil
+	}
+	return &execenv.WorkflowStepContextForEnv{
+		ID:               step.ID,
+		StepDefinitionID: step.StepDefinitionID,
+		Title:            step.Title,
+		Status:           step.Status,
+		ExecutionKind:    step.ExecutionKind,
+		Attempt:          step.Attempt,
+		OrderIndex:       step.OrderIndex,
+		DependsOnStepIDs: append([]string(nil), step.DependsOnStepIDs...),
+		ArtifactInputs:   compactRawJSON(step.ArtifactInputs),
+		Snapshot:         compactRawJSON(step.Snapshot),
+	}
+}
+
+func compactRawJSON(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	var out bytes.Buffer
+	if err := json.Compact(&out, trimmed); err != nil {
+		return string(trimmed)
+	}
+	return out.String()
+}
+
 func reusableEnvRootKey(provider string, task Task, workDir string) string {
 	if provider == "" || task.WorkspaceID == "" || task.ChatSessionID == "" || workDir == "" {
 		return ""
@@ -3224,6 +3259,7 @@ var dynamicAgentEnvKeys = []string{
 	"MULTICA_TASK_ID",
 	"MULTICA_TASK_SLOT",
 	"MULTICA_WORKFLOW_RUN_ID",
+	"MULTICA_WORKFLOW_STEP_RUN_ID",
 	"MULTICA_AUTOPILOT_RUN_ID",
 	"MULTICA_AUTOPILOT_ID",
 	"MULTICA_QUICK_CREATE_TASK_ID",

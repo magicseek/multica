@@ -1573,6 +1573,47 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 	})
 
+	t.Run("current workflow step renders direct step context", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			ExecutionProtocolEnabled: true,
+			WorkflowRenderedMarkdown: "## Full Workflow\n\nThis full workflow should stay out when current step context exists.\n",
+			WorkflowRunID:            "workflow-run-1",
+			WorkflowCurrentStep: &WorkflowStepContextForEnv{
+				ID:               "step-run-1",
+				StepDefinitionID: "implement",
+				Title:            "Implement feature",
+				Status:           "ready",
+				ExecutionKind:    "agent",
+				Attempt:          2,
+				DependsOnStepIDs: []string{"plan"},
+				ArtifactInputs:   `["plan:approved"]`,
+				Snapshot:         `{"id":"implement","input_requests":{"allowed":true}}`,
+			},
+		})
+		for _, want := range []string{
+			"`MULTICA_WORKFLOW_STEP_RUN_ID`",
+			"`step-run-1`",
+			"`implement`",
+			"Implement feature",
+			"`plan`",
+			"`[\"plan:approved\"]`",
+			`"input_requests":{"allowed":true}`,
+			"multica workflow step start \"$MULTICA_WORKFLOW_STEP_RUN_ID\"",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("current workflow step context missing %q\n---\n%s", want, s)
+			}
+		}
+		if strings.Contains(s, "Before each workflow phase, run `multica workflow run get") {
+			t.Fatalf("current step context should avoid full-run fetch instruction\n---\n%s", s)
+		}
+		if strings.Contains(s, "This full workflow should stay out") {
+			t.Fatalf("current step context should avoid injecting full workflow markdown\n---\n%s", s)
+		}
+	})
+
 	t.Run("comment trigger uses workflow snapshot when present", func(t *testing.T) {
 		t.Parallel()
 		s := readClaudeMD(t, TaskContextForEnv{

@@ -940,6 +940,7 @@ export const WorkflowRunSchema = z.object({
   reviews: z.array(WorkflowReviewSchema).default([]),
   quality_gate_results: z.array(WorkflowQualityGateResultSchema).default([]),
   input_requests: z.array(WorkflowInputRequestSchema).default([]),
+  current_step: WorkflowStepRunSchema.nullable().optional(),
 }).loose();
 
 export const EMPTY_WORKFLOW_RUN: WorkflowRun = {

@@ -2021,14 +2021,18 @@ func TestDynamicAgentRuntimeEnvOnlyIncludesDynamicKeys(t *testing.T) {
 	t.Parallel()
 
 	got := dynamicAgentRuntimeEnv(map[string]string{
-		"MULTICA_TOKEN":           "secret",
-		"MULTICA_TASK_ID":         "task-1",
-		"MULTICA_TASK_SLOT":       "2",
-		"MULTICA_AGENT_ID":        "agent-1",
-		"MULTICA_CHAT_SESSION_ID": "",
+		"MULTICA_TOKEN":                "secret",
+		"MULTICA_TASK_ID":              "task-1",
+		"MULTICA_TASK_SLOT":            "2",
+		"MULTICA_WORKFLOW_STEP_RUN_ID": "step-run-1",
+		"MULTICA_AGENT_ID":             "agent-1",
+		"MULTICA_CHAT_SESSION_ID":      "",
 	})
 	if got["MULTICA_TASK_ID"] != "task-1" || got["MULTICA_TASK_SLOT"] != "2" {
 		t.Fatalf("missing dynamic values: %#v", got)
+	}
+	if got["MULTICA_WORKFLOW_STEP_RUN_ID"] != "step-run-1" {
+		t.Fatalf("missing workflow step run id: %#v", got)
 	}
 	if _, ok := got["MULTICA_TOKEN"]; ok {
 		t.Fatalf("runtime env must not include token: %#v", got)
@@ -2038,6 +2042,37 @@ func TestDynamicAgentRuntimeEnvOnlyIncludesDynamicKeys(t *testing.T) {
 	}
 	if _, ok := got["MULTICA_CHAT_SESSION_ID"]; ok {
 		t.Fatalf("runtime env should omit empty values: %#v", got)
+	}
+}
+
+func TestWorkflowCurrentStepForEnvCompactsStepPayload(t *testing.T) {
+	t.Parallel()
+
+	step := &WorkflowStepRun{
+		ID:               "step-run-1",
+		StepDefinitionID: "implement",
+		Title:            "Implement",
+		Status:           "ready",
+		ExecutionKind:    "agent",
+		Attempt:          2,
+		OrderIndex:       3,
+		DependsOnStepIDs: []string{"plan"},
+		ArtifactInputs:   json.RawMessage(` [ "plan:approved" ] `),
+		Snapshot:         json.RawMessage(` { "id": "implement" } `),
+	}
+	got := workflowCurrentStepForEnv(step)
+	if got == nil {
+		t.Fatal("expected current step context")
+	}
+	if got.ArtifactInputs != `["plan:approved"]` {
+		t.Fatalf("artifact inputs = %q", got.ArtifactInputs)
+	}
+	if got.Snapshot != `{"id":"implement"}` {
+		t.Fatalf("snapshot = %q", got.Snapshot)
+	}
+	got.DependsOnStepIDs[0] = "mutated"
+	if step.DependsOnStepIDs[0] != "plan" {
+		t.Fatalf("depends_on copy was not isolated: %#v", step.DependsOnStepIDs)
 	}
 }
 

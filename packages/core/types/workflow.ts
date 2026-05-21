@@ -336,4 +336,5 @@ export interface WorkflowRun {
   reviews?: WorkflowReview[];
   quality_gate_results?: WorkflowQualityGateResult[];
   input_requests?: WorkflowInputRequest[];
+  current_step?: WorkflowStepRun | null;
 }

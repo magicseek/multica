@@ -168,6 +168,7 @@ type WorkflowRun struct {
 	Status               string                 `json:"status"`
 	Steps                []WorkflowStepRun      `json:"steps,omitempty"`
 	InputRequests        []WorkflowInputRequest `json:"input_requests,omitempty"`
+	CurrentStep          *WorkflowStepRun       `json:"current_step,omitempty"`
 }
 
 type WorkflowStepRun struct {

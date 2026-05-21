@@ -73,6 +73,55 @@ func TestWorkflowRunToResponseCoalescesCompletedRunSteps(t *testing.T) {
 	}
 }
 
+func TestWorkflowRunToResponseExposesCurrentStep(t *testing.T) {
+	run := db.WorkflowRun{
+		ID:               parseUUID("11111111-1111-1111-1111-111111111111"),
+		WorkspaceID:      parseUUID("22222222-2222-2222-2222-222222222222"),
+		AgentTaskQueueID: parseUUID("33333333-3333-3333-3333-333333333333"),
+		TriggerType:      "assignment",
+		Status:           "running",
+		CreatedAt:        pgtype.Timestamptz{Time: time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC), Valid: true},
+		UpdatedAt:        pgtype.Timestamptz{Time: time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC), Valid: true},
+	}
+	steps := []db.WorkflowStepRun{
+		{
+			ID:               parseUUID("44444444-4444-4444-4444-444444444444"),
+			WorkflowRunID:    run.ID,
+			StepDefinitionID: "context",
+			Title:            "Context",
+			Status:           "ready",
+			ExecutionKind:    "agent",
+			Attempt:          1,
+			CreatedAt:        run.CreatedAt,
+			UpdatedAt:        run.UpdatedAt,
+		},
+		{
+			ID:               parseUUID("55555555-5555-5555-5555-555555555555"),
+			WorkflowRunID:    run.ID,
+			StepDefinitionID: "implement",
+			Title:            "Implement",
+			Status:           "running",
+			ExecutionKind:    "agent",
+			Attempt:          1,
+			CreatedAt:        run.CreatedAt,
+			UpdatedAt:        run.UpdatedAt,
+		},
+	}
+
+	resp := workflowRunToResponse(run, steps, nil, nil, nil, nil)
+	if resp.CurrentStep == nil {
+		t.Fatal("current step should be present")
+	}
+	if got := resp.CurrentStep.StepDefinitionID; got != "implement" {
+		t.Fatalf("current step = %q, want running step", got)
+	}
+
+	run.Status = "completed"
+	if current := workflowRunToResponse(run, steps, nil, nil, nil, nil).CurrentStep; current != nil {
+		t.Fatalf("completed run current step = %+v, want nil", current)
+	}
+}
+
 func TestCreateAgentAssignedIssueCreatesWorkflowRunAtQueueTime(t *testing.T) {
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "Workflow Runtime Agent", []byte("[]"))

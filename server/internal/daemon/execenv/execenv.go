@@ -102,6 +102,20 @@ type TaskContextForEnv struct {
 	ExecutionProtocolSlug    string // selected assignment-task protocol template; empty resolves to the standard template
 	WorkflowRenderedMarkdown string // immutable workflow snapshot rendered when the task was queued
 	WorkflowRunID            string // materialized workflow run ID for step/artifact/review control commands
+	WorkflowCurrentStep      *WorkflowStepContextForEnv
+}
+
+type WorkflowStepContextForEnv struct {
+	ID               string
+	StepDefinitionID string
+	Title            string
+	Status           string
+	ExecutionKind    string
+	Attempt          int32
+	OrderIndex       int32
+	DependsOnStepIDs []string
+	ArtifactInputs   string
+	Snapshot         string
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

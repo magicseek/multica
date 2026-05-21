@@ -247,6 +247,16 @@ describe("ApiClient schema fallback", () => {
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-01T00:00:00Z",
         future_field: { preserved: true },
+        current_step: {
+          id: "step-run-1",
+          workflow_run_id: "run-1",
+          step_definition_id: "implement",
+          title: "Implement",
+          status: "ready",
+          execution_kind: "agent",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
       });
       const client = new ApiClient("https://api.example.test");
       const run = await client.getWorkflowRun("run-1");
@@ -255,6 +265,8 @@ describe("ApiClient schema fallback", () => {
       expect(run.reviews).toEqual([]);
       expect(run.quality_gate_results).toEqual([]);
       expect(run.status).toBe("future_status");
+      expect(run.current_step?.id).toBe("step-run-1");
+      expect(run.current_step?.attempt).toBe(1);
       expect((run as unknown as Record<string, unknown>).future_field).toEqual({ preserved: true });
     });
 
