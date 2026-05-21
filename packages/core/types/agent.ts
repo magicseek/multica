@@ -74,7 +74,7 @@ export interface AgentTask {
   // autopilot-spawned. Check chat_session_id / autopilot_run_id to tell
   // which source produced it.
   issue_id: string;
-  status: "queued" | "dispatched" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "dispatched" | "running" | "waiting" | "completed" | "failed" | "cancelled";
   priority: number;
   dispatched_at: string | null;
   started_at: string | null;

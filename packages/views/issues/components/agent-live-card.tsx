@@ -222,6 +222,7 @@ export function AgentLiveCard({ issueId }: AgentLiveCardProps) {
   const statusRank: Record<AgentTask["status"], number> = {
     running: 0,
     dispatched: 1,
+    waiting: 2,
     queued: 2,
     completed: 3,
     failed: 3,
@@ -278,6 +279,8 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const isQueued = task.status === "queued";
+  const isWaiting = task.status === "waiting";
+  const isPassive = isQueued || isWaiting;
 
   // Elapsed time — ticks every second so users see the agent is alive.
   // For queued tasks neither started_at nor dispatched_at is set yet, so
@@ -311,7 +314,7 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
   // Queued tasks render with a non-spinning Clock and dimmer accent so the
   // banner reads as "waiting" rather than "working" at a glance.
   return (
-    <div className={isQueued ? "rounded-lg border border-border bg-muted/30" : "rounded-lg border border-info/20 bg-info/5"}>
+    <div className={isPassive ? "rounded-lg border border-border bg-muted/30" : "rounded-lg border border-info/20 bg-info/5"}>
       <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
         {task.agent_id ? (
           <ActorAvatar actorType="agent" actorId={task.agent_id} size={20} enableHoverCard showStatusDot />
@@ -321,22 +324,24 @@ function SingleAgentLiveCard({ task, items, issueId, agentName }: SingleAgentLiv
           </div>
         )}
         <div className="flex items-center gap-1.5 text-xs min-w-0">
-          {isQueued ? (
+          {isPassive ? (
             <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
           ) : (
             <Loader2 className="h-3 w-3 animate-spin text-info shrink-0" />
           )}
           <span className="font-medium text-foreground truncate">
-            {isQueued
+            {isWaiting
+              ? t(($) => $.agent_live.needs_input, { name: agentName })
+              : isQueued
               ? t(($) => $.agent_live.is_queued, { name: agentName })
               : t(($) => $.agent_live.is_working, { name: agentName })}
           </span>
           <span className="text-muted-foreground tabular-nums shrink-0">
-            {isQueued
+            {isPassive
               ? t(($) => $.agent_live.queued_elapsed_prefix, { elapsed })
               : elapsed}
           </span>
-          {!isQueued && toolCount > 0 && (
+          {!isPassive && toolCount > 0 && (
             <span className="text-muted-foreground shrink-0">{t(($) => $.agent_live.tool_count, { count: toolCount })}</span>
           )}
         </div>

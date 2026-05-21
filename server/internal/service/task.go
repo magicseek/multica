@@ -1043,6 +1043,18 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 					"current_status", existing.Status,
 					"agent_id", util.UUIDToString(existing.AgentID),
 				)
+				if existing.Status == "waiting" && (sessionID != "" || workDir != "") {
+					if pinErr := s.Queries.UpdateAgentTaskSession(ctx, db.UpdateAgentTaskSessionParams{
+						ID:        taskID,
+						SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
+						WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
+					}); pinErr != nil {
+						slog.Warn("complete waiting task: pin session failed",
+							"task_id", util.UUIDToString(taskID),
+							"error", pinErr,
+						)
+					}
+				}
 				return &existing, nil
 			}
 			slog.Warn("complete task failed",

@@ -116,7 +116,7 @@ func (q *Queries) ArchiveAgentsByRuntime(ctx context.Context, arg ArchiveAgentsB
 const cancelAgentTask = `-- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -159,7 +159,7 @@ func (q *Queries) CancelAgentTask(ctx context.Context, id pgtype.UUID) (AgentTas
 const cancelAgentTasksByAgent = `-- name: CancelAgentTasksByAgent :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -220,7 +220,7 @@ func (q *Queries) CancelAgentTasksByAgent(ctx context.Context, agentID pgtype.UU
 const cancelAgentTasksByChatSession = `-- name: CancelAgentTasksByChatSession :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -281,7 +281,7 @@ func (q *Queries) CancelAgentTasksByChatSession(ctx context.Context, chatSession
 const cancelAgentTasksByIssue = `-- name: CancelAgentTasksByIssue :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -342,7 +342,7 @@ func (q *Queries) CancelAgentTasksByIssue(ctx context.Context, issueID pgtype.UU
 const cancelAgentTasksByIssueAndAgent = `-- name: CancelAgentTasksByIssueAndAgent :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -407,7 +407,7 @@ func (q *Queries) CancelAgentTasksByIssueAndAgent(ctx context.Context, arg Cance
 const cancelAgentTasksByTriggerComment = `-- name: CancelAgentTasksByTriggerComment :many
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
 `
 
@@ -474,7 +474,7 @@ WHERE id = (
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running')
+            AND active.status IN ('dispatched', 'running', 'waiting')
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -1467,7 +1467,7 @@ func (q *Queries) GetWorkspaceAgentRunCounts(ctx context.Context, workspaceID pg
 
 const hasActiveTaskForIssue = `-- name: HasActiveTaskForIssue :one
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 `
 
 // Returns true if there is any queued, dispatched, or running task for the issue.
@@ -1480,7 +1480,7 @@ func (q *Queries) HasActiveTaskForIssue(ctx context.Context, issueID pgtype.UUID
 
 const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'waiting')
 `
 
 // Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -1496,7 +1496,7 @@ func (q *Queries) HasPendingTaskForIssue(ctx context.Context, issueID pgtype.UUI
 
 const hasPendingTaskForIssueAndAgent = `-- name: HasPendingTaskForIssueAndAgent :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched')
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'waiting')
 `
 
 type HasPendingTaskForIssueAndAgentParams struct {
@@ -1536,7 +1536,7 @@ func (q *Queries) LinkTaskToIssue(ctx context.Context, arg LinkTaskToIssueParams
 
 const listActiveTasksByIssue = `-- name: ListActiveTasksByIssue :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC
 `
 
@@ -1926,7 +1926,7 @@ const listWorkspaceAgentTaskSnapshot = `-- name: ListWorkspaceAgentTaskSnapshot 
 SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatched_at, atq.started_at, atq.completed_at, atq.result, atq.error, atq.created_at, atq.context, atq.runtime_id, atq.session_id, atq.work_dir, atq.trigger_comment_id, atq.chat_session_id, atq.autopilot_run_id, atq.attempt, atq.max_attempts, atq.parent_task_id, atq.failure_reason, atq.trigger_summary, atq.force_fresh_session, atq.is_leader_task, atq.workflow_definition_id, atq.workflow_revision_id, atq.workflow_snapshot FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
-  AND atq.status IN ('queued', 'dispatched', 'running')
+  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting')
 
 UNION ALL
 
@@ -2112,6 +2112,55 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 	return i, err
 }
 
+const requeueWaitingAgentTask = `-- name: RequeueWaitingAgentTask :one
+UPDATE agent_task_queue
+SET status = 'queued',
+    dispatched_at = NULL,
+    started_at = NULL,
+    completed_at = NULL,
+    created_at = now()
+WHERE id = $1 AND status = 'waiting'
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
+`
+
+// Re-anchors created_at so existing queued-task TTL cleanup does not
+// immediately expire a task that spent a long time waiting for a human answer.
+func (q *Queries) RequeueWaitingAgentTask(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, requeueWaitingAgentTask, id)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WorkflowDefinitionID,
+		&i.WorkflowRevisionID,
+		&i.WorkflowSnapshot,
+	)
+	return i, err
+}
+
 const restoreAgent = `-- name: RestoreAgent :one
 UPDATE agent SET archived_at = NULL, archived_by = NULL, updated_at = now()
 WHERE id = $1
@@ -2158,6 +2207,57 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 
 func (q *Queries) StartAgentTask(ctx context.Context, id pgtype.UUID) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, startAgentTask, id)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WorkflowDefinitionID,
+		&i.WorkflowRevisionID,
+		&i.WorkflowSnapshot,
+	)
+	return i, err
+}
+
+const suspendAgentTaskForWorkflowInput = `-- name: SuspendAgentTaskForWorkflowInput :one
+UPDATE agent_task_queue
+SET status = 'waiting',
+    session_id = COALESCE($2, session_id),
+    work_dir = COALESCE($3, work_dir)
+WHERE id = $1 AND status IN ('dispatched', 'running')
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
+`
+
+type SuspendAgentTaskForWorkflowInputParams struct {
+	ID        pgtype.UUID `json:"id"`
+	SessionID pgtype.Text `json:"session_id"`
+	WorkDir   pgtype.Text `json:"work_dir"`
+}
+
+func (q *Queries) SuspendAgentTaskForWorkflowInput(ctx context.Context, arg SuspendAgentTaskForWorkflowInputParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, suspendAgentTaskForWorkflowInput, arg.ID, arg.SessionID, arg.WorkDir)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -2330,7 +2430,7 @@ const updateAgentTaskSession = `-- name: UpdateAgentTaskSession :exec
 UPDATE agent_task_queue
 SET session_id = COALESCE($2, session_id),
     work_dir  = COALESCE($3, work_dir)
-WHERE id = $1 AND status IN ('dispatched', 'running')
+WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting')
 `
 
 type UpdateAgentTaskSessionParams struct {
@@ -2341,7 +2441,7 @@ type UpdateAgentTaskSessionParams struct {
 
 // Pins the resume pointer mid-flight so a daemon crash leaves a usable
 // session_id/work_dir on the task row. No-op if the task is no longer
-// in dispatched/running.
+// in dispatched/running/waiting.
 func (q *Queries) UpdateAgentTaskSession(ctx context.Context, arg UpdateAgentTaskSessionParams) error {
 	_, err := q.db.Exec(ctx, updateAgentTaskSession, arg.ID, arg.SessionID, arg.WorkDir)
 	return err

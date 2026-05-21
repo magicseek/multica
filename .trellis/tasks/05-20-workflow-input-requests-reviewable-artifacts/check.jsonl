@@ -1,0 +1,7 @@
+{"file": "server/internal/service/workflow_runtime_test.go", "reason": "Service tests for workflow input requests, step waiting, artifacts, reviews, and diffs"}
+{"file": "server/internal/handler/workflow_runtime_test.go", "reason": "HTTP handler tests for workflow runtime routes"}
+{"file": "server/internal/handler/daemon_test.go", "reason": "Daemon claim payload and workflow context tests"}
+{"file": "server/internal/daemon/daemon_test.go", "reason": "Daemon task completion/failure/suspend lifecycle tests"}
+{"file": "server/internal/daemon/execenv/execenv_test.go", "reason": "Runtime instruction and workflow command injection tests"}
+{"file": "packages/views/workflows/components/workflow-run-viewer.test.tsx", "reason": "Workflow run viewer tests for input request and artifact review UI"}
+{"file": "packages/views/issues/components/issue-detail.test.tsx", "reason": "Issue detail tests for Needs input attention and answer routing"}

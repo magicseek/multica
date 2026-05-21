@@ -1,1 +1,6 @@
-export { WorkflowsPage, WorkflowPicker, WorkflowRunViewer } from "./components";
+export {
+  WorkflowsPage,
+  WorkflowArtifactReviewList,
+  WorkflowPicker,
+  WorkflowRunViewer,
+} from "./components";

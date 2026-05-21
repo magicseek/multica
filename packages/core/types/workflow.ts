@@ -54,6 +54,11 @@ export interface WorkflowStep {
     name?: string;
     required?: boolean;
   }>;
+  input_requests?: {
+    allowed?: boolean;
+    max_rounds?: number;
+    question_policy?: "one_at_a_time" | string;
+  };
   review?: {
     required?: boolean;
     reviewer_role?: string;
@@ -203,6 +208,7 @@ export type WorkflowStepRunStatus =
   | "pending"
   | "ready"
   | "running"
+  | "waiting_input"
   | "waiting_manual"
   | "waiting_external"
   | "waiting_review"
@@ -276,6 +282,38 @@ export interface WorkflowQualityGateResult {
   created_at: string;
 }
 
+export interface WorkflowInputRequest {
+  id: string;
+  workspace_id: string;
+  workflow_run_id: string;
+  workflow_step_run_id: string;
+  issue_id?: string | null;
+  chat_session_id?: string | null;
+  question_comment_id?: string | null;
+  answer_comment_id?: string | null;
+  requester_agent_id?: string | null;
+  responder_id?: string | null;
+  status: "requested" | "answered" | "cancelled" | "expired" | string;
+  question_text: string;
+  answer_text?: string | null;
+  round_index: number;
+  max_rounds: number;
+  requested_at: string;
+  answered_at?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowArtifactDiff {
+  logical_name: string;
+  base_version: number;
+  target_version: number;
+  content_kind: "markdown" | "json" | "text" | string;
+  unified_diff: string;
+  summary?: string | null;
+}
+
 export interface WorkflowRun {
   id: string;
   workspace_id: string;
@@ -297,4 +335,5 @@ export interface WorkflowRun {
   artifacts?: WorkflowArtifact[];
   reviews?: WorkflowReview[];
   quality_gate_results?: WorkflowQualityGateResult[];
+  input_requests?: WorkflowInputRequest[];
 }

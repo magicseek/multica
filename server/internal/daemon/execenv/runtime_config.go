@@ -68,6 +68,9 @@ func appendRepositoryContext(b *strings.Builder, repo RepositoryContextForEnv) {
 			fmt.Fprintf(b, " (default branch: `%s`)", repo.DefaultBranch)
 		}
 		b.WriteString("\n")
+	} else if localCheckoutPath := strings.TrimSpace(repo.LocalCheckoutPath); localCheckoutPath != "" {
+		fmt.Fprintf(b, "  - Local checkout: `cd %s`\n", filepath.ToSlash(localCheckoutPath))
+		b.WriteString("  - Use this directory directly for code changes. Do not run `multica repo checkout` for this local repository.\n")
 	} else if localPath, ok := usableLocalBindingPath(repo); ok {
 		fmt.Fprintf(b, "  - Local path: `%s`\n", localPath)
 		b.WriteString("  - Use this directory directly for code changes. Do not run `multica repo checkout` for this local repository.\n")
@@ -236,6 +239,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("### Workflow Run Control\n")
 	b.WriteString("- `multica workflow step start <step-run-id>` — Mark a ready workflow step as running before doing its work\n")
 	b.WriteString("- `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text` — Persist an explicit versioned workflow artifact\n")
+	b.WriteString("- `multica workflow input request <step-run-id> --question-file <path|-> [--max-rounds N]` — Ask a bounded human clarification question when the current agent step explicitly allows input requests. This suspends the backing task and releases daemon capacity; do not also mark the task completed.\n")
 	b.WriteString("- `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text` — Record agent-produced quality evidence with provenance\n")
 	b.WriteString("- `multica workflow step complete <step-run-id>` — Complete a workflow step; human review may move it to waiting_review instead of completed\n")
 	b.WriteString("- `multica workflow step fail <step-run-id> --reason \"...\"` / `pause` / `retry` / `skip` — Control step lifecycle without editing the immutable workflow snapshot\n\n")
@@ -243,8 +247,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	if ctx.WorkflowRunID != "" {
 		b.WriteString("## Workflow Step Tracking\n\n")
 		fmt.Fprintf(&b, "This task has workflow run `%s`, also available as `MULTICA_WORKFLOW_RUN_ID`. The workflow card is user-visible, so keep step state current as you work.\n\n", ctx.WorkflowRunID)
-		b.WriteString("Before each workflow phase, run `multica workflow run get \"$MULTICA_WORKFLOW_RUN_ID\" --output json`, find the next ready step, then mark it with `multica workflow step start <step-run-id>` before doing that phase and `multica workflow step complete <step-run-id>` after it is done. If a phase is impossible, use `fail` or `pause` with the reason instead of leaving the step pending.\n\n")
-		b.WriteString("Artifacts, reviews, and quality results are explicit workflow evidence records; they are not inferred from changed files, comments, or completed steps. When a phase produces durable output such as a contract, plan, implementation summary, verification report, or final handoff, persist it with `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text`. After verification or check phases, record quality evidence with `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text`. Review counts only appear when the workflow actually requests a human or agent review.\n\n")
+		b.WriteString("Before each workflow phase, run `multica workflow run get \"$MULTICA_WORKFLOW_RUN_ID\" --output json`, find the next ready step, then mark it with `multica workflow step start <step-run-id>` before doing that phase and `multica workflow step complete <step-run-id>` after it is done. If the step cannot continue without a human decision and its snapshot has `input_requests.allowed=true`, ask with `multica workflow input request <step-run-id> --question-file <path|->`; otherwise use `fail` or `pause` with the reason instead of leaving the step pending.\n\n")
+		b.WriteString("Artifacts, reviews, and quality results are explicit workflow evidence records; they are not inferred from changed files, comments, or completed steps. When a phase produces durable output such as a contract, plan, implementation summary, verification report, or final handoff, persist it with `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text`. If a design, plan, or requirements doc needs user review or approval in Multica, saving only `.multica/outputs.json` or mentioning a local path in a comment is insufficient; save the complete content as a workflow artifact so the control surface can preview and diff it. After verification or check phases, record quality evidence with `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text`. Review counts only appear when the workflow actually requests a human or agent review.\n\n")
 	}
 
 	if provider == "codex" {

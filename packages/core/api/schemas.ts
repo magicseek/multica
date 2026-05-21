@@ -28,7 +28,9 @@ import type {
   TaskOutputMetadata,
   TimelineEntry,
   WorkflowArtifact,
+  WorkflowArtifactDiff,
   WorkflowDefinition,
+  WorkflowInputRequest,
   WorkflowPreviewResponse,
   WorkflowQualityGateResult,
   WorkflowReview,
@@ -622,6 +624,11 @@ const WorkflowStepSchema = z.object({
     inputs: z.array(WorkflowArtifactInputSchema).optional(),
   }).loose().optional(),
   input_artifacts: z.array(WorkflowArtifactInputSchema).optional(),
+  input_requests: z.object({
+    allowed: z.boolean().optional(),
+    max_rounds: z.number().optional(),
+    question_policy: z.string().optional(),
+  }).loose().optional(),
   review: z.object({
     required: z.boolean().optional(),
   }).loose().optional(),
@@ -857,6 +864,60 @@ export const EMPTY_WORKFLOW_QUALITY_GATE_RESULT: WorkflowQualityGateResult = {
   created_at: "",
 };
 
+export const WorkflowInputRequestSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  workflow_run_id: z.string().default(""),
+  workflow_step_run_id: z.string().default(""),
+  issue_id: z.string().nullable().optional(),
+  chat_session_id: z.string().nullable().optional(),
+  question_comment_id: z.string().nullable().optional(),
+  answer_comment_id: z.string().nullable().optional(),
+  requester_agent_id: z.string().nullable().optional(),
+  responder_id: z.string().nullable().optional(),
+  status: z.string().default("requested"),
+  question_text: z.string().default(""),
+  answer_text: z.string().nullable().optional(),
+  round_index: z.number().default(1),
+  max_rounds: z.number().default(1),
+  requested_at: z.string().default(""),
+  answered_at: z.string().nullable().optional(),
+  cancelled_at: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_WORKFLOW_INPUT_REQUEST: WorkflowInputRequest = {
+  id: "",
+  workspace_id: "",
+  workflow_run_id: "",
+  workflow_step_run_id: "",
+  status: "requested",
+  question_text: "",
+  round_index: 1,
+  max_rounds: 1,
+  requested_at: "",
+  created_at: "",
+  updated_at: "",
+};
+
+export const WorkflowArtifactDiffSchema = z.object({
+  logical_name: z.string().default(""),
+  base_version: z.number().default(0),
+  target_version: z.number().default(0),
+  content_kind: z.string().default("text"),
+  unified_diff: z.string().default(""),
+  summary: z.string().nullable().optional(),
+}).loose();
+
+export const EMPTY_WORKFLOW_ARTIFACT_DIFF: WorkflowArtifactDiff = {
+  logical_name: "",
+  base_version: 0,
+  target_version: 0,
+  content_kind: "text",
+  unified_diff: "",
+};
+
 export const WorkflowRunSchema = z.object({
   id: z.string(),
   workspace_id: z.string().default(""),
@@ -878,6 +939,7 @@ export const WorkflowRunSchema = z.object({
   artifacts: z.array(WorkflowArtifactSchema).default([]),
   reviews: z.array(WorkflowReviewSchema).default([]),
   quality_gate_results: z.array(WorkflowQualityGateResultSchema).default([]),
+  input_requests: z.array(WorkflowInputRequestSchema).default([]),
 }).loose();
 
 export const EMPTY_WORKFLOW_RUN: WorkflowRun = {
@@ -892,6 +954,7 @@ export const EMPTY_WORKFLOW_RUN: WorkflowRun = {
   artifacts: [],
   reviews: [],
   quality_gate_results: [],
+  input_requests: [],
 };
 
 export const WorkflowRunListSchema = z.array(WorkflowRunSchema);

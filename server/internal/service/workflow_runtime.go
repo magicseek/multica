@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/mention"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -24,6 +29,7 @@ const (
 	workflowStepStatusPending         = "pending"
 	workflowStepStatusReady           = "ready"
 	workflowStepStatusRunning         = "running"
+	workflowStepStatusWaitingInput    = "waiting_input"
 	workflowStepStatusWaitingManual   = "waiting_manual"
 	workflowStepStatusWaitingExternal = "waiting_external"
 	workflowStepStatusWaitingReview   = "waiting_review"
@@ -48,6 +54,10 @@ const (
 
 	workflowReviewStatusApproved = "approved"
 	workflowReviewStatusRejected = "rejected"
+
+	workflowInputRequestStatusRequested = "requested"
+	workflowInputRequestStatusAnswered  = "answered"
+	workflowInputRequestStatusCancelled = "cancelled"
 )
 
 type workflowRuntimeSchema struct {
@@ -67,6 +77,7 @@ type workflowRuntimeStep struct {
 	Review         workflowRuntimeStepReview    `json:"review,omitempty"`
 	ReviewRequired *bool                        `json:"review_required,omitempty"`
 	QualityGate    workflowRuntimeStepQuality   `json:"quality_gate,omitempty"`
+	InputRequests  workflowRuntimeInputRequests `json:"input_requests,omitempty"`
 }
 
 type workflowRuntimeStepExecution struct {
@@ -85,6 +96,12 @@ type workflowRuntimeStepQuality struct {
 	Blocking bool `json:"blocking,omitempty"`
 }
 
+type workflowRuntimeInputRequests struct {
+	Allowed        bool   `json:"allowed,omitempty"`
+	MaxRounds      int32  `json:"max_rounds,omitempty"`
+	QuestionPolicy string `json:"question_policy,omitempty"`
+}
+
 type workflowInitialStepRun struct {
 	StepDefinitionID string
 	Title            string
@@ -96,6 +113,15 @@ type workflowInitialStepRun struct {
 	ArtifactInputs   []byte
 	Snapshot         []byte
 	Attempt          int32
+}
+
+type WorkflowArtifactDiff struct {
+	LogicalName   string
+	BaseVersion   int32
+	TargetVersion int32
+	ContentKind   string
+	UnifiedDiff   string
+	Summary       *string
 }
 
 func (s *TaskService) createWorkflowRunForTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) error {
@@ -445,6 +471,248 @@ func (s *TaskService) PauseWorkflowStepRun(ctx context.Context, stepID pgtype.UU
 	return out, err
 }
 
+func (s *TaskService) CreateWorkflowInputRequest(ctx context.Context, stepID pgtype.UUID, questionText string, maxRounds int32, requesterAgentID pgtype.UUID, sessionID, workDir string) (db.WorkflowInputRequest, error) {
+	questionText = strings.TrimSpace(questionText)
+	if questionText == "" {
+		return db.WorkflowInputRequest{}, fmt.Errorf("question_text is required")
+	}
+
+	var (
+		out             db.WorkflowInputRequest
+		questionComment db.Comment
+		createdComment  bool
+	)
+	err := s.runInTx(ctx, func(q *db.Queries) error {
+		step, err := q.GetWorkflowStepRun(ctx, stepID)
+		if err != nil {
+			return fmt.Errorf("load workflow step run: %w", err)
+		}
+		if step.ExecutionKind != workflowStepExecutionAgent {
+			return fmt.Errorf("workflow input requests are only allowed for agent steps")
+		}
+		policy := workflowInputRequestPolicy(step.Snapshot)
+		if !policy.Allowed {
+			return fmt.Errorf("workflow step does not allow input requests")
+		}
+		policyMax := policy.MaxRounds
+		if policyMax <= 0 {
+			policyMax = 1
+		}
+		if maxRounds <= 0 {
+			maxRounds = policyMax
+		}
+		if maxRounds > policyMax {
+			return fmt.Errorf("max_rounds exceeds workflow step policy")
+		}
+		rounds, err := q.CountWorkflowInputRequestRoundsByStepRun(ctx, step.ID)
+		if err != nil {
+			return fmt.Errorf("count workflow input request rounds: %w", err)
+		}
+		if rounds >= maxRounds {
+			return fmt.Errorf("workflow input request round limit reached")
+		}
+		if _, err := q.GetOpenWorkflowInputRequestByStepRun(ctx, step.ID); err == nil {
+			return fmt.Errorf("workflow step already has an open input request")
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("check open workflow input request: %w", err)
+		}
+
+		run, err := q.GetWorkflowRun(ctx, step.WorkflowRunID)
+		if err != nil {
+			return fmt.Errorf("load workflow run: %w", err)
+		}
+		task, err := q.GetAgentTask(ctx, run.AgentTaskQueueID)
+		if err != nil {
+			return fmt.Errorf("load workflow task: %w", err)
+		}
+		if !requesterAgentID.Valid {
+			requesterAgentID = task.AgentID
+		}
+
+		var questionCommentID pgtype.UUID
+		if run.IssueID.Valid {
+			comment, err := createWorkflowRuntimeComment(ctx, q, run.IssueID, "agent", requesterAgentID, questionText, pgtype.UUID{})
+			if err != nil {
+				return fmt.Errorf("create workflow input question comment: %w", err)
+			}
+			questionComment = comment
+			questionCommentID = comment.ID
+			createdComment = true
+		}
+
+		request, err := q.CreateWorkflowInputRequest(ctx, db.CreateWorkflowInputRequestParams{
+			WorkspaceID:       run.WorkspaceID,
+			WorkflowRunID:     run.ID,
+			WorkflowStepRunID: step.ID,
+			IssueID:           run.IssueID,
+			ChatSessionID:     run.ChatSessionID,
+			QuestionCommentID: questionCommentID,
+			RequesterAgentID:  requesterAgentID,
+			QuestionText:      questionText,
+			MaxRounds:         maxRounds,
+		})
+		if err != nil {
+			return fmt.Errorf("create workflow input request: %w", err)
+		}
+		if _, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+			ID:     step.ID,
+			Status: workflowStepStatusWaitingInput,
+		}); err != nil {
+			return fmt.Errorf("mark workflow step waiting for input: %w", err)
+		}
+		if _, err := q.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{
+			ID:     run.ID,
+			Status: workflowRunStatusWaiting,
+		}); err != nil {
+			return fmt.Errorf("mark workflow run waiting for input: %w", err)
+		}
+		if _, err := q.SuspendAgentTaskForWorkflowInput(ctx, db.SuspendAgentTaskForWorkflowInputParams{
+			ID:        run.AgentTaskQueueID,
+			SessionID: textParam(sessionID),
+			WorkDir:   textParam(workDir),
+		}); err != nil {
+			return fmt.Errorf("suspend task for workflow input: %w", err)
+		}
+		out = request
+		return nil
+	})
+	if err != nil {
+		return db.WorkflowInputRequest{}, err
+	}
+	if createdComment {
+		s.publishWorkflowRuntimeComment(ctx, questionComment, "agent", requesterAgentID)
+	}
+	if out.WorkflowRunID.Valid {
+		if run, runErr := s.Queries.GetWorkflowRun(ctx, out.WorkflowRunID); runErr == nil {
+			task, taskErr := s.Queries.GetAgentTask(ctx, run.AgentTaskQueueID)
+			if taskErr == nil {
+				s.ReconcileAgentStatus(ctx, task.AgentID)
+				s.broadcastTaskEvent(ctx, protocol.EventTaskProgress, task)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *TaskService) AnswerWorkflowInputRequest(ctx context.Context, requestID, responderID pgtype.UUID, answerText string, shouldContinue bool) (db.WorkflowInputRequest, error) {
+	answerText = strings.TrimSpace(answerText)
+	if answerText == "" {
+		return db.WorkflowInputRequest{}, fmt.Errorf("answer_text is required")
+	}
+
+	var (
+		out           db.WorkflowInputRequest
+		answerComment db.Comment
+		createdAnswer bool
+		requeuedTask  db.AgentTaskQueue
+		didRequeue    bool
+	)
+	err := s.runInTx(ctx, func(q *db.Queries) error {
+		request, err := q.GetWorkflowInputRequest(ctx, requestID)
+		if err != nil {
+			return fmt.Errorf("load workflow input request: %w", err)
+		}
+		if request.Status != workflowInputRequestStatusRequested {
+			return fmt.Errorf("workflow input request is not open")
+		}
+
+		var answerCommentID pgtype.UUID
+		if request.IssueID.Valid {
+			comment, err := createWorkflowRuntimeComment(ctx, q, request.IssueID, "member", responderID, answerText, request.QuestionCommentID)
+			if err != nil {
+				return fmt.Errorf("create workflow input answer comment: %w", err)
+			}
+			answerComment = comment
+			answerCommentID = comment.ID
+			createdAnswer = true
+		}
+
+		updated, err := q.AnswerWorkflowInputRequest(ctx, db.AnswerWorkflowInputRequestParams{
+			ID:              request.ID,
+			AnswerText:      textParam(answerText),
+			AnswerCommentID: answerCommentID,
+			ResponderID:     responderID,
+		})
+		if err != nil {
+			return fmt.Errorf("answer workflow input request: %w", err)
+		}
+		out = updated
+		if !shouldContinue {
+			return nil
+		}
+
+		step, err := q.GetWorkflowStepRun(ctx, request.WorkflowStepRunID)
+		if err != nil {
+			return fmt.Errorf("load workflow step run: %w", err)
+		}
+		run, err := q.GetWorkflowRun(ctx, request.WorkflowRunID)
+		if err != nil {
+			return fmt.Errorf("load workflow run: %w", err)
+		}
+		nextStatus := workflowStepStatusReady
+		if step.ExecutionKind != workflowStepExecutionAgent {
+			nextStatus = initialWorkflowStepStatus(workflowStepDependencies(step), step.ExecutionKind)
+		}
+		if _, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+			ID:     step.ID,
+			Status: nextStatus,
+		}); err != nil {
+			return fmt.Errorf("mark workflow step ready after input: %w", err)
+		}
+		if _, err := q.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{
+			ID:     run.ID,
+			Status: workflowRunStatusQueued,
+		}); err != nil {
+			return fmt.Errorf("mark workflow run queued after input: %w", err)
+		}
+		task, err := q.RequeueWaitingAgentTask(ctx, run.AgentTaskQueueID)
+		if err != nil {
+			return fmt.Errorf("requeue workflow input task: %w", err)
+		}
+		requeuedTask = task
+		didRequeue = true
+		return nil
+	})
+	if err != nil {
+		return db.WorkflowInputRequest{}, err
+	}
+	if createdAnswer {
+		s.publishWorkflowRuntimeComment(ctx, answerComment, "member", responderID)
+	}
+	if didRequeue {
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, requeuedTask)
+		s.NotifyTaskEnqueued(ctx, requeuedTask)
+	}
+	return out, nil
+}
+
+func (s *TaskService) CancelWorkflowInputRequest(ctx context.Context, requestID pgtype.UUID) (db.WorkflowInputRequest, error) {
+	var out db.WorkflowInputRequest
+	err := s.runInTx(ctx, func(q *db.Queries) error {
+		request, err := q.GetWorkflowInputRequest(ctx, requestID)
+		if err != nil {
+			return fmt.Errorf("load workflow input request: %w", err)
+		}
+		if request.Status != workflowInputRequestStatusRequested {
+			return fmt.Errorf("workflow input request is not open")
+		}
+		cancelled, err := q.CancelWorkflowInputRequest(ctx, request.ID)
+		if err != nil {
+			return fmt.Errorf("cancel workflow input request: %w", err)
+		}
+		if _, err := q.UpdateWorkflowStepRunStatus(ctx, db.UpdateWorkflowStepRunStatusParams{
+			ID:     request.WorkflowStepRunID,
+			Status: workflowStepStatusPaused,
+			Error:  textParam("workflow input request cancelled"),
+		}); err != nil {
+			return fmt.Errorf("pause workflow step after input cancellation: %w", err)
+		}
+		out = cancelled
+		return nil
+	})
+	return out, err
+}
+
 func (s *TaskService) SkipWorkflowStepRun(ctx context.Context, stepID pgtype.UUID) (db.WorkflowStepRun, error) {
 	var out db.WorkflowStepRun
 	err := s.runInTx(ctx, func(q *db.Queries) error {
@@ -534,6 +802,44 @@ func (s *TaskService) SaveWorkflowArtifact(ctx context.Context, stepID pgtype.UU
 		return nil
 	})
 	return out, err
+}
+
+func (s *TaskService) GetWorkflowArtifactDiff(ctx context.Context, artifactID pgtype.UUID, baseVersion, targetVersion int32) (WorkflowArtifactDiff, error) {
+	if baseVersion <= 0 || targetVersion <= 0 {
+		return WorkflowArtifactDiff{}, fmt.Errorf("base_version and target_version must be positive")
+	}
+	if baseVersion == targetVersion {
+		return WorkflowArtifactDiff{}, fmt.Errorf("base_version and target_version must differ")
+	}
+	base, err := s.Queries.GetWorkflowArtifactVersionByAnchor(ctx, db.GetWorkflowArtifactVersionByAnchorParams{
+		ID:      artifactID,
+		Version: baseVersion,
+	})
+	if err != nil {
+		return WorkflowArtifactDiff{}, fmt.Errorf("load base artifact version: %w", err)
+	}
+	target, err := s.Queries.GetWorkflowArtifactVersionByAnchor(ctx, db.GetWorkflowArtifactVersionByAnchorParams{
+		ID:      artifactID,
+		Version: targetVersion,
+	})
+	if err != nil {
+		return WorkflowArtifactDiff{}, fmt.Errorf("load target artifact version: %w", err)
+	}
+	if base.WorkflowStepRunID != target.WorkflowStepRunID || base.LogicalName != target.LogicalName {
+		return WorkflowArtifactDiff{}, fmt.Errorf("artifact versions do not belong to the same logical artifact")
+	}
+	if base.ContentKind != target.ContentKind {
+		return WorkflowArtifactDiff{}, fmt.Errorf("artifact versions use different content kinds")
+	}
+	baseText := workflowArtifactContentForDiff(base)
+	targetText := workflowArtifactContentForDiff(target)
+	return WorkflowArtifactDiff{
+		LogicalName:   base.LogicalName,
+		BaseVersion:   base.Version,
+		TargetVersion: target.Version,
+		ContentKind:   base.ContentKind,
+		UnifiedDiff:   unifiedLineDiff(fmt.Sprintf("%s v%d", base.LogicalName, base.Version), fmt.Sprintf("%s v%d", target.LogicalName, target.Version), baseText, targetText),
+	}, nil
 }
 
 func (s *TaskService) ReportWorkflowQualityGate(ctx context.Context, stepID, artifactID pgtype.UUID, status string, blocking bool, reportText string, reportJSON []byte, producerType string, producerID pgtype.UUID) (db.WorkflowQualityGateResult, error) {
@@ -700,7 +1006,7 @@ func (s *TaskService) refreshWorkflowRunStatus(ctx context.Context, q *db.Querie
 			if step.Required {
 				hasFailed = true
 			}
-		case workflowStepStatusWaitingManual, workflowStepStatusWaitingExternal, workflowStepStatusWaitingReview, workflowStepStatusWaitingQuality, workflowStepStatusPaused, workflowStepStatusPending:
+		case workflowStepStatusWaitingInput, workflowStepStatusWaitingManual, workflowStepStatusWaitingExternal, workflowStepStatusWaitingReview, workflowStepStatusWaitingQuality, workflowStepStatusPaused, workflowStepStatusPending:
 			hasWaiting = true
 		case workflowStepStatusReady, workflowStepStatusRunning:
 			hasActive = true
@@ -881,6 +1187,17 @@ func workflowStepRequiresReview(raw []byte) bool {
 	return step.Review.Required
 }
 
+func workflowInputRequestPolicy(raw []byte) workflowRuntimeInputRequests {
+	if len(raw) == 0 {
+		return workflowRuntimeInputRequests{}
+	}
+	var step workflowRuntimeStep
+	if err := json.Unmarshal(raw, &step); err != nil {
+		return workflowRuntimeInputRequests{}
+	}
+	return step.InputRequests
+}
+
 func hasBlockingQualityFailure(ctx context.Context, q *db.Queries, stepID pgtype.UUID) bool {
 	results, err := q.ListWorkflowQualityGateResultsByStep(ctx, stepID)
 	if err != nil {
@@ -953,4 +1270,130 @@ func nullableJSON(raw []byte) []byte {
 		return nil
 	}
 	return raw
+}
+
+func createWorkflowRuntimeComment(ctx context.Context, q *db.Queries, issueID pgtype.UUID, authorType string, authorID pgtype.UUID, content string, parentID pgtype.UUID) (db.Comment, error) {
+	issue, err := q.GetIssue(ctx, issueID)
+	if err != nil {
+		return db.Comment{}, err
+	}
+	if parentID.Valid {
+		if parent, err := q.GetComment(ctx, parentID); err == nil && parent.ParentID.Valid {
+			parentID = parent.ParentID
+		}
+	}
+	content = mention.ExpandIssueIdentifiers(ctx, q, issue.WorkspaceID, content)
+	return q.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issueID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  authorType,
+		AuthorID:    authorID,
+		Content:     content,
+		Type:        "comment",
+		ParentID:    parentID,
+	})
+}
+
+func (s *TaskService) publishWorkflowRuntimeComment(ctx context.Context, comment db.Comment, actorType string, actorID pgtype.UUID) {
+	if s.Bus == nil {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, comment.IssueID)
+	if err != nil {
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventCommentCreated,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   actorType,
+		ActorID:     util.UUIDToString(actorID),
+		Payload: map[string]any{
+			"comment": map[string]any{
+				"id":          util.UUIDToString(comment.ID),
+				"issue_id":    util.UUIDToString(comment.IssueID),
+				"author_type": comment.AuthorType,
+				"author_id":   util.UUIDToString(comment.AuthorID),
+				"content":     comment.Content,
+				"type":        comment.Type,
+				"parent_id":   util.UUIDToPtr(comment.ParentID),
+				"created_at":  util.TimestampToString(comment.CreatedAt),
+				"updated_at":  util.TimestampToString(comment.UpdatedAt),
+			},
+			"issue_title":         issue.Title,
+			"issue_assignee_type": util.TextToPtr(issue.AssigneeType),
+			"issue_assignee_id":   util.UUIDToPtr(issue.AssigneeID),
+			"issue_status":        issue.Status,
+		},
+	})
+}
+
+func workflowArtifactContentForDiff(artifact db.WorkflowArtifact) string {
+	if artifact.ContentKind == workflowArtifactKindJSON && len(artifact.ContentJson) > 0 {
+		var indented bytes.Buffer
+		if err := json.Indent(&indented, artifact.ContentJson, "", "  "); err == nil {
+			return indented.String()
+		}
+		return string(artifact.ContentJson)
+	}
+	if artifact.ContentText.Valid {
+		return artifact.ContentText.String
+	}
+	return ""
+}
+
+func unifiedLineDiff(baseName, targetName, baseText, targetText string) string {
+	baseLines := splitDiffLines(baseText)
+	targetLines := splitDiffLines(targetText)
+	var b strings.Builder
+	fmt.Fprintf(&b, "--- %s\n", baseName)
+	fmt.Fprintf(&b, "+++ %s\n", targetName)
+	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(baseLines), len(targetLines))
+
+	lcs := make([][]int, len(baseLines)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(targetLines)+1)
+	}
+	for i := len(baseLines) - 1; i >= 0; i-- {
+		for j := len(targetLines) - 1; j >= 0; j-- {
+			if baseLines[i] == targetLines[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else if lcs[i+1][j] >= lcs[i][j+1] {
+				lcs[i][j] = lcs[i+1][j]
+			} else {
+				lcs[i][j] = lcs[i][j+1]
+			}
+		}
+	}
+
+	i, j := 0, 0
+	for i < len(baseLines) && j < len(targetLines) {
+		switch {
+		case baseLines[i] == targetLines[j]:
+			fmt.Fprintf(&b, " %s\n", baseLines[i])
+			i++
+			j++
+		case lcs[i+1][j] >= lcs[i][j+1]:
+			fmt.Fprintf(&b, "-%s\n", baseLines[i])
+			i++
+		default:
+			fmt.Fprintf(&b, "+%s\n", targetLines[j])
+			j++
+		}
+	}
+	for ; i < len(baseLines); i++ {
+		fmt.Fprintf(&b, "-%s\n", baseLines[i])
+	}
+	for ; j < len(targetLines); j++ {
+		fmt.Fprintf(&b, "+%s\n", targetLines[j])
+	}
+	return b.String()
+}
+
+func splitDiffLines(value string) []string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.TrimSuffix(value, "\n")
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, "\n")
 }

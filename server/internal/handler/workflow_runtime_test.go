@@ -57,7 +57,7 @@ func TestWorkflowRunToResponseCoalescesCompletedRunSteps(t *testing.T) {
 		},
 	}
 
-	resp := workflowRunToResponse(run, steps, nil, nil, nil)
+	resp := workflowRunToResponse(run, steps, nil, nil, nil, nil)
 
 	if got := resp.Steps[0].Status; got != "completed" {
 		t.Fatalf("ready step status = %q, want completed", got)

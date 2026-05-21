@@ -49,22 +49,23 @@ type Variable struct {
 }
 
 type Step struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name,omitempty"`
-	Title          string           `json:"title"`
-	Order          int              `json:"order,omitempty"`
-	Required       *bool            `json:"required,omitempty"`
-	DependsOn      []string         `json:"depends_on,omitempty"`
-	Execution      *StepExecution   `json:"execution,omitempty"`
-	Output         *StepOutput      `json:"output,omitempty"`
-	Artifact       *StepArtifact    `json:"artifact,omitempty"`
-	InputArtifacts []ArtifactInput  `json:"input_artifacts,omitempty"`
-	Review         *StepReview      `json:"review,omitempty"`
-	ReviewRequired *bool            `json:"review_required,omitempty"`
-	QualityGate    *StepQualityGate `json:"quality_gate,omitempty"`
-	BodyTemplate   string           `json:"body_template,omitempty"`
-	Description    string           `json:"description,omitempty"`
-	Checklist      []string         `json:"checklist,omitempty"`
+	ID             string             `json:"id"`
+	Name           string             `json:"name,omitempty"`
+	Title          string             `json:"title"`
+	Order          int                `json:"order,omitempty"`
+	Required       *bool              `json:"required,omitempty"`
+	DependsOn      []string           `json:"depends_on,omitempty"`
+	Execution      *StepExecution     `json:"execution,omitempty"`
+	Output         *StepOutput        `json:"output,omitempty"`
+	Artifact       *StepArtifact      `json:"artifact,omitempty"`
+	InputArtifacts []ArtifactInput    `json:"input_artifacts,omitempty"`
+	InputRequests  *StepInputRequests `json:"input_requests,omitempty"`
+	Review         *StepReview        `json:"review,omitempty"`
+	ReviewRequired *bool              `json:"review_required,omitempty"`
+	QualityGate    *StepQualityGate   `json:"quality_gate,omitempty"`
+	BodyTemplate   string             `json:"body_template,omitempty"`
+	Description    string             `json:"description,omitempty"`
+	Checklist      []string           `json:"checklist,omitempty"`
 }
 
 type StepExecution struct {
@@ -117,6 +118,12 @@ type ArtifactInput struct {
 	ArtifactName string `json:"artifact_name,omitempty"`
 	Name         string `json:"name,omitempty"`
 	Required     bool   `json:"required,omitempty"`
+}
+
+type StepInputRequests struct {
+	Allowed        bool   `json:"allowed,omitempty"`
+	MaxRounds      int32  `json:"max_rounds,omitempty"`
+	QuestionPolicy string `json:"question_policy,omitempty"`
 }
 
 type StepReview struct {
@@ -184,7 +191,7 @@ Use this workflow for small, well-scoped bugs or single-step tasks.
 `,
 			[]Step{
 				{ID: "context", Title: "Load issue context", Order: 1, Description: "Read the issue and latest comments before acting."},
-				{ID: "clarity", Title: "Confirm clarity", Order: 2, DependsOn: []string{"context"}, Description: "Proceed only when the request is already clear enough."},
+				{ID: "clarity", Title: "Confirm clarity", Order: 2, DependsOn: []string{"context"}, Description: "Proceed only when the request is already clear enough.", InputRequests: inputRequestPolicy(1)},
 				{ID: "execute", Title: "Make the smallest change", Order: 3, DependsOn: []string{"clarity"}, Description: "Apply the narrow fix or single-step change."},
 				{ID: "verify", Title: "Run targeted verification", Order: 4, DependsOn: []string{"execute"}, Description: "Run focused checks and record any verification gaps."},
 				{ID: "report", Title: "Post final comment", Order: 5, DependsOn: []string{"verify"}, Description: "Summarize outcome and move the issue to review."},
@@ -208,7 +215,7 @@ Use this workflow when the deliverable is analysis, options, or a recommendation
 `,
 			[]Step{
 				{ID: "context", Title: "Load issue context", Order: 1, Description: "Read the issue and full comment history."},
-				{ID: "frame", Title: "Frame the question", Order: 2, DependsOn: []string{"context"}, Description: "Identify the question, constraints, and useful evidence."},
+				{ID: "frame", Title: "Frame the question", Order: 2, DependsOn: []string{"context"}, Description: "Identify the question, constraints, and useful evidence.", InputRequests: inputRequestPolicy(3)},
 				{ID: "inspect", Title: "Inspect evidence", Order: 3, DependsOn: []string{"frame"}, Description: "Read the relevant repositories, resources, docs, or runtime state."},
 				{ID: "findings", Title: "Post findings", Order: 4, DependsOn: []string{"inspect"}, Description: "Return answer, evidence, tradeoffs, and recommended next action."},
 				{ID: "close", Title: "Set final status", Order: 5, DependsOn: []string{"findings"}, Description: "Move to review or block with exact missing input."},
@@ -405,6 +412,19 @@ func normalizeSteps(steps []Step) {
 			}
 			normalizeArtifactInputs(step.Artifact.Inputs)
 		}
+		if step.InputRequests != nil {
+			step.InputRequests.QuestionPolicy = strings.TrimSpace(step.InputRequests.QuestionPolicy)
+			if step.InputRequests.Allowed {
+				if step.InputRequests.MaxRounds <= 0 {
+					step.InputRequests.MaxRounds = 1
+				}
+				if step.InputRequests.QuestionPolicy == "" {
+					step.InputRequests.QuestionPolicy = "one_at_a_time"
+				}
+			} else if step.InputRequests.MaxRounds == 0 && step.InputRequests.QuestionPolicy == "" {
+				step.InputRequests = nil
+			}
+		}
 		if step.ReviewRequired != nil {
 			if step.Review == nil {
 				step.Review = &StepReview{}
@@ -497,6 +517,19 @@ func validateSteps(steps []Step) error {
 			case "", "text", "markdown", "json":
 			default:
 				return fmt.Errorf("step %q has unsupported artifact content kind %q", step.ID, step.Artifact.ContentKind)
+			}
+		}
+		if step.InputRequests != nil {
+			if step.InputRequests.Allowed && step.Execution != nil && step.Execution.Kind != "agent" {
+				return fmt.Errorf("step %q input_requests are only supported for agent execution", step.ID)
+			}
+			if step.InputRequests.MaxRounds < 0 {
+				return fmt.Errorf("step %q input_requests.max_rounds must be non-negative", step.ID)
+			}
+			switch step.InputRequests.QuestionPolicy {
+			case "", "one_at_a_time":
+			default:
+				return fmt.Errorf("step %q has unsupported input_requests.question_policy %q", step.ID, step.InputRequests.QuestionPolicy)
 			}
 		}
 		for _, dep := range step.DependsOn {
@@ -606,8 +639,8 @@ func templateSteps(slug string) []Step {
 	case execprotocol.TrellisTaskSlug:
 		return []Step{
 			{ID: "context", Title: "Context first", Order: 1, Description: "Load issue details, comments, and relevant project resources."},
-			{ID: "trellis-gate", Title: "Trellis availability gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect, continue, or explicitly bootstrap Trellis before falling back."},
-			{ID: "contract", Title: "Work contract", Order: 3, DependsOn: []string{"trellis-gate"}, Description: "Write the outcome, acceptance criteria, constraints, and verification into Trellis."},
+			{ID: "trellis-gate", Title: "Trellis availability gate", Order: 2, DependsOn: []string{"context"}, Description: "Detect, continue, or initialize Trellis before implementation."},
+			{ID: "contract", Title: "Work contract", Order: 3, DependsOn: []string{"trellis-gate"}, Description: "Write the outcome, acceptance criteria, constraints, and verification into Trellis.", InputRequests: inputRequestPolicy(3)},
 			{ID: "implement", Title: "Plan and implement", Order: 4, DependsOn: []string{"contract"}, Description: "Move in progress and execute inside Trellis task scope."},
 			{ID: "check", Title: "Check and update spec", Order: 5, DependsOn: []string{"implement"}, Description: "Run Trellis checks, targeted verification, and spec updates when durable behavior changes."},
 			{ID: "finish", Title: "Finish work", Order: 6, DependsOn: []string{"check"}, Description: "Run finish-work, comment the outcome, and move the issue to review."},
@@ -616,12 +649,23 @@ func templateSteps(slug string) []Step {
 	default:
 		return []Step{
 			{ID: "context", Title: "Context first", Order: 1, Description: "Load issue details, comments, and relevant project resources."},
-			{ID: "contract", Title: "Work contract", Order: 2, DependsOn: []string{"context"}, Description: "Synthesize requested outcome, acceptance criteria, constraints, and verification."},
+			{ID: "contract", Title: "Work contract", Order: 2, DependsOn: []string{"context"}, Description: "Synthesize requested outcome, acceptance criteria, constraints, and verification.", InputRequests: inputRequestPolicy(3)},
 			{ID: "plan", Title: "Plan gate", Order: 3, DependsOn: []string{"contract"}, Description: "Plan non-trivial work before editing; return a plan when that is the deliverable."},
 			{ID: "execute", Title: "Execute", Order: 4, DependsOn: []string{"plan"}, Description: "Move in progress and make the smallest coherent change."},
 			{ID: "verify", Title: "Verify", Order: 5, DependsOn: []string{"execute"}, Description: "Run the checks that prove the claim and record gaps."},
 			{ID: "report", Title: "Report", Order: 6, DependsOn: []string{"verify"}, Description: "Post the result and move the issue to review."},
 			{ID: "blocked", Title: "Blocked path", Order: 7, DependsOn: []string{"contract"}, Description: "If progress is impossible, mark blocked and state the exact needed input."},
 		}
+	}
+}
+
+func inputRequestPolicy(maxRounds int32) *StepInputRequests {
+	if maxRounds <= 0 {
+		maxRounds = 1
+	}
+	return &StepInputRequests{
+		Allowed:        true,
+		MaxRounds:      maxRounds,
+		QuestionPolicy: "one_at_a_time",
 	}
 }

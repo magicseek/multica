@@ -35,6 +35,11 @@ var workflowArtifactCmd = &cobra.Command{
 	Short: "Persist workflow artifacts",
 }
 
+var workflowInputCmd = &cobra.Command{
+	Use:   "input",
+	Short: "Ask for and answer workflow-scoped human input",
+}
+
 var workflowQualityCmd = &cobra.Command{
 	Use:   "quality",
 	Short: "Report workflow quality gate results",
@@ -135,6 +140,34 @@ var workflowArtifactSaveCmd = &cobra.Command{
 	RunE:  runWorkflowArtifactSave,
 }
 
+var workflowArtifactDiffCmd = &cobra.Command{
+	Use:   "diff <artifact-id>",
+	Short: "Show a diff between two complete workflow artifact versions",
+	Args:  exactArgs(1),
+	RunE:  runWorkflowArtifactDiff,
+}
+
+var workflowInputRequestCmd = &cobra.Command{
+	Use:   "request <step-run-id>",
+	Short: "Ask for bounded human input and suspend the backing task",
+	Args:  exactArgs(1),
+	RunE:  runWorkflowInputRequest,
+}
+
+var workflowInputAnswerCmd = &cobra.Command{
+	Use:   "answer <input-request-id>",
+	Short: "Answer a workflow input request and resume the backing task",
+	Args:  exactArgs(1),
+	RunE:  runWorkflowInputAnswer,
+}
+
+var workflowInputCancelCmd = &cobra.Command{
+	Use:   "cancel <input-request-id>",
+	Short: "Cancel a workflow input request",
+	Args:  exactArgs(1),
+	RunE:  runWorkflowInputCancel,
+}
+
 var workflowQualityReportCmd = &cobra.Command{
 	Use:   "report <step-run-id>",
 	Short: "Report a workflow quality gate result",
@@ -160,6 +193,7 @@ func init() {
 	workflowCmd.AddCommand(workflowRunCmd)
 	workflowCmd.AddCommand(workflowStepCmd)
 	workflowCmd.AddCommand(workflowArtifactCmd)
+	workflowCmd.AddCommand(workflowInputCmd)
 	workflowCmd.AddCommand(workflowQualityCmd)
 	workflowCmd.AddCommand(workflowReviewCmd)
 
@@ -178,6 +212,10 @@ func init() {
 	workflowStepCmd.AddCommand(workflowStepSkipCmd)
 
 	workflowArtifactCmd.AddCommand(workflowArtifactSaveCmd)
+	workflowArtifactCmd.AddCommand(workflowArtifactDiffCmd)
+	workflowInputCmd.AddCommand(workflowInputRequestCmd)
+	workflowInputCmd.AddCommand(workflowInputAnswerCmd)
+	workflowInputCmd.AddCommand(workflowInputCancelCmd)
 	workflowQualityCmd.AddCommand(workflowQualityReportCmd)
 	workflowReviewCmd.AddCommand(workflowReviewApproveCmd)
 	workflowReviewCmd.AddCommand(workflowReviewRejectCmd)
@@ -211,6 +249,17 @@ func init() {
 	workflowArtifactSaveCmd.Flags().String("file", "-", "Artifact content file path, or - for stdin")
 	workflowArtifactSaveCmd.Flags().String("format", "markdown", "Artifact content format: markdown, json, or text")
 	workflowArtifactSaveCmd.Flags().String("output", "json", "Output format: json or table")
+	workflowArtifactDiffCmd.Flags().Int32("base-version", 0, "Base artifact version (required)")
+	workflowArtifactDiffCmd.Flags().Int32("target-version", 0, "Target artifact version (required)")
+	workflowArtifactDiffCmd.Flags().String("output", "diff", "Output format: diff or json")
+
+	workflowInputRequestCmd.Flags().String("question-file", "-", "Question content file path, or - for stdin")
+	workflowInputRequestCmd.Flags().Int32("max-rounds", 0, "Maximum rounds allowed by this request")
+	workflowInputRequestCmd.Flags().String("output", "json", "Output format: json or table")
+	workflowInputAnswerCmd.Flags().String("file", "-", "Answer content file path, or - for stdin")
+	workflowInputAnswerCmd.Flags().Bool("no-continue", false, "Record the answer without requeueing the backing task")
+	workflowInputAnswerCmd.Flags().String("output", "json", "Output format: json or table")
+	workflowInputCancelCmd.Flags().String("output", "json", "Output format: json or table")
 
 	workflowQualityReportCmd.Flags().String("artifact", "", "Artifact ID this quality result evaluates")
 	workflowQualityReportCmd.Flags().String("status", "", "Quality status: pass, fail, or warning (required)")
@@ -364,6 +413,81 @@ func runWorkflowArtifactSave(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return workflowPrintResult(cmd, artifact, nil)
+}
+
+func runWorkflowArtifactDiff(cmd *cobra.Command, args []string) error {
+	baseVersion, _ := cmd.Flags().GetInt32("base-version")
+	targetVersion, _ := cmd.Flags().GetInt32("target-version")
+	if baseVersion <= 0 {
+		return fmt.Errorf("--base-version is required")
+	}
+	if targetVersion <= 0 {
+		return fmt.Errorf("--target-version is required")
+	}
+	values := url.Values{}
+	values.Set("base_version", fmt.Sprint(baseVersion))
+	values.Set("target_version", fmt.Sprint(targetVersion))
+	var diff map[string]any
+	if err := workflowGetJSON(cmd, "/api/workflow-artifacts/"+url.PathEscape(args[0])+"/diff?"+values.Encode(), &diff); err != nil {
+		return err
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, diff)
+	}
+	fmt.Fprint(os.Stdout, strVal(diff, "unified_diff"))
+	return nil
+}
+
+func runWorkflowInputRequest(cmd *cobra.Command, args []string) error {
+	filePath, _ := cmd.Flags().GetString("question-file")
+	if strings.TrimSpace(filePath) == "" {
+		return fmt.Errorf("--question-file is required")
+	}
+	data, err := readWorkflowFile(filePath)
+	if err != nil {
+		return err
+	}
+	maxRounds, _ := cmd.Flags().GetInt32("max-rounds")
+	body := map[string]any{
+		"question_text": string(data),
+	}
+	if maxRounds > 0 {
+		body["max_rounds"] = maxRounds
+	}
+	var request map[string]any
+	if err := workflowPostJSON(cmd, "/api/workflow-step-runs/"+url.PathEscape(args[0])+"/input-requests", body, &request); err != nil {
+		return err
+	}
+	return workflowPrintResult(cmd, request, nil)
+}
+
+func runWorkflowInputAnswer(cmd *cobra.Command, args []string) error {
+	filePath, _ := cmd.Flags().GetString("file")
+	if strings.TrimSpace(filePath) == "" {
+		return fmt.Errorf("--file is required")
+	}
+	data, err := readWorkflowFile(filePath)
+	if err != nil {
+		return err
+	}
+	noContinue, _ := cmd.Flags().GetBool("no-continue")
+	var request map[string]any
+	if err := workflowPostJSON(cmd, "/api/workflow-input-requests/"+url.PathEscape(args[0])+"/answer", map[string]any{
+		"answer_text": string(data),
+		"continue":    !noContinue,
+	}, &request); err != nil {
+		return err
+	}
+	return workflowPrintResult(cmd, request, nil)
+}
+
+func runWorkflowInputCancel(cmd *cobra.Command, args []string) error {
+	var request map[string]any
+	if err := workflowPostJSON(cmd, "/api/workflow-input-requests/"+url.PathEscape(args[0])+"/cancel", map[string]any{}, &request); err != nil {
+		return err
+	}
+	return workflowPrintResult(cmd, request, nil)
 }
 
 func runWorkflowQualityReport(cmd *cobra.Command, args []string) error {

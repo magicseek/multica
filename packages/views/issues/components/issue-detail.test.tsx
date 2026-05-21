@@ -1,13 +1,14 @@
 import { forwardRef, useRef, useState, useImperativeHandle } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { AgentTask, Issue, TimelineEntry } from "@multica/core/types";
+import type { Issue, TimelineEntry, WorkflowRun } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
+import enWorkflows from "../../locales/en/workflows.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues, workflows: enWorkflows } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 
@@ -219,6 +220,14 @@ const mockApiObj = vi.hoisted(() => ({
   removeCommentReaction: vi.fn(),
   listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
   listAgents: vi.fn().mockResolvedValue([]),
+  listWorkflowRuns: vi.fn().mockResolvedValue([]),
+  getWorkflowRun: vi.fn(),
+  cancelWorkflowRun: vi.fn(),
+  rerunWorkflowRun: vi.fn(),
+  completeManualWorkflowStepRun: vi.fn(),
+  retryWorkflowStepRun: vi.fn(),
+  approveWorkflowReview: vi.fn(),
+  rejectWorkflowReview: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -431,39 +440,40 @@ const mockTimeline: TimelineEntry[] = [
   },
 ];
 
-const mockWorkflowTask: AgentTask = {
-  id: "task-1",
-  agent_id: "agent-1",
-  runtime_id: "runtime-1",
+const mockWorkflowRun: WorkflowRun = {
+  id: "workflow-run-1",
+  workspace_id: "ws-1",
+  agent_task_queue_id: "task-1",
   issue_id: "issue-1",
+  trigger_type: "assignment",
+  snapshot: { workflow_name: "Trellis task" },
   status: "completed",
-  priority: 0,
-  dispatched_at: "2026-01-18T00:00:00Z",
-  started_at: "2026-01-18T00:00:00Z",
-  completed_at: "2026-01-18T00:05:00Z",
-  result: null,
-  error: null,
+  completed_at: "2026-01-18T00:00:00Z",
   created_at: "2026-01-18T00:00:00Z",
-  workflow_definition_id: "workflow-1",
-  workflow_revision_id: "revision-1",
-  workflow_snapshot: {
-    schema_version: 1,
-    trigger_type: "assignment",
-    definition_id: "workflow-1",
-    revision_id: "revision-1",
-    revision_number: 1,
-    workflow_name: "Trellis task",
-    origin: "system_seeded",
-    system_key: "trellis-task",
-    schema: {
-      steps: [
-        { id: "context", title: "Context first" },
-        { id: "finish", title: "Finish work" },
-      ],
+  updated_at: "2026-01-18T00:00:00Z",
+};
+
+const mockWorkflowRunDetail: WorkflowRun = {
+  ...mockWorkflowRun,
+  steps: [
+    {
+      id: "workflow-step-1",
+      workflow_run_id: "workflow-run-1",
+      step_definition_id: "context",
+      title: "Context first",
+      order_index: 1,
+      required: true,
+      status: "completed",
+      execution_kind: "agent",
+      attempt: 1,
+      completed_at: "2026-01-18T00:00:00Z",
+      created_at: "2026-01-18T00:00:00Z",
+      updated_at: "2026-01-18T00:00:00Z",
     },
-    rendered_markdown: "## Trellis task",
-    resolved_at: "2026-01-18T00:00:00Z",
-  },
+  ],
+  artifacts: [],
+  reviews: [],
+  quality_gate_results: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -542,6 +552,8 @@ describe("IssueDetail (shared)", () => {
       { user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" },
     ]);
     mockApiObj.listAgents.mockResolvedValue([]);
+    mockApiObj.listWorkflowRuns.mockResolvedValue([]);
+    mockApiObj.getWorkflowRun.mockResolvedValue(mockWorkflowRunDetail);
   });
 
   it("shows loading skeleton while data is loading", () => {
@@ -682,52 +694,23 @@ describe("IssueDetail (shared)", () => {
     });
   });
 
-  it("renders a completed workflow run inside Activity", async () => {
-    mockApiObj.listTasksByIssue.mockResolvedValue([mockWorkflowTask]);
+  it("renders workflow runs inside activity with a comment composer", async () => {
+    mockApiObj.listWorkflowRuns.mockResolvedValue([mockWorkflowRun]);
+    mockApiObj.getWorkflowRun.mockResolvedValue(mockWorkflowRunDetail);
 
     renderIssueDetail();
 
+    const workflowCard = await screen.findByTestId("workflow-run-activity");
+
+    expect(within(workflowCard).getByText("Workflow run")).toBeInTheDocument();
+    expect(within(workflowCard).getAllByText("Trellis task").length).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(screen.getByText("2/2 steps")).toBeInTheDocument();
+      expect(workflowCard.textContent).toContain("Context first");
     });
-
-    expect(screen.getByText("Trellis task")).toBeInTheDocument();
-    expect(screen.getByText("Context first")).toBeInTheDocument();
-    expect(screen.getByText("Finish work")).toBeInTheDocument();
-    expect(screen.getByText("100%")).toBeInTheDocument();
-  });
-
-  it("posts a comment from the workflow run card", async () => {
-    mockApiObj.listTasksByIssue.mockResolvedValue([mockWorkflowTask]);
-    mockApiObj.createComment.mockResolvedValue({
-      id: "comment-workflow",
-      author_type: "member",
-      author_id: "user-1",
-      content: "Workflow comment",
-      parent_id: null,
-      type: "comment",
-      reactions: [],
-      attachments: [],
-      created_at: "2026-01-18T00:06:00Z",
-      updated_at: "2026-01-18T00:06:00Z",
-    });
-
-    renderIssueDetail();
-
-    const composer = await screen.findByPlaceholderText("Comment on this workflow run...");
-    fireEvent.change(composer, { target: { value: "Looks good." } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Send" })[0]!);
-
-    await waitFor(() => {
-      expect(mockApiObj.createComment).toHaveBeenCalledWith(
-        "issue-1",
-        expect.stringContaining("Looks good."),
-        undefined,
-        undefined,
-        undefined,
-        { suppressAgentTrigger: true },
-      );
-    });
+    expect(workflowCard.textContent).toContain("1/1");
+    expect(
+      within(workflowCard).getByPlaceholderText("Leave a comment..."),
+    ).toBeInTheDocument();
   });
 
   it("renders comments from timeline", async () => {

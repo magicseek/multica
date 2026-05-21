@@ -1329,7 +1329,11 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	resp := taskToResponse(*task)
 	if run, err := h.Queries.GetWorkflowRunByTask(r.Context(), task.ID); err == nil {
 		if steps, stepErr := h.Queries.ListWorkflowStepRunsByRun(r.Context(), run.ID); stepErr == nil {
-			runResp := workflowRunToResponse(run, steps, nil, nil, nil)
+			inputRequests, inputErr := h.Queries.ListWorkflowInputRequestsByRun(r.Context(), run.ID)
+			if inputErr != nil {
+				slog.Warn("failed to load workflow input requests for claim response", "task_id", uuidToString(task.ID), "error", inputErr)
+			}
+			runResp := workflowRunToResponse(run, steps, nil, nil, nil, inputRequests)
 			resp.WorkflowRun = &runResp
 		} else {
 			slog.Warn("failed to load workflow step runs for claim response", "task_id", uuidToString(task.ID), "error", stepErr)

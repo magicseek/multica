@@ -201,6 +201,7 @@ const STATUS_TONE: Record<AgentTask["status"], string> = {
   queued: "text-warning",
   dispatched: "text-warning",
   running: "text-info",
+  waiting: "text-warning",
   completed: "text-success",
   failed: "text-destructive",
   cancelled: "text-muted-foreground",
@@ -249,6 +250,7 @@ function useStatusLabel(status: AgentTask["status"]): string {
     case "queued": return t(($) => $.execution_log.status_queued);
     case "dispatched": return t(($) => $.execution_log.status_dispatched);
     case "running": return t(($) => $.execution_log.status_running);
+    case "waiting": return t(($) => $.execution_log.status_waiting);
     case "completed": return t(($) => $.execution_log.status_completed);
     case "failed": return t(($) => $.execution_log.status_failed);
     case "cancelled": return t(($) => $.execution_log.status_cancelled);

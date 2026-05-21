@@ -500,7 +500,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 
 const getPendingChatTask = `-- name: GetPendingChatTask :one
 SELECT id, status, created_at FROM agent_task_queue
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC
 LIMIT 1
 `
@@ -1362,7 +1362,7 @@ FROM agent_task_queue atq
 JOIN chat_session cs ON cs.id = atq.chat_session_id
 WHERE cs.workspace_id = $1
   AND cs.creator_id = $2
-  AND atq.status IN ('queued', 'dispatched', 'running')
+  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY atq.created_at DESC
 `
 

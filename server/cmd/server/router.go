@@ -559,7 +559,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/retry", h.RetryWorkflowStepRun)
 					r.Post("/skip", h.SkipWorkflowStepRun)
 					r.Post("/artifacts", h.CreateWorkflowArtifact)
+					r.Post("/input-requests", h.CreateWorkflowInputRequest)
 					r.Post("/quality-gates", h.ReportWorkflowQualityGate)
+				})
+			})
+			r.Route("/api/workflow-input-requests", func(r chi.Router) {
+				r.Route("/{id}", func(r chi.Router) {
+					r.Post("/answer", h.AnswerWorkflowInputRequest)
+					r.Post("/cancel", h.CancelWorkflowInputRequest)
+				})
+			})
+			r.Route("/api/workflow-artifacts", func(r chi.Router) {
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/diff", h.GetWorkflowArtifactDiff)
 				})
 			})
 			r.Route("/api/workflow-reviews", func(r chi.Router) {

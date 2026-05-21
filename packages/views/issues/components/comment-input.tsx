@@ -11,22 +11,23 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { api } from "@multica/core/api";
 import type { Attachment } from "@multica/core/types";
 import { enterKey, formatShortcut, modKey } from "@multica/core/platform";
-import { useCommentDraftStore } from "@multica/core/issues/stores";
+import { useCommentDraftStore, type CommentDraftKey } from "@multica/core/issues/stores";
 import { useT } from "../../i18n";
 
 interface CommentInputProps {
   issueId: string;
   onSubmit: (content: string, attachmentIds?: string[]) => Promise<void>;
+  draftKey?: CommentDraftKey;
 }
 
-function CommentInput({ issueId, onSubmit }: CommentInputProps) {
+function CommentInput({ issueId, onSubmit, draftKey: draftKeyProp }: CommentInputProps) {
   const { t } = useT("issues");
   const editorRef = useRef<ContentEditorRef>(null);
   // Read the persisted draft once on mount. ContentEditor only honors
   // `defaultValue` at mount time, so this snapshot drives both the editor's
   // initial content and the submit-button enable state — without this the
   // button would be disabled even though the editor visibly contains text.
-  const draftKey = `new:${issueId}` as const;
+  const draftKey = draftKeyProp ?? `new:${issueId}`;
   const initialDraft = useCommentDraftStore.getState().getDraft(draftKey);
   const [isEmpty, setIsEmpty] = useState(() => !initialDraft?.trim());
   const [submitting, setSubmitting] = useState(false);

@@ -1,0 +1,42 @@
+{
+  "id": "workflow-input-requests-reviewable-artifacts",
+  "name": "workflow-input-requests-reviewable-artifacts",
+  "title": "Implement workflow input requests and reviewable planning artifacts",
+  "description": "Implement workflow-scoped human input requests, same-run resume, reviewable planning artifacts, and artifact diffs based on ADR 0004.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "workflows-runtime",
+  "package": null,
+  "priority": "P1",
+  "creator": "troy",
+  "assignee": "troy",
+  "createdAt": "2026-05-20",
+  "completedAt": null,
+  "branch": "trellis/ai-desk-flows-to-multica-workflows",
+  "base_branch": "trellis/ai-desk-flows-to-multica-workflows",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Implementation, automated checks, and desktop-backed E2E are complete. Pending commit/archive handoff.",
+  "meta": {
+    "e2e": {
+      "workspace": "Workflow E2E Lab",
+      "workspace_id": "f27696e6-863c-4535-b3a6-c2b259e09b4c",
+      "issues_verified": [
+        "WOR-1",
+        "WOR-2",
+        "WOR-3",
+        "WOR-4",
+        "WOR-5"
+      ],
+      "clarification_request_id": "a3f574b5-e121-44f4-8ad3-9fdc42cce915",
+      "clarification_workflow_run_id": "24664fe8-e704-4717-903b-a68319d8a6f9",
+      "clarification_task_run_id": "53ae554e-9812-4599-93a9-af55d63b0d72",
+      "verified_at": "2026-05-21T01:25:20+08:00"
+    }
+  }
+}

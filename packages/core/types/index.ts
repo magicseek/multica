@@ -143,6 +143,8 @@ export type {
   WorkflowStepRun,
   WorkflowStepRunStatus,
   WorkflowArtifact,
+  WorkflowArtifactDiff,
+  WorkflowInputRequest,
   WorkflowReview,
   WorkflowQualityGateResult,
   WorkflowValidation,

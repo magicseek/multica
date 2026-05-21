@@ -158,15 +158,16 @@ type WorkflowCapabilityWarning struct {
 }
 
 type WorkflowRun struct {
-	ID                   string            `json:"id"`
-	WorkspaceID          string            `json:"workspace_id"`
-	AgentTaskQueueID     string            `json:"agent_task_queue_id"`
-	IssueID              *string           `json:"issue_id,omitempty"`
-	WorkflowDefinitionID *string           `json:"workflow_definition_id,omitempty"`
-	WorkflowRevisionID   *string           `json:"workflow_revision_id,omitempty"`
-	TriggerType          string            `json:"trigger_type"`
-	Status               string            `json:"status"`
-	Steps                []WorkflowStepRun `json:"steps,omitempty"`
+	ID                   string                 `json:"id"`
+	WorkspaceID          string                 `json:"workspace_id"`
+	AgentTaskQueueID     string                 `json:"agent_task_queue_id"`
+	IssueID              *string                `json:"issue_id,omitempty"`
+	WorkflowDefinitionID *string                `json:"workflow_definition_id,omitempty"`
+	WorkflowRevisionID   *string                `json:"workflow_revision_id,omitempty"`
+	TriggerType          string                 `json:"trigger_type"`
+	Status               string                 `json:"status"`
+	Steps                []WorkflowStepRun      `json:"steps,omitempty"`
+	InputRequests        []WorkflowInputRequest `json:"input_requests,omitempty"`
 }
 
 type WorkflowStepRun struct {
@@ -182,6 +183,21 @@ type WorkflowStepRun struct {
 	DependsOnStepIDs []string        `json:"depends_on_step_ids"`
 	ArtifactInputs   json.RawMessage `json:"artifact_inputs"`
 	Snapshot         json.RawMessage `json:"snapshot"`
+}
+
+type WorkflowInputRequest struct {
+	ID                string  `json:"id"`
+	WorkflowRunID     string  `json:"workflow_run_id"`
+	WorkflowStepRunID string  `json:"workflow_step_run_id"`
+	Status            string  `json:"status"`
+	QuestionText      string  `json:"question_text"`
+	AnswerText        *string `json:"answer_text,omitempty"`
+	QuestionCommentID *string `json:"question_comment_id,omitempty"`
+	AnswerCommentID   *string `json:"answer_comment_id,omitempty"`
+	RoundIndex        int32   `json:"round_index"`
+	MaxRounds         int32   `json:"max_rounds"`
+	RequestedAt       string  `json:"requested_at,omitempty"`
+	AnsweredAt        *string `json:"answered_at,omitempty"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

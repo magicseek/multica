@@ -1,0 +1,21 @@
+{"file": "CONTEXT.md", "reason": "Domain terms and boundaries for Workflow Input Request, Reviewable Workflow Artifact, and Artifact Diff"}
+{"file": "docs/adr/0004-workflow-input-requests-and-reviewable-planning-artifacts.md", "reason": "Accepted ADR for input requests, same-run resume, reviewable artifacts, and diffs"}
+{"file": "docs/adr/0003-migrate-ai-desk-flows-through-multica-workflow-runs.md", "reason": "Existing workflow run architecture constraints and 1:1 task/run relationship"}
+{"file": ".trellis/spec/workflows/execution-workflow-definitions.md", "reason": "Executable cross-layer workflow contracts"}
+{"file": "server/migrations/095_workflow_runtime.up.sql", "reason": "Current workflow runtime tables for runs, steps, artifacts, reviews, and quality gates"}
+{"file": "server/migrations/001_init.up.sql", "reason": "Current agent_task_queue and issue status constraints"}
+{"file": "server/pkg/db/queries/agent.sql", "reason": "Task lifecycle, claim, active-task, and session resume queries"}
+{"file": "server/pkg/db/queries/workflow_runtime.sql", "reason": "Workflow runtime query surface to extend"}
+{"file": "server/internal/service/task.go", "reason": "Task lifecycle service methods for start, complete, fail, retry, and workflow status sync"}
+{"file": "server/internal/service/workflow_runtime.go", "reason": "Workflow run and step state machine plus artifact/review/quality methods"}
+{"file": "server/internal/handler/workflow_runtime.go", "reason": "Workflow runtime HTTP handlers and response shapes"}
+{"file": "server/internal/handler/comment.go", "reason": "Issue comment routing that must distinguish answer-bound comments"}
+{"file": "server/internal/daemon/daemon.go", "reason": "Daemon task execution, complete/fail handling, and resume context"}
+{"file": "server/internal/daemon/execenv/runtime_config.go", "reason": "Agent-facing runtime instructions and workflow command guidance"}
+{"file": "server/cmd/multica/cmd_workflow.go", "reason": "CLI workflow commands to extend for input requests and artifact diff"}
+{"file": "server/internal/workflowdefs/workflowdefs.go", "reason": "Workflow schema normalization and system seed step definitions"}
+{"file": "packages/core/types/workflow.ts", "reason": "Frontend workflow runtime and schema types"}
+{"file": "packages/core/api/schemas.ts", "reason": "Client API schema validation for new workflow contracts"}
+{"file": "packages/views/workflows/components/workflow-run-viewer.tsx", "reason": "Workflow run UI for input requests, reviews, artifacts, and diffs"}
+{"file": "packages/views/issues/components/issue-detail.tsx", "reason": "Issue detail attention state and answer/comment composer integration"}
+{"file": "packages/views/issues/components/comment-input.tsx", "reason": "Unified comment editor with answer-targeted submission"}

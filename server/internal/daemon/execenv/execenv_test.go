@@ -1423,6 +1423,7 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 			"`multica workflow step complete <step-run-id>`",
 			"Artifacts, reviews, and quality results are explicit workflow evidence records",
 			"persist it with `multica workflow artifact save <step-run-id> --name",
+			"saving only `.multica/outputs.json` or mentioning a local path in a comment is insufficient",
 			"record quality evidence with `multica workflow quality report <step-run-id> --status",
 			"instead of leaving the step pending",
 		} {

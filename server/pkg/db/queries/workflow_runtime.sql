@@ -206,6 +206,18 @@ SELECT * FROM workflow_artifact
 WHERE workflow_step_run_id = $1
 ORDER BY logical_name ASC, version DESC;
 
+-- name: GetWorkflowArtifact :one
+SELECT * FROM workflow_artifact
+WHERE id = $1;
+
+-- name: GetWorkflowArtifactVersionByAnchor :one
+SELECT versioned.* FROM workflow_artifact anchor
+JOIN workflow_artifact versioned
+  ON versioned.workflow_step_run_id = anchor.workflow_step_run_id
+ AND versioned.logical_name = anchor.logical_name
+WHERE anchor.id = $1
+  AND versioned.version = $2;
+
 -- name: CreateWorkflowReview :one
 INSERT INTO workflow_review (
     workflow_run_id,
@@ -274,3 +286,78 @@ ORDER BY created_at DESC;
 SELECT * FROM workflow_quality_gate_result
 WHERE workflow_step_run_id = $1
 ORDER BY created_at DESC;
+
+-- name: CreateWorkflowInputRequest :one
+WITH next_round AS (
+    SELECT COALESCE(MAX(round_index), 0) + 1 AS round_index
+    FROM workflow_input_request
+    WHERE workflow_step_run_id = @workflow_step_run_id
+)
+INSERT INTO workflow_input_request (
+    workspace_id,
+    workflow_run_id,
+    workflow_step_run_id,
+    issue_id,
+    chat_session_id,
+    question_comment_id,
+    requester_agent_id,
+    status,
+    question_text,
+    round_index,
+    max_rounds
+)
+VALUES (
+    @workspace_id,
+    @workflow_run_id,
+    @workflow_step_run_id,
+    sqlc.narg('issue_id'),
+    sqlc.narg('chat_session_id'),
+    sqlc.narg('question_comment_id'),
+    sqlc.narg('requester_agent_id'),
+    'requested',
+    @question_text,
+    (SELECT round_index FROM next_round),
+    @max_rounds
+)
+RETURNING *;
+
+-- name: GetWorkflowInputRequest :one
+SELECT * FROM workflow_input_request
+WHERE id = $1;
+
+-- name: ListWorkflowInputRequestsByRun :many
+SELECT * FROM workflow_input_request
+WHERE workflow_run_id = $1
+ORDER BY requested_at DESC, created_at DESC;
+
+-- name: ListWorkflowInputRequestsByStepRun :many
+SELECT * FROM workflow_input_request
+WHERE workflow_step_run_id = $1
+ORDER BY round_index DESC, requested_at DESC;
+
+-- name: CountWorkflowInputRequestRoundsByStepRun :one
+SELECT count(*)::int FROM workflow_input_request
+WHERE workflow_step_run_id = $1;
+
+-- name: GetOpenWorkflowInputRequestByStepRun :one
+SELECT * FROM workflow_input_request
+WHERE workflow_step_run_id = $1 AND status = 'requested';
+
+-- name: AnswerWorkflowInputRequest :one
+UPDATE workflow_input_request SET
+    status = 'answered',
+    answer_text = @answer_text,
+    answer_comment_id = sqlc.narg('answer_comment_id'),
+    responder_id = @responder_id,
+    answered_at = now(),
+    updated_at = now()
+WHERE id = @id AND status = 'requested'
+RETURNING *;
+
+-- name: CancelWorkflowInputRequest :one
+UPDATE workflow_input_request SET
+    status = 'cancelled',
+    cancelled_at = now(),
+    updated_at = now()
+WHERE id = $1 AND status = 'requested'
+RETURNING *;

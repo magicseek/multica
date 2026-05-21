@@ -133,6 +133,8 @@ import type {
   WorkflowRun,
   WorkflowStepRun,
   WorkflowArtifact,
+  WorkflowArtifactDiff,
+  WorkflowInputRequest,
   WorkflowQualityGateResult,
   WorkflowReview,
 } from "../types";
@@ -186,7 +188,9 @@ import {
   EMPTY_REPOSITORY_OPERATION,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_WORKFLOW_ARTIFACT,
+  EMPTY_WORKFLOW_ARTIFACT_DIFF,
   EMPTY_WORKFLOW_DEFINITION,
+  EMPTY_WORKFLOW_INPUT_REQUEST,
   EMPTY_WORKFLOW_PREVIEW_RESPONSE,
   EMPTY_WORKFLOW_QUALITY_GATE_RESULT,
   EMPTY_WORKFLOW_REVIEW,
@@ -208,8 +212,10 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   WorkflowArtifactSchema,
+  WorkflowArtifactDiffSchema,
   WorkflowDefinitionListSchema,
   WorkflowDefinitionSchema,
+  WorkflowInputRequestSchema,
   WorkflowPreviewResponseSchema,
   WorkflowQualityGateResultSchema,
   WorkflowReviewSchema,
@@ -1549,6 +1555,52 @@ export class ApiClient {
     });
     return parseWithFallback(raw, WorkflowArtifactSchema, EMPTY_WORKFLOW_ARTIFACT, {
       endpoint: "POST /api/workflow-step-runs/:id/artifacts",
+    });
+  }
+
+  async getWorkflowArtifactDiff(
+    artifactId: string,
+    params: { base_version: number; target_version: number },
+  ): Promise<WorkflowArtifactDiff> {
+    const search = new URLSearchParams();
+    search.set("base_version", String(params.base_version));
+    search.set("target_version", String(params.target_version));
+    const raw = await this.fetch<unknown>(`/api/workflow-artifacts/${artifactId}/diff?${search.toString()}`);
+    return parseWithFallback(raw, WorkflowArtifactDiffSchema, EMPTY_WORKFLOW_ARTIFACT_DIFF, {
+      endpoint: "GET /api/workflow-artifacts/:id/diff",
+    });
+  }
+
+  async createWorkflowInputRequest(
+    stepRunId: string,
+    data: { question_text: string; max_rounds?: number },
+  ): Promise<WorkflowInputRequest> {
+    const raw = await this.fetch<unknown>(`/api/workflow-step-runs/${stepRunId}/input-requests`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkflowInputRequestSchema, EMPTY_WORKFLOW_INPUT_REQUEST, {
+      endpoint: "POST /api/workflow-step-runs/:id/input-requests",
+    });
+  }
+
+  async answerWorkflowInputRequest(
+    id: string,
+    data: { answer_text: string; continue?: boolean },
+  ): Promise<WorkflowInputRequest> {
+    const raw = await this.fetch<unknown>(`/api/workflow-input-requests/${id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ answer_text: data.answer_text, continue: data.continue ?? true }),
+    });
+    return parseWithFallback(raw, WorkflowInputRequestSchema, EMPTY_WORKFLOW_INPUT_REQUEST, {
+      endpoint: "POST /api/workflow-input-requests/:id/answer",
+    });
+  }
+
+  async cancelWorkflowInputRequest(id: string): Promise<WorkflowInputRequest> {
+    const raw = await this.fetch<unknown>(`/api/workflow-input-requests/${id}/cancel`, { method: "POST" });
+    return parseWithFallback(raw, WorkflowInputRequestSchema, EMPTY_WORKFLOW_INPUT_REQUEST, {
+      endpoint: "POST /api/workflow-input-requests/:id/cancel",
     });
   }
 

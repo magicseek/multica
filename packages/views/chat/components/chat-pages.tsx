@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { DRAFT_NEW_SESSION } from "@multica/core/chat";
@@ -37,6 +37,10 @@ import {
   pendingChatTaskOptions,
 } from "@multica/core/chat/queries";
 import {
+  workflowRunDetailOptions,
+  workflowRunListOptions,
+} from "@multica/core/workflows";
+import {
   useApproveChatIssueProposal,
   useCreateChatSession,
   useUpdateChatSession,
@@ -54,6 +58,8 @@ import type {
   IssueStatus,
   TaskOutputMetadata,
   UpdateIssueRequest,
+  WorkflowArtifact,
+  WorkflowRun,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -81,6 +87,7 @@ import { TitleEditor } from "../../editor";
 import { ChatInput } from "./chat-input";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { BoardView } from "../../issues/components/board-view";
+import { WorkflowArtifactReviewList } from "../../workflows";
 
 type ChatTab = "chat" | "issues" | "outputs";
 
@@ -538,35 +545,142 @@ function ChatIssuesPanel({ sessionId }: { sessionId: string }) {
 
 function ChatOutputsPanel({ sessionId }: { sessionId: string }) {
   const { t } = useT("chat");
+  const { t: tWorkflows } = useT("workflows");
+  const wsId = useWorkspaceId();
   const { data, isLoading } = useQuery(chatOutputsOptions(sessionId));
+  const workflowRunsQuery = useQuery(
+    workflowRunListOptions(wsId, { chatSessionId: sessionId }),
+  );
+  const latestWorkflowRunId = workflowRunsQuery.data?.[0]?.id ?? null;
+  const workflowRunDetailQuery = useQuery(
+    workflowRunDetailOptions(wsId, latestWorkflowRunId),
+  );
   const outputs = data?.outputs ?? [];
+  const outputTaskIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          outputs
+            .map((output) => output.task_id)
+            .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+        ),
+      ),
+    [outputs],
+  );
+  const outputWorkflowRunQueries = useQueries({
+    queries: outputTaskIds.map((taskId) => workflowRunListOptions(wsId, { taskId })),
+  });
+  const outputWorkflowRunIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          outputWorkflowRunQueries
+            .map((query) => query.data?.[0]?.id)
+            .filter((runId): runId is string => typeof runId === "string" && runId.length > 0),
+        ),
+      ).filter((runId) => runId !== latestWorkflowRunId),
+    [latestWorkflowRunId, outputWorkflowRunQueries],
+  );
+  const outputWorkflowRunDetailQueries = useQueries({
+    queries: outputWorkflowRunIds.map((runId) => workflowRunDetailOptions(wsId, runId)),
+  });
+  const outputIssueLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const output of outputs) {
+      if (!output.source_issue_id) continue;
+      const label = outputSourceLabel(output);
+      if (label) labels.set(output.source_issue_id, label);
+    }
+    return labels;
+  }, [outputs]);
+  const workflowArtifacts = useMemo(() => {
+    const byId = new Map<string, WorkflowArtifact>();
+    for (const artifact of workflowRunDetailQuery.data?.artifacts ?? []) {
+      byId.set(artifact.id, artifact);
+    }
+    for (const query of outputWorkflowRunDetailQueries) {
+      for (const artifact of query.data?.artifacts ?? []) {
+        byId.set(artifact.id, artifact);
+      }
+    }
+    return Array.from(byId.values());
+  }, [outputWorkflowRunDetailQueries, workflowRunDetailQuery.data]);
+  const artifactContextById = useMemo(() => {
+    const byId = new Map<string, string>();
+    const addRunContexts = (run: WorkflowRun | undefined) => {
+      if (!run?.artifacts?.length) return;
+      const issueLabel = run.issue_id ? outputIssueLabels.get(run.issue_id) : undefined;
+      const stepTitleById = new Map((run.steps ?? []).map((step) => [step.id, step.title]));
+      for (const artifact of run.artifacts) {
+        const stepTitle = stepTitleById.get(artifact.workflow_step_run_id);
+        const context = [issueLabel, stepTitle].filter(Boolean).join(" · ");
+        if (context) byId.set(artifact.id, context);
+      }
+    };
+    addRunContexts(workflowRunDetailQuery.data);
+    for (const query of outputWorkflowRunDetailQueries) {
+      addRunContexts(query.data);
+    }
+    return byId;
+  }, [outputIssueLabels, outputWorkflowRunDetailQueries, workflowRunDetailQuery.data]);
+  const artifactContextLabel = useCallback(
+    (artifact: WorkflowArtifact) => artifactContextById.get(artifact.id),
+    [artifactContextById],
+  );
+  const loading =
+    isLoading ||
+    workflowRunsQuery.isLoading ||
+    workflowRunDetailQuery.isLoading ||
+    outputWorkflowRunQueries.some((query) => query.isLoading) ||
+    outputWorkflowRunDetailQueries.some((query) => query.isLoading);
+  const hasOutputs = outputs.length > 0 || workflowArtifacts.length > 0;
 
   return (
     <div className="mx-auto w-full max-w-4xl px-5 py-5">
       <SectionTitle title={t(($) => $.pages.session.outputs_title)} />
-      {isLoading ? (
+      {loading ? (
         <ChatSessionListSkeleton />
-      ) : outputs.length === 0 ? (
+      ) : !hasOutputs ? (
         <EmptyState
           icon={<FileText className="size-4" />}
           title={t(($) => $.pages.session.empty_outputs_title)}
           description={t(($) => $.pages.session.empty_outputs_description)}
         />
       ) : (
-        <div className="divide-y rounded-lg border">
-          {outputs.map((output) => (
-            <div key={output.id} className="flex min-h-12 items-center gap-3 px-3 py-2 text-sm">
-              <FileText className="size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{output.filename || output.relative_path}</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {output.kind} · {output.relative_path}
-                </div>
-                <OutputSourceLine output={output} />
+        <div className="space-y-5">
+          {workflowArtifacts.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">
+                {tWorkflows(($) => $.runtime.latest_artifacts)}
               </div>
-              <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(output.size_bytes)}</span>
-            </div>
-          ))}
+              <WorkflowArtifactReviewList
+                artifacts={workflowArtifacts}
+                contextLabelForArtifact={artifactContextLabel}
+              />
+            </section>
+          )}
+          {outputs.length > 0 && (
+            <section className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">
+                {t(($) => $.pages.session.outputs_title)}
+              </div>
+              <div className="divide-y rounded-lg border">
+                {outputs.map((output) => (
+                  <div key={output.id} className="flex min-h-12 items-center gap-3 px-3 py-2 text-sm">
+                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{output.filename || output.relative_path}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {output.kind} · {output.relative_path}
+                      </div>
+                      <OutputSourceLine output={output} />
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(output.size_bytes)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </div>
@@ -586,17 +700,22 @@ function TabLabel({ label, count }: { label: string; count: number }) {
   );
 }
 
+function outputSourceLabel(output: TaskOutputMetadata) {
+  if (output.source_issue_identifier) {
+    return output.source_issue_title
+      ? `${output.source_issue_identifier} ${output.source_issue_title}`
+      : output.source_issue_identifier;
+  }
+  return output.source_issue_title ?? null;
+}
+
 function OutputSourceLine({ output }: { output: TaskOutputMetadata }) {
   const { t } = useT("chat");
   if (!output.source_type) return null;
   const sourceLabel = output.source_type === "issue_task"
     ? t(($) => $.pages.session.output_source.issue_task)
     : t(($) => $.pages.session.output_source.chat_task);
-  const issueLabel = output.source_issue_identifier
-    ? output.source_issue_title
-      ? `${output.source_issue_identifier} ${output.source_issue_title}`
-      : output.source_issue_identifier
-    : null;
+  const issueLabel = outputSourceLabel(output);
   return (
     <div className="truncate text-xs text-muted-foreground">
       {issueLabel ? `${sourceLabel} · ${issueLabel}` : sourceLabel}

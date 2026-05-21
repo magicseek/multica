@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -34,6 +35,7 @@ type WorkflowRunResponse struct {
 	Artifacts            []WorkflowArtifactResponse          `json:"artifacts,omitempty"`
 	Reviews              []WorkflowReviewResponse            `json:"reviews,omitempty"`
 	QualityGateResults   []WorkflowQualityGateResultResponse `json:"quality_gate_results,omitempty"`
+	InputRequests        []WorkflowInputRequestResponse      `json:"input_requests,omitempty"`
 }
 
 type WorkflowStepRunResponse struct {
@@ -98,6 +100,38 @@ type WorkflowQualityGateResultResponse struct {
 	CreatedAt          string  `json:"created_at"`
 }
 
+type WorkflowInputRequestResponse struct {
+	ID                string  `json:"id"`
+	WorkspaceID       string  `json:"workspace_id"`
+	WorkflowRunID     string  `json:"workflow_run_id"`
+	WorkflowStepRunID string  `json:"workflow_step_run_id"`
+	IssueID           *string `json:"issue_id,omitempty"`
+	ChatSessionID     *string `json:"chat_session_id,omitempty"`
+	QuestionCommentID *string `json:"question_comment_id,omitempty"`
+	AnswerCommentID   *string `json:"answer_comment_id,omitempty"`
+	RequesterAgentID  *string `json:"requester_agent_id,omitempty"`
+	ResponderID       *string `json:"responder_id,omitempty"`
+	Status            string  `json:"status"`
+	QuestionText      string  `json:"question_text"`
+	AnswerText        *string `json:"answer_text,omitempty"`
+	RoundIndex        int32   `json:"round_index"`
+	MaxRounds         int32   `json:"max_rounds"`
+	RequestedAt       string  `json:"requested_at"`
+	AnsweredAt        *string `json:"answered_at,omitempty"`
+	CancelledAt       *string `json:"cancelled_at,omitempty"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+}
+
+type WorkflowArtifactDiffResponse struct {
+	LogicalName   string  `json:"logical_name"`
+	BaseVersion   int32   `json:"base_version"`
+	TargetVersion int32   `json:"target_version"`
+	ContentKind   string  `json:"content_kind"`
+	UnifiedDiff   string  `json:"unified_diff"`
+	Summary       *string `json:"summary"`
+}
+
 type workflowStepMutationRequest struct {
 	Reason string `json:"reason"`
 }
@@ -122,12 +156,23 @@ type workflowReviewDecisionRequest struct {
 	Notes string `json:"notes"`
 }
 
+type workflowInputRequestCreateRequest struct {
+	QuestionText string `json:"question_text"`
+	MaxRounds    int32  `json:"max_rounds"`
+}
+
+type workflowInputRequestAnswerRequest struct {
+	AnswerText string `json:"answer_text"`
+	Continue   *bool  `json:"continue"`
+}
+
 func workflowRunToResponse(
 	run db.WorkflowRun,
 	steps []db.WorkflowStepRun,
 	artifacts []db.WorkflowArtifact,
 	reviews []db.WorkflowReview,
 	quality []db.WorkflowQualityGateResult,
+	inputRequests []db.WorkflowInputRequest,
 ) WorkflowRunResponse {
 	resp := WorkflowRunResponse{
 		ID:                   uuidToString(run.ID),
@@ -169,6 +214,12 @@ func workflowRunToResponse(
 		resp.QualityGateResults = make([]WorkflowQualityGateResultResponse, len(quality))
 		for i, result := range quality {
 			resp.QualityGateResults[i] = workflowQualityGateResultToResponse(result)
+		}
+	}
+	if inputRequests != nil {
+		resp.InputRequests = make([]WorkflowInputRequestResponse, len(inputRequests))
+		for i, request := range inputRequests {
+			resp.InputRequests[i] = workflowInputRequestToResponse(request)
 		}
 	}
 	return resp
@@ -259,6 +310,31 @@ func workflowQualityGateResultToResponse(result db.WorkflowQualityGateResult) Wo
 	}
 }
 
+func workflowInputRequestToResponse(request db.WorkflowInputRequest) WorkflowInputRequestResponse {
+	return WorkflowInputRequestResponse{
+		ID:                uuidToString(request.ID),
+		WorkspaceID:       uuidToString(request.WorkspaceID),
+		WorkflowRunID:     uuidToString(request.WorkflowRunID),
+		WorkflowStepRunID: uuidToString(request.WorkflowStepRunID),
+		IssueID:           uuidToPtr(request.IssueID),
+		ChatSessionID:     uuidToPtr(request.ChatSessionID),
+		QuestionCommentID: uuidToPtr(request.QuestionCommentID),
+		AnswerCommentID:   uuidToPtr(request.AnswerCommentID),
+		RequesterAgentID:  uuidToPtr(request.RequesterAgentID),
+		ResponderID:       uuidToPtr(request.ResponderID),
+		Status:            request.Status,
+		QuestionText:      request.QuestionText,
+		AnswerText:        textToPtr(request.AnswerText),
+		RoundIndex:        request.RoundIndex,
+		MaxRounds:         request.MaxRounds,
+		RequestedAt:       timestampToString(request.RequestedAt),
+		AnsweredAt:        timestampToPtr(request.AnsweredAt),
+		CancelledAt:       timestampToPtr(request.CancelledAt),
+		CreatedAt:         timestampToString(request.CreatedAt),
+		UpdatedAt:         timestampToString(request.UpdatedAt),
+	}
+}
+
 func optionalDecodedJSON(raw []byte) any {
 	if len(raw) == 0 {
 		return nil
@@ -279,7 +355,7 @@ func (h *Handler) ListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := make([]WorkflowRunResponse, len(runs))
 		for i, run := range runs {
-			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil)
+			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil, nil)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -298,7 +374,7 @@ func (h *Handler) ListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		if _, ok := h.requireWorkspaceMember(w, r, uuidToString(run.WorkspaceID), "workflow run not found"); !ok {
 			return
 		}
-		writeJSON(w, http.StatusOK, []WorkflowRunResponse{workflowRunToResponse(run, nil, nil, nil, nil)})
+		writeJSON(w, http.StatusOK, []WorkflowRunResponse{workflowRunToResponse(run, nil, nil, nil, nil, nil)})
 		return
 	}
 
@@ -321,7 +397,7 @@ func (h *Handler) ListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := make([]WorkflowRunResponse, len(runs))
 		for i, run := range runs {
-			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil)
+			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil, nil)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -341,7 +417,7 @@ func (h *Handler) ListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := make([]WorkflowRunResponse, len(runs))
 		for i, run := range runs {
-			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil)
+			resp[i] = workflowRunToResponse(run, nil, nil, nil, nil, nil)
 		}
 		writeJSON(w, http.StatusOK, resp)
 		return
@@ -483,6 +559,80 @@ func (h *Handler) PauseWorkflowStepRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workflowStepRunToResponse(updated))
 }
 
+func (h *Handler) CreateWorkflowInputRequest(w http.ResponseWriter, r *http.Request) {
+	step, run, ok := h.workflowStepRunWithAccess(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req workflowInputRequestCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(run.WorkspaceID))
+	var requesterAgentID pgtype.UUID
+	if actorType == "agent" {
+		var parsed bool
+		requesterAgentID, parsed = parseUUIDOrBadRequest(w, actorID, "requester agent id")
+		if !parsed {
+			return
+		}
+	}
+	request, err := h.TaskService.CreateWorkflowInputRequest(r.Context(), step.ID, req.QuestionText, req.MaxRounds, requesterAgentID, "", "")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, workflowInputRequestToResponse(request))
+}
+
+func (h *Handler) AnswerWorkflowInputRequest(w http.ResponseWriter, r *http.Request) {
+	request, _, ok := h.workflowInputRequestWithAccess(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	responderID, ok := parseUUIDOrBadRequest(w, userID, "responder id")
+	if !ok {
+		return
+	}
+	var req workflowInputRequestAnswerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	shouldContinue := true
+	if req.Continue != nil {
+		shouldContinue = *req.Continue
+	}
+	updated, err := h.TaskService.AnswerWorkflowInputRequest(r.Context(), request.ID, responderID, req.AnswerText, shouldContinue)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, workflowInputRequestToResponse(updated))
+}
+
+func (h *Handler) CancelWorkflowInputRequest(w http.ResponseWriter, r *http.Request) {
+	request, _, ok := h.workflowInputRequestWithAccess(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	updated, err := h.TaskService.CancelWorkflowInputRequest(r.Context(), request.ID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, workflowInputRequestToResponse(updated))
+}
+
 func (h *Handler) RetryWorkflowStepRun(w http.ResponseWriter, r *http.Request) {
 	step, _, ok := h.workflowStepRunWithAccess(w, r, chi.URLParam(r, "id"))
 	if !ok {
@@ -538,6 +688,34 @@ func (h *Handler) CreateWorkflowArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusCreated, workflowArtifactToResponse(artifact))
+}
+
+func (h *Handler) GetWorkflowArtifactDiff(w http.ResponseWriter, r *http.Request) {
+	artifact, _, ok := h.workflowArtifactWithAccess(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	baseVersion, ok := parseInt32QueryOrBadRequest(w, r, "base_version")
+	if !ok {
+		return
+	}
+	targetVersion, ok := parseInt32QueryOrBadRequest(w, r, "target_version")
+	if !ok {
+		return
+	}
+	diff, err := h.TaskService.GetWorkflowArtifactDiff(r.Context(), artifact.ID, baseVersion, targetVersion)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, WorkflowArtifactDiffResponse{
+		LogicalName:   diff.LogicalName,
+		BaseVersion:   diff.BaseVersion,
+		TargetVersion: diff.TargetVersion,
+		ContentKind:   diff.ContentKind,
+		UnifiedDiff:   diff.UnifiedDiff,
+		Summary:       diff.Summary,
+	})
 }
 
 func (h *Handler) ReportWorkflowQualityGate(w http.ResponseWriter, r *http.Request) {
@@ -671,6 +849,62 @@ func (h *Handler) workflowReviewWithAccess(w http.ResponseWriter, r *http.Reques
 	return review, run, true
 }
 
+func (h *Handler) workflowInputRequestWithAccess(w http.ResponseWriter, r *http.Request, id string) (db.WorkflowInputRequest, db.WorkflowRun, bool) {
+	requestID, ok := parseUUIDOrBadRequest(w, id, "workflow input request id")
+	if !ok {
+		return db.WorkflowInputRequest{}, db.WorkflowRun{}, false
+	}
+	request, err := h.Queries.GetWorkflowInputRequest(r.Context(), requestID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow input request not found")
+		return db.WorkflowInputRequest{}, db.WorkflowRun{}, false
+	}
+	run, err := h.Queries.GetWorkflowRun(r.Context(), request.WorkflowRunID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow run not found")
+		return db.WorkflowInputRequest{}, db.WorkflowRun{}, false
+	}
+	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(run.WorkspaceID), "workflow input request not found"); !ok {
+		return db.WorkflowInputRequest{}, db.WorkflowRun{}, false
+	}
+	return request, run, true
+}
+
+func (h *Handler) workflowArtifactWithAccess(w http.ResponseWriter, r *http.Request, id string) (db.WorkflowArtifact, db.WorkflowRun, bool) {
+	artifactID, ok := parseUUIDOrBadRequest(w, id, "workflow artifact id")
+	if !ok {
+		return db.WorkflowArtifact{}, db.WorkflowRun{}, false
+	}
+	artifact, err := h.Queries.GetWorkflowArtifact(r.Context(), artifactID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow artifact not found")
+		return db.WorkflowArtifact{}, db.WorkflowRun{}, false
+	}
+	run, err := h.Queries.GetWorkflowRun(r.Context(), artifact.WorkflowRunID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow run not found")
+		return db.WorkflowArtifact{}, db.WorkflowRun{}, false
+	}
+	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(run.WorkspaceID), "workflow artifact not found"); !ok {
+		return db.WorkflowArtifact{}, db.WorkflowRun{}, false
+	}
+	return artifact, run, true
+}
+
+func parseInt32QueryOrBadRequest(w http.ResponseWriter, r *http.Request, name string) (int32, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		writeError(w, http.StatusBadRequest, name+" is required")
+		return 0, false
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid "+name)
+		return 0, false
+	}
+	return int32(value), true
+}
+
 func (h *Handler) workflowRunDetailResponse(w http.ResponseWriter, r *http.Request, run db.WorkflowRun) (WorkflowRunResponse, bool) {
 	steps, err := h.Queries.ListWorkflowStepRunsByRun(r.Context(), run.ID)
 	if err != nil {
@@ -692,5 +926,10 @@ func (h *Handler) workflowRunDetailResponse(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to load workflow quality gate results")
 		return WorkflowRunResponse{}, false
 	}
-	return workflowRunToResponse(run, steps, artifacts, reviews, quality), true
+	inputRequests, err := h.Queries.ListWorkflowInputRequestsByRun(r.Context(), run.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow input requests")
+		return WorkflowRunResponse{}, false
+	}
+	return workflowRunToResponse(run, steps, artifacts, reviews, quality, inputRequests), true
 }

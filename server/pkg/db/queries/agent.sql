@@ -145,7 +145,7 @@ RETURNING *;
 -- status="working" with no self-correction.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CancelAgentTasksByIssueAndAgent :many
@@ -155,7 +155,7 @@ RETURNING *;
 -- still-running @-mention agent on the same issue.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CancelAgentTasksByAgent :many
@@ -166,7 +166,7 @@ RETURNING *;
 -- behave consistently.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE agent_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CancelAgentTasksByTriggerComment :many
@@ -177,7 +177,7 @@ RETURNING *;
 -- and we'd lose the ability to find the affected tasks.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE trigger_comment_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CancelAgentTasksByChatSession :many
@@ -188,7 +188,7 @@ RETURNING *;
 -- could no longer reach those tasks.
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: GetAgentTask :one
@@ -213,7 +213,7 @@ WHERE id = (
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running')
+            AND active.status IN ('dispatched', 'running', 'waiting')
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -243,6 +243,26 @@ RETURNING *;
 UPDATE agent_task_queue
 SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4
 WHERE id = $1 AND status = 'running'
+RETURNING *;
+
+-- name: SuspendAgentTaskForWorkflowInput :one
+UPDATE agent_task_queue
+SET status = 'waiting',
+    session_id = COALESCE(sqlc.narg('session_id'), session_id),
+    work_dir = COALESCE(sqlc.narg('work_dir'), work_dir)
+WHERE id = $1 AND status IN ('dispatched', 'running')
+RETURNING *;
+
+-- name: RequeueWaitingAgentTask :one
+-- Re-anchors created_at so existing queued-task TTL cleanup does not
+-- immediately expire a task that spent a long time waiting for a human answer.
+UPDATE agent_task_queue
+SET status = 'queued',
+    dispatched_at = NULL,
+    started_at = NULL,
+    completed_at = NULL,
+    created_at = now()
+WHERE id = $1 AND status = 'waiting'
 RETURNING *;
 
 -- name: GetLastTaskSession :one
@@ -313,11 +333,11 @@ RETURNING *;
 -- name: UpdateAgentTaskSession :exec
 -- Pins the resume pointer mid-flight so a daemon crash leaves a usable
 -- session_id/work_dir on the task row. No-op if the task is no longer
--- in dispatched/running.
+-- in dispatched/running/waiting.
 UPDATE agent_task_queue
 SET session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir  = COALESCE(sqlc.narg('work_dir'), work_dir)
-WHERE id = $1 AND status IN ('dispatched', 'running');
+WHERE id = $1 AND status IN ('dispatched', 'running', 'waiting');
 
 -- name: RecoverOrphanedTasksForRuntime :many
 -- Called by the daemon at startup. Atomically fails any dispatched/running
@@ -388,7 +408,7 @@ RETURNING t.*;
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
-WHERE id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 RETURNING *;
 
 -- name: CountRunningTasks :one
@@ -398,7 +418,7 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running');
 -- name: HasActiveTaskForIssue :one
 -- Returns true if there is any queued, dispatched, or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting');
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -406,13 +426,13 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running');
 -- the agent picks up new comments on the next cycle) but skip if a pending
 -- task already exists (natural dedup).
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'waiting');
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
 -- for the given issue. Used by @mention trigger dedup.
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched');
+WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'waiting');
 
 -- name: GetLatestTaskIsLeaderForIssueAndAgent :one
 -- Returns the is_leader_task flag of the agent's most recent task on this
@@ -451,7 +471,7 @@ ORDER BY priority DESC, created_at ASC;
 -- busy on a prior task, and a silent UI during that window looks like the
 -- platform never received the trigger.
 SELECT * FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running')
+WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC;
 
 -- name: GetWorkspaceAgentRunCounts :many
@@ -516,7 +536,7 @@ ORDER BY atq.agent_id, bucket;
 SELECT atq.* FROM agent_task_queue atq
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
-  AND atq.status IN ('queued', 'dispatched', 'running')
+  AND atq.status IN ('queued', 'dispatched', 'running', 'waiting')
 
 UNION ALL
 

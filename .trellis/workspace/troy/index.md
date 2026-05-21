@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-05-19
+- **Total Sessions**: 5
+- **Last Active**: 2026-05-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~155 | Active |
+| `journal-1.md` | ~186 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-05-21 | Workflow input requests and reviewable artifacts | - | `trellis/ai-desk-flows-to-multica-workflows` |
 | 4 | 2026-05-19 | Migrate ai-desk flows into Multica workflow runtime | `14b65f7c` | `trellis/ai-desk-flows-to-multica-workflows` |
 | 3 | 2026-05-19 | Project-associated Chat Sessions | `c016fdbf`, `35153fe6`, `e5e3896e`, `652b7400`, `25702b56`, `43d3e845`, `d5fbdce2` | `trellis/project-associated-chat-sessions` |
 | 2 | 2026-05-18 | Improve project and issue start UX | `e6569b30`, `ed92f5c3`, `70f54e80`, `f519af72` | `trellis/repository-start-modes` |

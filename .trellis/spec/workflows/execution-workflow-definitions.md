@@ -388,3 +388,364 @@ daemon injects agent_task_queue.workflow_snapshot.rendered_markdown
 ```
 
 This keeps workflow ownership with the work, preserves auditability, and prevents delayed claims from observing unintended template changes.
+
+## Scenario: Workflow input requests and reviewable planning artifacts
+
+### 1. Scope / Trigger
+
+- Trigger: let an agent ask bounded human clarification questions during a workflow step without marking the issue blocked or creating a new workflow run.
+- Trigger: let planning, brainstorming, and requirements documents be reviewed in the cloud while preserving the local-output privacy boundary for ordinary task outputs.
+- Trigger: support reviewable artifact revisions and reviewer-facing diffs without making patches the persisted source of truth.
+
+This is cross-layer work. It changes database schema, sqlc queries, HTTP API contracts, daemon task lifecycle handling, CLI commands, workflow run responses, issue comment routing, core TypeScript types, and issue/workflow UI.
+
+Design records:
+
+- `CONTEXT.md`
+- `docs/adr/0003-migrate-ai-desk-flows-through-multica-workflow-runs.md`
+- `docs/adr/0004-workflow-input-requests-and-reviewable-planning-artifacts.md`
+
+### 2. Signatures
+
+#### DB
+
+Add a task waiting lifecycle state. Waiting tasks are active but not claimable.
+
+```sql
+ALTER TABLE agent_task_queue
+  DROP CONSTRAINT agent_task_queue_status_check,
+  ADD CONSTRAINT agent_task_queue_status_check
+    CHECK (status IN ('queued', 'dispatched', 'running', 'waiting', 'completed', 'failed', 'cancelled'));
+```
+
+Add workflow-scoped input requests:
+
+```sql
+CREATE TABLE workflow_input_request (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+  workflow_run_id UUID NOT NULL REFERENCES workflow_run(id) ON DELETE CASCADE,
+  workflow_step_run_id UUID NOT NULL REFERENCES workflow_step_run(id) ON DELETE CASCADE,
+  issue_id UUID REFERENCES issue(id) ON DELETE SET NULL,
+  chat_session_id UUID REFERENCES chat_session(id) ON DELETE SET NULL,
+  question_comment_id UUID REFERENCES comment(id) ON DELETE SET NULL,
+  answer_comment_id UUID REFERENCES comment(id) ON DELETE SET NULL,
+  requester_agent_id UUID REFERENCES agent(id) ON DELETE SET NULL,
+  responder_id UUID REFERENCES "user"(id) ON DELETE SET NULL,
+  status TEXT NOT NULL CHECK (status IN ('requested', 'answered', 'cancelled', 'expired')),
+  question_text TEXT NOT NULL,
+  answer_text TEXT,
+  round_index INT NOT NULL DEFAULT 1,
+  max_rounds INT NOT NULL DEFAULT 1,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX workflow_input_request_run_status_idx
+  ON workflow_input_request(workflow_run_id, status, requested_at DESC);
+
+CREATE UNIQUE INDEX workflow_input_request_open_step_unique
+  ON workflow_input_request(workflow_step_run_id)
+  WHERE status = 'requested';
+```
+
+Do not add a `waiting_for_clarification` issue status. Use workflow runtime data to derive issue attention state.
+
+Do not require a persisted `workflow_artifact_diff` table in the first implementation. Diffs may be generated on demand from complete artifact versions. A cache table can be introduced later if artifact size or traffic makes on-demand diffing too expensive.
+
+#### Workflow schema JSON
+
+Agent-executed steps may opt into bounded input requests:
+
+```json
+{
+  "id": "contract",
+  "execution": { "kind": "agent" },
+  "input_requests": {
+    "allowed": true,
+    "max_rounds": 3,
+    "question_policy": "one_at_a_time"
+  }
+}
+```
+
+Planning artifacts that need review are declared as workflow artifacts with review:
+
+```json
+{
+  "id": "plan",
+  "execution": { "kind": "agent" },
+  "artifact": {
+    "name": "implementation-plan",
+    "content_kind": "markdown",
+    "required": true
+  },
+  "review": {
+    "required": true
+  }
+}
+```
+
+Default policy:
+
+- `input_requests.allowed = false` unless the step or system seed enables it.
+- Execution steps default to `max_rounds = 1`.
+- Planning, contract, or clarity steps may opt into a small higher limit, normally `3`.
+- Only one requested input request may be open for a step run at a time.
+
+#### API
+
+Workflow run responses include open and historical input requests:
+
+```json
+{
+  "input_requests": [
+    {
+      "id": "uuid",
+      "workflow_run_id": "uuid",
+      "workflow_step_run_id": "uuid",
+      "status": "requested",
+      "question_text": "...",
+      "answer_text": null,
+      "question_comment_id": "uuid",
+      "answer_comment_id": null,
+      "round_index": 1,
+      "max_rounds": 3,
+      "requested_at": "..."
+    }
+  ]
+}
+```
+
+Input request routes:
+
+```text
+POST /api/workflow-step-runs/{id}/input-requests
+POST /api/workflow-input-requests/{id}/answer
+POST /api/workflow-input-requests/{id}/cancel
+```
+
+Request body for creating an input request:
+
+```json
+{
+  "question_text": "Which repository providers should this support first?",
+  "max_rounds": 3
+}
+```
+
+Request body for answering:
+
+```json
+{
+  "answer_text": "Start with GitHub only.",
+  "continue": true
+}
+```
+
+Artifact diff route:
+
+```text
+GET /api/workflow-artifacts/{id}/diff?base_version=1&target_version=2
+```
+
+Response body:
+
+```json
+{
+  "logical_name": "implementation-plan",
+  "base_version": 1,
+  "target_version": 2,
+  "content_kind": "markdown",
+  "unified_diff": "...",
+  "summary": null
+}
+```
+
+#### CLI
+
+Agent-facing input request command:
+
+```text
+multica workflow input request <step-run-id> --question-file <path|-> [--max-rounds N]
+```
+
+Reviewer-facing or debugging commands may be added as wrappers over API routes:
+
+```text
+multica workflow input answer <input-request-id> --file <path|-> [--no-continue]
+multica workflow artifact diff <artifact-id> --base-version N --target-version N
+```
+
+Existing explicit artifact save remains the publication boundary:
+
+```text
+multica workflow artifact save <step-run-id> --name implementation-plan --file plan.md --format markdown
+```
+
+### 3. Contracts
+
+#### Workflow input requests
+
+- An input request belongs to exactly one workflow step run.
+- Creating an input request is allowed only for an agent step whose snapshot allows input requests and whose round limit has not been exceeded.
+- Creating an input request creates or links an issue-visible question comment when the run has an issue context.
+- Creating an input request sets the step run and workflow run to a waiting state and suspends the backing task instead of failing or completing it.
+- Waiting tasks are not claimable by daemon pollers.
+- Waiting tasks still count as active for duplicate task guards, issue live banners, and cancellation.
+- Answering through the explicit input request answer route creates or links an answer comment.
+- Answer-bound comments must not trigger the ordinary comment response workflow, even if they mention an agent.
+- Answering with `continue = true` changes the backing task from `waiting` to `queued`, makes the waiting step ready or running as appropriate, and lets the daemon resume with the same workflow run, work directory, and provider session when available.
+- Ordinary issue comments do not answer input requests unless routed through the explicit answer action.
+- If the round limit is exhausted, the agent must report the remaining decision gap instead of opening another input request.
+
+#### Reviewable workflow artifacts
+
+- Ordinary local outputs remain Output Metadata unless the agent or human explicitly saves a workflow artifact.
+- Planning, brainstorming, and requirements documents that need cloud approval are saved as workflow artifacts with `content_kind = markdown`, `text`, or `json`.
+- Output Metadata is never enough for a review/approval decision. If the user is expected to read, approve, reject, or compare a design/plan, the server must receive complete artifact content through `workflow artifact save`; a local path in `.multica/outputs.json` or an issue comment is only discoverability metadata.
+- Workflow run surfaces must render saved artifact content inline for review. Listing only artifact names, relative paths, sizes, or versions is not a valid review UI.
+- Approval of a reviewable artifact unblocks workflow dependencies; it does not directly create issues or other workspace side effects.
+- A later explicit workflow step may create Chat Issue Proposals or issues after approval.
+- Each artifact version is stored as complete content.
+- Diff output is a reviewer aid generated from complete versions; it is not the source of truth.
+- Agents may use patch-style or section-level edits locally to reduce model output tokens, but the saved artifact version must be the complete revised document.
+
+#### Daemon behavior
+
+- The daemon releases its execution slot when a task is suspended for input.
+- A suspended task must preserve `session_id` and `work_dir` when the provider returned them.
+- Resume claim payloads include the workflow run, step runs, input requests, and answer comment context.
+- The daemon must not call `CompleteTask` for a workflow run that is waiting on an open input request.
+- The daemon must not call `FailTask` for expected user input waits.
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected behavior |
+|-----------|-------------------|
+| Create input request for non-agent step | `400`, input requests are agent-step waiting points |
+| Create input request when step snapshot disallows it | `400`, policy error |
+| Create second open input request for same step run | `409`, existing requested input returned |
+| Create input request after `max_rounds` exhausted | `400`, round limit exceeded |
+| Answer input request outside workspace | `404` or `403` according to existing workspace auth convention |
+| Answer already answered/cancelled/expired request | `409`, terminal input request |
+| Ordinary comment on issue with open input request | Creates ordinary comment; does not answer request unless explicit answer route is used |
+| Answer-bound comment contains `@agent` | Does not enqueue comment response workflow |
+| Suspend task without open input request | `400` or no-op guard; do not hide failures as waiting |
+| Claim poll sees waiting task | Waiting task is not returned as claim candidate |
+| New task for same issue/agent while prior task waiting | Duplicate guard treats waiting as active |
+| Diff requested for missing version | `404` |
+| Diff requested for unsupported binary content | `400`; first version supports text/markdown/json only |
+| Artifact save uses invalid JSON for json kind | `400`, no artifact row |
+
+### 5. Good/Base/Bad Cases
+
+- Good: During a contract step, the agent asks one question, the task moves to waiting, the issue shows `Needs input`, the user answers through `Answer & continue`, and the same workflow run resumes in a later execution batch.
+- Good: A user posts a separate discussion comment while an input request is open. The comment remains ordinary discussion and does not resume the workflow.
+- Good: An answer-bound comment mentions the agent by name, but only the input request resumes. No Comment Response workflow is queued.
+- Good: A planning workflow in a chat session saves `implementation-plan` v1 as a reviewable workflow artifact. A reviewer requests changes, the agent saves v2, and the UI shows a diff from v1 to v2.
+- Good: The workflow run evidence area renders the full latest `implementation-plan` Markdown so the reviewer can approve it without opening a daemon-local file.
+- Good: A reviewer approves a plan artifact. The workflow proceeds to a separate step that creates Chat Issue Proposals, which the user can still accept or edit.
+- Base: A workflow step has no `input_requests` policy. The agent cannot open an input request and must use the existing blocked path if it cannot proceed.
+- Base: Artifact diff is generated on demand and is not persisted.
+- Bad: A final issue comment says `Artifacts: deliverables/plan.md` but no workflow artifact was saved. This is wrong because cloud reviewers cannot preview, approve, or diff a daemon-local path.
+- Bad: Adding `waiting_for_clarification` to issue status. This is wrong because issue status is a coarse lifecycle and should not encode workflow attention state.
+- Bad: Completing the backing task when an input request is open. This is wrong because completion currently auto-completes unfinished step runs and would erase the wait state.
+- Bad: Saving only a patch as artifact v2. This is wrong because review and downstream execution require complete artifact content.
+
+### 6. Tests Required
+
+Backend/db:
+
+- Migration adds `agent_task_queue.status = waiting` and `workflow_input_request`; rollback restores prior constraints safely.
+- sqlc queries create, fetch, answer, cancel, and list input requests by workflow run.
+- Partial unique index prevents two requested input requests for one step run.
+- Waiting tasks are excluded from claim candidates but included in active duplicate guards and issue live task queries.
+
+Workflow service:
+
+- Creating input request validates step kind, snapshot policy, open-request uniqueness, and round limit.
+- Creating input request moves workflow run to `waiting` and suspends the backing task without completing unfinished steps.
+- Answering input request records answer text/comment, marks request answered, returns the task to `queued`, and makes the step resumable.
+- Answering does not create a new workflow run.
+- Cancelling a run with an open input request cancels or terminalizes the request.
+- Artifact diff returns deterministic output for markdown/text versions.
+
+Comment routing:
+
+- Answer-bound comments do not enqueue comment-triggered agent tasks.
+- Ordinary comments still follow existing mention/comment workflow behavior.
+- Ordinary comments on issues with open input requests remain ordinary unless routed through the explicit answer action.
+
+Daemon/execenv:
+
+- Agent request-input path causes task suspension, not complete/fail.
+- Resume claim includes workflow run, step runs, input requests, answer context, `session_id`, and `work_dir`.
+- Timeout/orphan recovery does not fail tasks already suspended as waiting.
+
+Frontend/core/views:
+
+- TypeScript types cover workflow input requests and artifact diff responses.
+- Workflow run viewer shows open input requests with `Answer & continue`, `Comment only`, and cancel affordances.
+- Workflow run viewer exposes which step runs can open workflow input requests, so users can distinguish "this step may ask" from ordinary comment discussion even before a request is open.
+- Issue cards/details derive `Needs input` attention from open workflow input requests without changing issue status.
+- Comment composer can target an input request and submit through the answer route.
+- Artifact viewer shows complete latest version content and reviewer-facing diff between versions. Tests must fail if artifacts degrade to names/paths only.
+- Review approval unblocks workflow but does not directly create issues.
+
+Verification commands:
+
+- `make test` for Go service/handler/db paths touched.
+- Focused Go tests for workflow runtime, comment routing, daemon task lifecycle, and artifact diff.
+- `pnpm typecheck`.
+- `pnpm test` for core/view changes.
+- Manual or browser QA for issue attention badge, answer flow, artifact review, and artifact diff rendering.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+agent posts "I need input" as an ordinary comment
+daemon completes the task
+user replies with @agent
+server queues Comment Response workflow
+```
+
+This loses the waiting step state, can auto-complete unfinished workflow steps, and starts the wrong workflow.
+
+#### Correct
+
+```text
+agent calls multica workflow input request <step-run-id>
+server creates Workflow Input Request and suspends the task
+user submits Answer & continue
+server records answer and requeues the same task
+daemon resumes the same Workflow Run in a new Execution Batch
+```
+
+This preserves workflow history, releases daemon capacity while waiting, and keeps ordinary comments separate from workflow-resume inputs.
+
+#### Wrong
+
+```text
+reviewer requests changes
+agent saves only plan.patch as artifact v2
+downstream implementation step reads latest artifact
+```
+
+This makes review and execution depend on replaying previous versions.
+
+#### Correct
+
+```text
+agent applies patch locally or rewrites changed sections
+agent saves complete implementation-plan v2
+UI displays Workflow Artifact Diff from v1 to v2
+downstream implementation step reads complete v2
+```
+
+This reduces model output cost while keeping complete artifacts as the durable source of truth.

@@ -11,6 +11,107 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const answerWorkflowInputRequest = `-- name: AnswerWorkflowInputRequest :one
+UPDATE workflow_input_request SET
+    status = 'answered',
+    answer_text = $1,
+    answer_comment_id = $2,
+    responder_id = $3,
+    answered_at = now(),
+    updated_at = now()
+WHERE id = $4 AND status = 'requested'
+RETURNING id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at
+`
+
+type AnswerWorkflowInputRequestParams struct {
+	AnswerText      pgtype.Text `json:"answer_text"`
+	AnswerCommentID pgtype.UUID `json:"answer_comment_id"`
+	ResponderID     pgtype.UUID `json:"responder_id"`
+	ID              pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) AnswerWorkflowInputRequest(ctx context.Context, arg AnswerWorkflowInputRequestParams) (WorkflowInputRequest, error) {
+	row := q.db.QueryRow(ctx, answerWorkflowInputRequest,
+		arg.AnswerText,
+		arg.AnswerCommentID,
+		arg.ResponderID,
+		arg.ID,
+	)
+	var i WorkflowInputRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.IssueID,
+		&i.ChatSessionID,
+		&i.QuestionCommentID,
+		&i.AnswerCommentID,
+		&i.RequesterAgentID,
+		&i.ResponderID,
+		&i.Status,
+		&i.QuestionText,
+		&i.AnswerText,
+		&i.RoundIndex,
+		&i.MaxRounds,
+		&i.RequestedAt,
+		&i.AnsweredAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cancelWorkflowInputRequest = `-- name: CancelWorkflowInputRequest :one
+UPDATE workflow_input_request SET
+    status = 'cancelled',
+    cancelled_at = now(),
+    updated_at = now()
+WHERE id = $1 AND status = 'requested'
+RETURNING id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at
+`
+
+func (q *Queries) CancelWorkflowInputRequest(ctx context.Context, id pgtype.UUID) (WorkflowInputRequest, error) {
+	row := q.db.QueryRow(ctx, cancelWorkflowInputRequest, id)
+	var i WorkflowInputRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.IssueID,
+		&i.ChatSessionID,
+		&i.QuestionCommentID,
+		&i.AnswerCommentID,
+		&i.RequesterAgentID,
+		&i.ResponderID,
+		&i.Status,
+		&i.QuestionText,
+		&i.AnswerText,
+		&i.RoundIndex,
+		&i.MaxRounds,
+		&i.RequestedAt,
+		&i.AnsweredAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const countWorkflowInputRequestRoundsByStepRun = `-- name: CountWorkflowInputRequestRoundsByStepRun :one
+SELECT count(*)::int FROM workflow_input_request
+WHERE workflow_step_run_id = $1
+`
+
+func (q *Queries) CountWorkflowInputRequestRoundsByStepRun(ctx context.Context, workflowStepRunID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countWorkflowInputRequestRoundsByStepRun, workflowStepRunID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createWorkflowArtifactVersion = `-- name: CreateWorkflowArtifactVersion :one
 WITH next_version AS (
     SELECT COALESCE(MAX(version), 0) + 1 AS version
@@ -79,6 +180,91 @@ func (q *Queries) CreateWorkflowArtifactVersion(ctx context.Context, arg CreateW
 		&i.ProducerID,
 		&i.SupersedesArtifactID,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createWorkflowInputRequest = `-- name: CreateWorkflowInputRequest :one
+WITH next_round AS (
+    SELECT COALESCE(MAX(round_index), 0) + 1 AS round_index
+    FROM workflow_input_request
+    WHERE workflow_step_run_id = $3
+)
+INSERT INTO workflow_input_request (
+    workspace_id,
+    workflow_run_id,
+    workflow_step_run_id,
+    issue_id,
+    chat_session_id,
+    question_comment_id,
+    requester_agent_id,
+    status,
+    question_text,
+    round_index,
+    max_rounds
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    'requested',
+    $8,
+    (SELECT round_index FROM next_round),
+    $9
+)
+RETURNING id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at
+`
+
+type CreateWorkflowInputRequestParams struct {
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	WorkflowRunID     pgtype.UUID `json:"workflow_run_id"`
+	WorkflowStepRunID pgtype.UUID `json:"workflow_step_run_id"`
+	IssueID           pgtype.UUID `json:"issue_id"`
+	ChatSessionID     pgtype.UUID `json:"chat_session_id"`
+	QuestionCommentID pgtype.UUID `json:"question_comment_id"`
+	RequesterAgentID  pgtype.UUID `json:"requester_agent_id"`
+	QuestionText      string      `json:"question_text"`
+	MaxRounds         int32       `json:"max_rounds"`
+}
+
+func (q *Queries) CreateWorkflowInputRequest(ctx context.Context, arg CreateWorkflowInputRequestParams) (WorkflowInputRequest, error) {
+	row := q.db.QueryRow(ctx, createWorkflowInputRequest,
+		arg.WorkspaceID,
+		arg.WorkflowRunID,
+		arg.WorkflowStepRunID,
+		arg.IssueID,
+		arg.ChatSessionID,
+		arg.QuestionCommentID,
+		arg.RequesterAgentID,
+		arg.QuestionText,
+		arg.MaxRounds,
+	)
+	var i WorkflowInputRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.IssueID,
+		&i.ChatSessionID,
+		&i.QuestionCommentID,
+		&i.AnswerCommentID,
+		&i.RequesterAgentID,
+		&i.ResponderID,
+		&i.Status,
+		&i.QuestionText,
+		&i.AnswerText,
+		&i.RoundIndex,
+		&i.MaxRounds,
+		&i.RequestedAt,
+		&i.AnsweredAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -423,6 +609,131 @@ func (q *Queries) CreateWorkflowStepRunRetry(ctx context.Context, arg CreateWork
 	return i, err
 }
 
+const getOpenWorkflowInputRequestByStepRun = `-- name: GetOpenWorkflowInputRequestByStepRun :one
+SELECT id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at FROM workflow_input_request
+WHERE workflow_step_run_id = $1 AND status = 'requested'
+`
+
+func (q *Queries) GetOpenWorkflowInputRequestByStepRun(ctx context.Context, workflowStepRunID pgtype.UUID) (WorkflowInputRequest, error) {
+	row := q.db.QueryRow(ctx, getOpenWorkflowInputRequestByStepRun, workflowStepRunID)
+	var i WorkflowInputRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.IssueID,
+		&i.ChatSessionID,
+		&i.QuestionCommentID,
+		&i.AnswerCommentID,
+		&i.RequesterAgentID,
+		&i.ResponderID,
+		&i.Status,
+		&i.QuestionText,
+		&i.AnswerText,
+		&i.RoundIndex,
+		&i.MaxRounds,
+		&i.RequestedAt,
+		&i.AnsweredAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkflowArtifact = `-- name: GetWorkflowArtifact :one
+SELECT id, workflow_run_id, workflow_step_run_id, logical_name, version, content_kind, content_text, content_json, producer_type, producer_id, supersedes_artifact_id, created_at FROM workflow_artifact
+WHERE id = $1
+`
+
+func (q *Queries) GetWorkflowArtifact(ctx context.Context, id pgtype.UUID) (WorkflowArtifact, error) {
+	row := q.db.QueryRow(ctx, getWorkflowArtifact, id)
+	var i WorkflowArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.LogicalName,
+		&i.Version,
+		&i.ContentKind,
+		&i.ContentText,
+		&i.ContentJson,
+		&i.ProducerType,
+		&i.ProducerID,
+		&i.SupersedesArtifactID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getWorkflowArtifactVersionByAnchor = `-- name: GetWorkflowArtifactVersionByAnchor :one
+SELECT versioned.id, versioned.workflow_run_id, versioned.workflow_step_run_id, versioned.logical_name, versioned.version, versioned.content_kind, versioned.content_text, versioned.content_json, versioned.producer_type, versioned.producer_id, versioned.supersedes_artifact_id, versioned.created_at FROM workflow_artifact anchor
+JOIN workflow_artifact versioned
+  ON versioned.workflow_step_run_id = anchor.workflow_step_run_id
+ AND versioned.logical_name = anchor.logical_name
+WHERE anchor.id = $1
+  AND versioned.version = $2
+`
+
+type GetWorkflowArtifactVersionByAnchorParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Version int32       `json:"version"`
+}
+
+func (q *Queries) GetWorkflowArtifactVersionByAnchor(ctx context.Context, arg GetWorkflowArtifactVersionByAnchorParams) (WorkflowArtifact, error) {
+	row := q.db.QueryRow(ctx, getWorkflowArtifactVersionByAnchor, arg.ID, arg.Version)
+	var i WorkflowArtifact
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.LogicalName,
+		&i.Version,
+		&i.ContentKind,
+		&i.ContentText,
+		&i.ContentJson,
+		&i.ProducerType,
+		&i.ProducerID,
+		&i.SupersedesArtifactID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getWorkflowInputRequest = `-- name: GetWorkflowInputRequest :one
+SELECT id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at FROM workflow_input_request
+WHERE id = $1
+`
+
+func (q *Queries) GetWorkflowInputRequest(ctx context.Context, id pgtype.UUID) (WorkflowInputRequest, error) {
+	row := q.db.QueryRow(ctx, getWorkflowInputRequest, id)
+	var i WorkflowInputRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.WorkflowRunID,
+		&i.WorkflowStepRunID,
+		&i.IssueID,
+		&i.ChatSessionID,
+		&i.QuestionCommentID,
+		&i.AnswerCommentID,
+		&i.RequesterAgentID,
+		&i.ResponderID,
+		&i.Status,
+		&i.QuestionText,
+		&i.AnswerText,
+		&i.RoundIndex,
+		&i.MaxRounds,
+		&i.RequestedAt,
+		&i.AnsweredAt,
+		&i.CancelledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkflowReview = `-- name: GetWorkflowReview :one
 SELECT id, workflow_run_id, workflow_step_run_id, workflow_artifact_id, status, reviewer_id, decision_notes, requested_at, reviewed_at, created_at, updated_at FROM workflow_review
 WHERE id = $1
@@ -633,6 +944,100 @@ func (q *Queries) ListWorkflowArtifactsByStep(ctx context.Context, workflowStepR
 			&i.ProducerID,
 			&i.SupersedesArtifactID,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowInputRequestsByRun = `-- name: ListWorkflowInputRequestsByRun :many
+SELECT id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at FROM workflow_input_request
+WHERE workflow_run_id = $1
+ORDER BY requested_at DESC, created_at DESC
+`
+
+func (q *Queries) ListWorkflowInputRequestsByRun(ctx context.Context, workflowRunID pgtype.UUID) ([]WorkflowInputRequest, error) {
+	rows, err := q.db.Query(ctx, listWorkflowInputRequestsByRun, workflowRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowInputRequest{}
+	for rows.Next() {
+		var i WorkflowInputRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowRunID,
+			&i.WorkflowStepRunID,
+			&i.IssueID,
+			&i.ChatSessionID,
+			&i.QuestionCommentID,
+			&i.AnswerCommentID,
+			&i.RequesterAgentID,
+			&i.ResponderID,
+			&i.Status,
+			&i.QuestionText,
+			&i.AnswerText,
+			&i.RoundIndex,
+			&i.MaxRounds,
+			&i.RequestedAt,
+			&i.AnsweredAt,
+			&i.CancelledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkflowInputRequestsByStepRun = `-- name: ListWorkflowInputRequestsByStepRun :many
+SELECT id, workspace_id, workflow_run_id, workflow_step_run_id, issue_id, chat_session_id, question_comment_id, answer_comment_id, requester_agent_id, responder_id, status, question_text, answer_text, round_index, max_rounds, requested_at, answered_at, cancelled_at, created_at, updated_at FROM workflow_input_request
+WHERE workflow_step_run_id = $1
+ORDER BY round_index DESC, requested_at DESC
+`
+
+func (q *Queries) ListWorkflowInputRequestsByStepRun(ctx context.Context, workflowStepRunID pgtype.UUID) ([]WorkflowInputRequest, error) {
+	rows, err := q.db.Query(ctx, listWorkflowInputRequestsByStepRun, workflowStepRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowInputRequest{}
+	for rows.Next() {
+		var i WorkflowInputRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.WorkflowRunID,
+			&i.WorkflowStepRunID,
+			&i.IssueID,
+			&i.ChatSessionID,
+			&i.QuestionCommentID,
+			&i.AnswerCommentID,
+			&i.RequesterAgentID,
+			&i.ResponderID,
+			&i.Status,
+			&i.QuestionText,
+			&i.AnswerText,
+			&i.RoundIndex,
+			&i.MaxRounds,
+			&i.RequestedAt,
+			&i.AnsweredAt,
+			&i.CancelledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

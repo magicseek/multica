@@ -363,13 +363,14 @@ function TaskRow({
   // Queued tasks have no messages yet — hiding the transcript button avoids
   // a guaranteed "No execution data recorded." dialog open.
   const showTranscript = task.status !== "queued";
-  // Cancel only makes sense for the three active states. Terminal rows
+  // Cancel only makes sense for active states. Terminal rows
   // (completed / failed / cancelled) hide the button entirely.
   const showCancel =
     timeMode === "active" &&
     (task.status === "queued" ||
       task.status === "dispatched" ||
-      task.status === "running");
+      task.status === "running" ||
+      task.status === "waiting");
 
   const handleCancel = async () => {
     if (cancelling) return;

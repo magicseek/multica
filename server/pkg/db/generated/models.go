@@ -737,6 +737,29 @@ type WorkflowDefinition struct {
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkflowInputRequest struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	WorkflowRunID     pgtype.UUID        `json:"workflow_run_id"`
+	WorkflowStepRunID pgtype.UUID        `json:"workflow_step_run_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	QuestionCommentID pgtype.UUID        `json:"question_comment_id"`
+	AnswerCommentID   pgtype.UUID        `json:"answer_comment_id"`
+	RequesterAgentID  pgtype.UUID        `json:"requester_agent_id"`
+	ResponderID       pgtype.UUID        `json:"responder_id"`
+	Status            string             `json:"status"`
+	QuestionText      string             `json:"question_text"`
+	AnswerText        pgtype.Text        `json:"answer_text"`
+	RoundIndex        int32              `json:"round_index"`
+	MaxRounds         int32              `json:"max_rounds"`
+	RequestedAt       pgtype.Timestamptz `json:"requested_at"`
+	AnsweredAt        pgtype.Timestamptz `json:"answered_at"`
+	CancelledAt       pgtype.Timestamptz `json:"cancelled_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WorkflowQualityGateResult struct {
 	ID                 pgtype.UUID        `json:"id"`
 	WorkflowRunID      pgtype.UUID        `json:"workflow_run_id"`

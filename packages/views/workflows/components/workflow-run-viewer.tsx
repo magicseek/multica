@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   Check,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   CircleDashed,
   CirclePause,
   FileText,
+  MessageSquareText,
   RefreshCw,
   ShieldCheck,
   Square,
@@ -19,7 +20,13 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import type { WorkflowReview, WorkflowRun, WorkflowStepRun } from "@multica/core/types";
+import type {
+  WorkflowArtifact,
+  WorkflowInputRequest,
+  WorkflowReview,
+  WorkflowRun,
+  WorkflowStepRun,
+} from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   workflowKeys,
@@ -28,25 +35,36 @@ import {
 } from "@multica/core/workflows";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Card } from "@multica/ui/components/ui/card";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { WorkflowArtifactReviewList } from "./workflow-artifact-review-list";
 
 export function WorkflowRunViewer({
   issueId,
   taskId,
   chatSessionId,
   autopilotRunId,
+  variant = "sidebar",
+  commentComposer,
+  answerComposer,
+  className,
 }: {
   issueId?: string;
   taskId?: string;
   chatSessionId?: string;
   autopilotRunId?: string;
+  variant?: "sidebar" | "activity";
+  commentComposer?: ReactNode;
+  answerComposer?: (request: WorkflowInputRequest) => ReactNode;
+  className?: string;
 }) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(true);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [answeringRequestId, setAnsweringRequestId] = useState<string | null>(null);
   const runFilter = { issueId, taskId, chatSessionId, autopilotRunId };
   const { data: runs = [] } = useQuery(workflowRunListOptions(wsId, runFilter));
   const latestRunId = runs[0]?.id ?? null;
@@ -58,11 +76,14 @@ export function WorkflowRunViewer({
   if (!run) return null;
 
   const steps = workflowStepsForDisplay(run, detail?.steps ?? []);
+  const artifacts = detail?.artifacts ?? [];
   const reviews = detail?.reviews ?? [];
+  const inputRequests = detail?.input_requests ?? [];
+  const openInputRequests = inputRequests.filter((request) => request.status === "requested");
   const pendingReviews = reviews.filter((review) => review.status === "requested");
   const evidenceCounts = {
-    artifacts: detail?.artifacts?.length ?? 0,
-    reviews: detail?.reviews?.length ?? 0,
+    artifacts: artifacts.length,
+    reviews: reviews.length,
     quality: detail?.quality_gate_results?.length ?? 0,
   };
   const hasWorkflowEvidence =
@@ -88,9 +109,162 @@ export function WorkflowRunViewer({
       setPendingAction(null);
     }
   };
+  const body = (
+    <>
+      <WorkflowRunHeader
+        run={run}
+        completed={completed}
+        total={steps.length}
+        busy={pendingAction}
+        variant={variant}
+        onCancel={() =>
+          runAction(
+            "cancel-run",
+            () => api.cancelWorkflowRun(run.id),
+            t(($) => $.runtime.cancelled),
+          )
+        }
+        onRerun={() =>
+          runAction(
+            "rerun",
+            () => api.rerunWorkflowRun(run.id),
+            t(($) => $.runtime.rerun_created),
+          )
+        }
+      />
+      {steps.length > 0 && (
+        <div className="space-y-1">
+          {steps.map((step) => (
+            <WorkflowStepRow
+              key={step.id}
+              step={step}
+              busy={pendingAction}
+              onManualComplete={() =>
+                runAction(
+                  `manual-${step.id}`,
+                  () => api.completeManualWorkflowStepRun(step.id),
+                  t(($) => $.runtime.step_completed),
+                )
+              }
+              onRetry={() =>
+                runAction(
+                  `retry-${step.id}`,
+                  () => api.retryWorkflowStepRun(step.id),
+                  t(($) => $.runtime.step_retry_created),
+                )
+              }
+            />
+          ))}
+        </div>
+      )}
+      {pendingReviews.length > 0 && (
+        <WorkflowReviewControls
+          reviews={pendingReviews}
+          busy={pendingAction}
+          onApprove={(review) =>
+            runAction(
+              `approve-${review.id}`,
+              () => api.approveWorkflowReview(review.id),
+              t(($) => $.runtime.review_approved),
+            )
+          }
+          onReject={(review) =>
+            runAction(
+              `reject-${review.id}`,
+              () => api.rejectWorkflowReview(review.id),
+              t(($) => $.runtime.review_rejected),
+            )
+          }
+        />
+      )}
+      {openInputRequests.length > 0 && (
+        <WorkflowInputRequestControls
+          requests={openInputRequests}
+          busy={pendingAction}
+          answeringRequestId={answeringRequestId}
+          answerComposer={answerComposer}
+          onAnswer={(request) => setAnsweringRequestId(request.id)}
+          onCancel={(request) =>
+            runAction(
+              `input-cancel-${request.id}`,
+              () => api.cancelWorkflowInputRequest(request.id),
+              t(($) => $.runtime.input_cancelled),
+            )
+          }
+        />
+      )}
+      {detail && hasWorkflowEvidence && (
+        <WorkflowRunEvidence
+          artifacts={artifacts}
+          reviews={evidenceCounts.reviews}
+          quality={evidenceCounts.quality}
+        />
+      )}
+    </>
+  );
+
+  if (variant === "activity") {
+    return (
+      <Card
+        data-testid="workflow-run-activity"
+        className={cn("!gap-0 !py-0 overflow-hidden", className)}
+      >
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-muted/50"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+              open && "rotate-90",
+            )}
+          />
+          <Workflow className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="shrink-0 text-sm font-medium">
+                {t(($) => $.runtime.title)}
+              </span>
+              <span className="min-w-0 truncate text-sm text-muted-foreground">
+                {workflowName(run)}
+              </span>
+            </div>
+            {!open && steps.length > 0 && (
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                {t(($) => $.runtime.steps_progress, {
+                  completed,
+                  total: steps.length,
+                })}
+              </div>
+            )}
+          </div>
+          <WorkflowStatusBadge status={run.status} />
+          {openInputRequests.length > 0 && (
+            <Badge
+              variant="outline"
+              className="h-5 rounded-md border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-700 dark:text-amber-300"
+            >
+              {t(($) => $.runtime.needs_input)}
+            </Badge>
+          )}
+        </button>
+        {open && (
+          <div className="space-y-2 border-t border-border/60 px-4 py-3">
+            {body}
+            {commentComposer && (
+              <div className="border-t border-border/60 pt-3">
+                {commentComposer}
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+    );
+  }
 
   return (
-    <div>
+    <div className={className}>
       <button
         type="button"
         className={cn(
@@ -109,78 +283,7 @@ export function WorkflowRunViewer({
       </button>
       {open && (
         <div className="space-y-2 pl-2">
-          <WorkflowRunHeader
-            run={run}
-            completed={completed}
-            total={steps.length}
-            busy={pendingAction}
-            onCancel={() =>
-              runAction(
-                "cancel-run",
-                () => api.cancelWorkflowRun(run.id),
-                t(($) => $.runtime.cancelled),
-              )
-            }
-            onRerun={() =>
-              runAction(
-                "rerun",
-                () => api.rerunWorkflowRun(run.id),
-                t(($) => $.runtime.rerun_created),
-              )
-            }
-          />
-          {steps.length > 0 && (
-            <div className="space-y-1">
-              {steps.map((step) => (
-                <WorkflowStepRow
-                  key={step.id}
-                  step={step}
-                  busy={pendingAction}
-                  onManualComplete={() =>
-                    runAction(
-                      `manual-${step.id}`,
-                      () => api.completeManualWorkflowStepRun(step.id),
-                      t(($) => $.runtime.step_completed),
-                    )
-                  }
-                  onRetry={() =>
-                    runAction(
-                      `retry-${step.id}`,
-                      () => api.retryWorkflowStepRun(step.id),
-                      t(($) => $.runtime.step_retry_created),
-                    )
-                  }
-                />
-              ))}
-            </div>
-          )}
-          {pendingReviews.length > 0 && (
-            <WorkflowReviewControls
-              reviews={pendingReviews}
-              busy={pendingAction}
-              onApprove={(review) =>
-                runAction(
-                  `approve-${review.id}`,
-                  () => api.approveWorkflowReview(review.id),
-                  t(($) => $.runtime.review_approved),
-                )
-              }
-              onReject={(review) =>
-                runAction(
-                  `reject-${review.id}`,
-                  () => api.rejectWorkflowReview(review.id),
-                  t(($) => $.runtime.review_rejected),
-                )
-              }
-            />
-          )}
-          {detail && hasWorkflowEvidence && (
-            <WorkflowRunEvidence
-              artifacts={evidenceCounts.artifacts}
-              reviews={evidenceCounts.reviews}
-              quality={evidenceCounts.quality}
-            />
-          )}
+          {body}
         </div>
       )}
     </div>
@@ -192,6 +295,7 @@ function WorkflowRunHeader({
   completed,
   total,
   busy,
+  variant = "sidebar",
   onCancel,
   onRerun,
 }: {
@@ -199,21 +303,31 @@ function WorkflowRunHeader({
   completed: number;
   total: number;
   busy: string | null;
+  variant?: "sidebar" | "activity";
   onCancel: () => void;
   onRerun: () => void;
 }) {
   const { t } = useT("workflows");
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
   return (
-    <div className="rounded-md border bg-background px-2.5 py-2">
-      <div className="flex items-center gap-2">
-        <Workflow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">
-          {workflowName(run)}
-        </span>
-        <WorkflowStatusBadge status={run.status} />
-      </div>
-      <div className="mt-2 flex items-center gap-1">
+    <div
+      className={cn(
+        "rounded-md px-2.5 py-2",
+        variant === "activity"
+          ? "bg-muted/30"
+          : "border bg-background",
+      )}
+    >
+      {variant === "sidebar" && (
+        <div className="flex items-center gap-2">
+          <Workflow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+            {workflowName(run)}
+          </span>
+          <WorkflowStatusBadge status={run.status} />
+        </div>
+      )}
+      <div className={cn("flex items-center gap-1", variant === "sidebar" && "mt-2")}>
         {run.status !== "completed" && run.status !== "cancelled" && (
           <Button
             type="button"
@@ -287,6 +401,7 @@ function WorkflowStepRow({
   const { t } = useT("workflows");
   const canManualComplete = step.status === "waiting_manual";
   const canRetry = ["failed", "blocked", "paused"].includes(step.status);
+  const canAskForInput = workflowStepAllowsInput(step);
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent/40">
       <StepStatusIcon status={step.status} />
@@ -294,6 +409,14 @@ function WorkflowStepRow({
       <span className="shrink-0 text-[11px] text-muted-foreground">
         {step.execution_kind}
       </span>
+      {canAskForInput && (
+        <Badge
+          variant="outline"
+          className="h-4 shrink-0 rounded-md border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-700 dark:text-amber-300"
+        >
+          {t(($) => $.runtime.input_enabled)}
+        </Badge>
+      )}
       <WorkflowStatusBadge status={step.status} />
       {canManualComplete && (
         <Button
@@ -325,6 +448,14 @@ function WorkflowStepRow({
       )}
     </div>
   );
+}
+
+function workflowStepAllowsInput(step: WorkflowStepRun) {
+  if (!step.snapshot || typeof step.snapshot !== "object") {
+    return false;
+  }
+  const snapshot = step.snapshot as { input_requests?: { allowed?: unknown } };
+  return snapshot.input_requests?.allowed === true;
 }
 
 function WorkflowReviewControls({
@@ -380,40 +511,117 @@ function WorkflowReviewControls({
   );
 }
 
+function WorkflowInputRequestControls({
+  requests,
+  busy,
+  answeringRequestId,
+  answerComposer,
+  onAnswer,
+  onCancel,
+}: {
+  requests: WorkflowInputRequest[];
+  busy: string | null;
+  answeringRequestId: string | null;
+  answerComposer?: (request: WorkflowInputRequest) => ReactNode;
+  onAnswer: (request: WorkflowInputRequest) => void;
+  onCancel: (request: WorkflowInputRequest) => void;
+}) {
+  const { t } = useT("workflows");
+  return (
+    <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-2">
+      <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+        <MessageSquareText className="h-3.5 w-3.5" />
+        {t(($) => $.runtime.needs_input)}
+      </div>
+      <div className="space-y-2">
+        {requests.map((request) => (
+          <div key={request.id} className="space-y-2 rounded-md bg-background/80 px-2 py-2">
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+              {request.question_text}
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => onAnswer(request)}
+              >
+                <Check className="h-3 w-3" />
+                {t(($) => $.runtime.answer_continue)}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[11px]"
+                disabled={busy === `input-cancel-${request.id}`}
+                onClick={() => onCancel(request)}
+              >
+                <X className="h-3 w-3" />
+                {t(($) => $.runtime.cancel_input)}
+              </Button>
+              <span className="text-[11px] text-muted-foreground">
+                {t(($) => $.runtime.comment_only_hint)}
+              </span>
+            </div>
+            {answeringRequestId === request.id && answerComposer && (
+              <div className="border-t border-border/60 pt-2">
+                {answerComposer(request)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WorkflowRunEvidence({
   artifacts,
   reviews,
   quality,
 }: {
-  artifacts: number;
+  artifacts: WorkflowArtifact[];
   reviews: number;
   quality: number;
 }) {
   const { t } = useT("workflows");
   const items = useMemo(
     () => [
-      { icon: FileText, label: t(($) => $.runtime.artifacts), value: artifacts },
+      { icon: FileText, label: t(($) => $.runtime.artifacts), value: artifacts.length },
       { icon: Workflow, label: t(($) => $.runtime.reviews), value: reviews },
       { icon: ShieldCheck, label: t(($) => $.runtime.quality), value: quality },
     ],
-    [artifacts, quality, reviews, t],
+    [artifacts.length, quality, reviews, t],
   );
   return (
-    <div className="grid grid-cols-3 gap-1">
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="rounded-md border bg-background px-2 py-1.5"
-        >
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <item.icon className="h-3 w-3" />
-            <span className="truncate">{item.label}</span>
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-1">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="rounded-md border bg-background px-2 py-1.5"
+          >
+            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <item.icon className="h-3 w-3" />
+              <span className="truncate">{item.label}</span>
+            </div>
+            <div className="mt-0.5 font-mono text-xs tabular-nums">
+              {item.value}
+            </div>
           </div>
-          <div className="mt-0.5 font-mono text-xs tabular-nums">
-            {item.value}
+        ))}
+      </div>
+      {artifacts.length > 0 && (
+        <div className="space-y-1 rounded-md border bg-background px-2 py-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium">
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+            {t(($) => $.runtime.latest_artifacts)}
           </div>
+          <WorkflowArtifactReviewList artifacts={artifacts} />
         </div>
-      ))}
+      )}
     </div>
   );
 }

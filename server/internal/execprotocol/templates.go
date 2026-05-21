@@ -79,8 +79,8 @@ This agent has the Trellis execution protocol template selected. Use it for assi
    - In the checked-out worktree, look for .trellis/ and .trellis/workflow.md.
    - If Trellis state exists, run `+"`$trellis-continue`"+` to load the current task pointer, phase index, and workflow rules before editing.
    - If Trellis state exists but no Trellis task exists for this issue, run `+"`$trellis-start`"+` or create a new Trellis task following .trellis/workflow.md, then record the Multica issue id in that task's context.
-   - If the checked-out worktree has no Trellis state and the issue or project explicitly asks for Trellis, a Trellis Task workflow, or a greenfield app/bootstrap, initialize Trellis first, then run `+"`$trellis-start`"+`; do not fall back before trying to make Trellis available.
-   - If the repository has no Trellis state and the issue does not explicitly request Trellis/bootstrap, fall back to the standard assignment protocol and report that Trellis was unavailable in the final comment.
+   - If the checked-out worktree has no Trellis state, initialize Trellis for that repository first, then run `+"`$trellis-start`"+`; this is mandatory for explicit Trellis, Trellis Task workflow, or greenfield app/bootstrap requests.
+   - If Trellis initialization is impossible, run `+"`multica issue status {{issue_id}} blocked`"+` and post the exact setup issue instead of silently switching protocols.
 
 3. **Work Contract**
    - Synthesize the issue body, latest comments, Agent Identity, Skills, and Trellis task context into a small work contract: requested outcome, acceptance criteria, constraints, and expected verification.

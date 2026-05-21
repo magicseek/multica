@@ -128,6 +128,44 @@ not treated as the source of the absolute repository path.
 
 ---
 
+## Reviewable Artifact Boundary
+
+Reviewable workflow artifacts cross a privacy and product-contract boundary.
+Local task outputs are discoverability metadata; workflow artifacts are
+server-stored content that can be previewed, reviewed, approved, and diffed.
+
+### Contract
+
+- `.multica/outputs.json` and final issue comments may list local files, but
+  they do not upload content and cannot support cloud review.
+- Any design, plan, brainstorming note, requirements doc, or decision record
+  that needs human approval must be saved with `workflow artifact save`.
+- The server response must include the complete latest artifact content for
+  supported text kinds (`markdown`, `text`, `json`), not only metadata.
+- The UI must render the full latest artifact content inline and expose a
+  version diff when more than one version exists.
+- A quality gate is not a substitute for human review. Quality evidence says
+  whether an artifact passed checks; review controls let a human approve,
+  reject, or request a revised version.
+- If an agent can continue only after a human decision, it should open a
+  workflow input request where the step policy allows it. It should not leave
+  a normal comment and hope the next reply is interpreted as a workflow answer.
+
+### Checklist: Before Shipping Reviewable Planning Workflows
+
+- [ ] Identify whether the user needs to review content, not just know that a
+  file exists.
+- [ ] Confirm the agent-facing prompt names the exact `workflow artifact save`
+  call and logical artifact name.
+- [ ] Confirm saved artifact content appears in the workflow run response.
+- [ ] Confirm the control surface renders the content preview and version diff.
+- [ ] Add an E2E or component regression that fails when only a local path or
+  artifact count is visible.
+- [ ] Verify normal comments remain separate from `Answer & continue` input
+  request answers.
+
+---
+
 ## Cross-Platform Template Consistency
 
 In Trellis, command templates (e.g., `record-session.md`) exist in **multiple platforms** with identical or near-identical content. This is a cross-layer boundary.

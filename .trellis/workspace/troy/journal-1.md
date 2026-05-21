@@ -153,3 +153,42 @@ Implemented Multica-native workflow schema v2 import/export, run and step-run ru
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Workflow input requests and reviewable artifacts
+
+**Date**: 2026-05-21
+**Task**: Workflow input requests and reviewable artifacts
+**Branch**: `trellis/ai-desk-flows-to-multica-workflows`
+
+### Summary
+
+Implemented workflow-scoped input request persistence/API/CLI/daemon resume wiring, reviewable artifact diff API/UI, waiting attention states, schema policy preservation, and verified with make sqlc, pnpm lint, pnpm typecheck, pnpm test, make test.
+
+Completed desktop-backed E2E validation in workspace `Workflow E2E Lab`: chat-generated issue proposals were approved into WOR-1 through WOR-4, assigned to distinct agents/workflows, executed to review, and moved to `done`; WOR-5 verified the explicit clarification path where an ordinary comment did not answer the workflow input request, `Answer & continue` resumed the same run, and the final artifact was created only after the answer was available.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits yet)
+
+### Testing
+
+- [OK] `make sqlc`
+- [OK] focused Go workflow runtime tests
+- [OK] `pnpm typecheck`
+- [OK] `pnpm test`
+- [OK] `make test`
+- [OK] `pnpm lint` (warnings only)
+- [OK] desktop E2E via local daemon/API/CLI: WOR-1..WOR-5 all `done`, workflow input request answered, resumed, and completed
+
+### Status
+
+[OK] **Implementation and E2E completed; pending commit/archive handoff**
+
+### Next Steps
+
+- Commit work changes per Lore protocol, then archive the Trellis task.

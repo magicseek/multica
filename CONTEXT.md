@@ -282,6 +282,10 @@ _Avoid_: hidden integration, fake agent step
 A daemon execution pass that may process one or more ready workflow step runs while preserving step-level state.
 _Avoid_: cold-start every step, hidden whole-workflow loop
 
+**Workflow Input Request**:
+A workflow-scoped request for a human answer that must be resolved before a waiting workflow step run can continue.
+_Avoid_: clarification comment, issue status, ordinary mention, manual step
+
 **Workflow Execution Command**:
 A Multica CLI command used by an agent to read or update workflow run, step run, artifact, or quality state.
 _Avoid_: first-version MCP-only workflow control
@@ -298,9 +302,17 @@ _Avoid_: mutating current run workflow content
 A step-scoped deliverable produced or revised during a workflow run.
 _Avoid_: terminal output, untracked file
 
+**Reviewable Workflow Artifact**:
+A workflow artifact whose content is intentionally stored by Multica for cloud review, approval, or dependent workflow steps.
+_Avoid_: local output, output metadata, published local file
+
 **Workflow Artifact Version**:
 An immutable revision of a workflow artifact produced by initial execution or retry.
 _Avoid_: overwritten artifact
+
+**Workflow Artifact Diff**:
+A review aid that compares two workflow artifact versions without replacing either complete version.
+_Avoid_: artifact source of truth, patch-only artifact
 
 **Workflow Artifact Input**:
 A declared artifact that a workflow step can read or requires from earlier step output.
@@ -487,13 +499,25 @@ _Avoid_: silently continuing the full project workflow
 - An **External Workflow Step** can be represented as waiting or blocked in the first version, but does not trigger an external integration.
 - A **Workflow Execution Batch** may execute multiple ready **Workflow Step Runs** using the same work directory or agent session.
 - A **Workflow Execution Batch** stops before a **Workflow Step Run** that requires human review, a blocking quality gate, a pause, user input, or recovery from failure.
+- A **Workflow Input Request** belongs to exactly one **Workflow Step Run** and is answered by an issue comment that is explicitly routed as the response.
+- A **Workflow Input Request** is an agent-step waiting point, not a **Manual Workflow Step**; the human supplies input, then the agent resumes the same step.
+- A **Workflow Input Request** pauses the current **Workflow Execution Batch** without creating a **Workflow Rerun**.
+- Answering a **Workflow Input Request** resumes the same **Workflow Run** with a new **Workflow Execution Batch**; it does not create an ordinary comment-triggered workflow task.
+- Early requirements exploration belongs in **Chat Sessions** or planning workflows before implementation issues are created; **Workflow Input Requests** inside an existing issue are for resolving the narrow input needed to continue that issue's current workflow.
+- **Workflow Input Requests** are bounded: execution steps should ask at most one round by default, while planning or contract steps may allow a small configured number of rounds before reporting the remaining decision gap.
 - First-version agents control workflow execution through **Workflow Execution Commands** exposed by the Multica CLI.
 - First-version workflow execution respects **Workflow Step Graph** dependencies but executes ready **Workflow Step Runs** in deterministic topological order rather than parallelizing branches.
 - A **Workflow Step Run** may produce zero or more **Workflow Artifacts**.
+- A **Reviewable Workflow Artifact** is explicitly saved by the agent or human; Multica does not infer it by scanning local files.
+- Planning, brainstorming, and requirements documents that need cloud approval are **Reviewable Workflow Artifacts**, not ordinary local outputs.
+- Approving a **Reviewable Workflow Artifact** unblocks dependent workflow steps; approval does not directly create issues or perform other workspace side effects.
+- Workflow steps after artifact approval may generate **Chat Issue Proposals** or create issues through explicit existing issue-creation flows.
 - A **Workflow Artifact Input** describes data flow into a **Workflow Step Run** and is distinct from **Workflow Step Graph** dependency readiness.
 - A **Workflow Artifact Template** is embedded in the workflow schema for first-version migration and snapshot behavior.
 - A **Workflow Artifact** may store reviewable text, Markdown, JSON, or other explicitly saved content on the server.
 - **Workflow Artifact Versions** are immutable; retries create new artifact versions instead of overwriting prior reviewable content.
+- A **Workflow Artifact Diff** helps reviewers understand what changed between versions, while each **Workflow Artifact Version** remains a complete artifact.
+- Agents may use patch-style or section-level edits to reduce generation cost, but the saved **Workflow Artifact Version** is still the complete revised document.
 - Local task outputs that are not explicitly saved as **Workflow Artifacts** remain governed by **Output Metadata** privacy boundaries.
 - A **Workflow Review** belongs to a **Workflow Artifact** or to the **Workflow Step Run** that produced it.
 - A required **Workflow Review** is approved or rejected by a human workspace member.
@@ -526,6 +550,12 @@ _Avoid_: silently continuing the full project workflow
 
 > **Dev:** "This project uses the full Trellis workflow, but this bug is a two-line fix. Should the assigned agent skip workflow?"
 > **Domain expert:** "No. Select the Direct Task workflow as the issue override. It is lighter, but it still records context, verification, and final reporting."
+
+> **Dev:** "The agent asked a clarification question in the issue comments. Should the user's reply trigger the normal comment workflow?"
+> **Domain expert:** "No. If the reply is submitted through the answer action, it resolves the Workflow Input Request and resumes the existing run."
+
+> **Dev:** "The planning agent wrote a plan locally. Can reviewers approve it from the cloud?"
+> **Domain expert:** "Only after the agent saves it as a Reviewable Workflow Artifact; ordinary local outputs stay behind the Output Metadata privacy boundary."
 
 ## Flagged Ambiguities
 
@@ -579,12 +609,20 @@ _Avoid_: silently continuing the full project workflow
 - Workflow import could fail on every unsupported ai-desk field or silently drop them, but both choices are poor for migration. Resolved: structural errors fail import; intentionally skipped or recoverable fields produce **Workflow Import Warnings** and continue.
 - ai-desk supports creating workflows with AI-generated YAML, but that would add unstable schema generation and repair to the migration surface. Resolved: first-version migration excludes AI-generated workflow creation; future Multica workflow proposal flows can be designed separately.
 - Workflow artifact content could remain daemon-local, but review, quality gates, and dependent steps need stable cross-device inputs. Resolved: explicit **Workflow Artifacts** are server-stored reviewable content, while ordinary local outputs remain **Output Metadata** unless explicitly saved as artifacts.
+- Planning documents could be treated as local outputs with metadata only, but that prevents cloud review and approval. Resolved: brainstorming, requirements, and planning documents that require approval are saved explicitly as **Reviewable Workflow Artifacts**.
+- Plan approval could automatically create issues, but that would conflate artifact review with workspace side effects. Resolved: approving a **Reviewable Workflow Artifact** only unblocks the workflow; a later explicit step creates **Chat Issue Proposals** or issues.
 - Step retry could overwrite the existing artifact, but that would erase review and quality history. Resolved: retries create new **Workflow Artifact Versions**, with UI defaulting to the latest version while preserving history.
+- Artifact revisions could be stored as patches only, but that would make review and downstream execution depend on replaying prior versions. Resolved: each **Workflow Artifact Version** is stored as a complete artifact; **Workflow Artifact Diffs** are generated or stored as review aids.
 - Workflow reviews could allow agent self-approval, but that would collapse human review into automated quality evaluation. Resolved: first-version required **Workflow Reviews** are approved or rejected by human workspace members.
 - Quality gates could always block or never block later steps. Resolved: **Workflow Quality Gates** declare blocking behavior in the workflow schema; blocking gates hold dependent **Workflow Step Runs**, non-blocking gates record reports and warnings.
 - Quality gates could require a server-side evaluator in the first version, but ai-desk gates are often prompt/rubric driven and expensive to rehost immediately. Resolved: first-version **Workflow Quality Gate Results** may be agent-produced with explicit provenance, not anonymous platform verdicts.
 - Step-level execution state could imply a cold-started daemon task for every step, increasing token and runtime overhead. Resolved: **Workflow Step Runs** remain independent state units, while a **Workflow Execution Batch** may reuse session and work directory across consecutive ready steps until a blocking boundary is reached.
 - Workflow step control could be exposed first through MCP tools, but Multica already has a daemon-to-agent CLI contract. Resolved: first-version workflow execution uses **Workflow Execution Commands** in the Multica CLI; MCP can be added later as an ergonomic layer.
+- Human clarification could be modeled as another issue status or an ordinary comment mention, but that would either overload the issue board or accidentally trigger comment response workflows. Resolved: use **Workflow Input Requests** for explicit human answers and treat their replies as workflow-resume inputs, not ordinary comment-trigger tasks.
+- Resuming after human input could create a new workflow run, but that would fragment step history and make the original wait state look terminal. Resolved: answering a **Workflow Input Request** resumes the same **Workflow Run** with another **Workflow Execution Batch**.
+- Open-ended brainstorming could happen inside an implementation issue, but that turns issue execution into requirements discovery and makes work-in-progress misleading. Resolved: use **Chat Sessions** or planning workflows for initial requirements exploration; use **Workflow Input Requests** only for bounded clarification needed to continue an existing issue workflow.
+- Human input could be represented by **Manual Workflow Steps**, but that would imply the human completes the step rather than merely answering the agent. Resolved: **Workflow Input Requests** are agent-step waiting points; **Manual Workflow Steps** remain human-completed steps.
+- Workflow input could allow unlimited question loops, but that would hide unready work inside active issues. Resolved: **Workflow Input Requests** are round-limited by workflow policy; after the limit, the workflow reports the unresolved decision gap instead of continuing to ask.
 - A workflow DAG could execute ready branches in parallel, but that would introduce artifact merge, session concurrency, workdir write conflict, review ordering, and token attribution complexity. Resolved: first-version **Workflow Step Graph** execution is serial and deterministic even when the graph contains independent ready branches.
 - Step dependencies and artifact inputs could be merged during import, but that would conflate control flow with data flow. Resolved: `depends_on_steps` controls **Workflow Step Run** readiness; **Workflow Artifact Inputs** declare readable or required artifact data, with import warnings for suspicious mismatches rather than automatic graph rewrites.
 - ai-desk artifact templates could be migrated as a reusable catalog first, but that would add another dependency before workflow definitions can be self-contained. Resolved: first-version migration embeds **Workflow Artifact Templates** in the workflow schema; unresolved ai-desk template references produce import warnings.

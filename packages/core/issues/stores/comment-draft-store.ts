@@ -17,6 +17,7 @@ import { defaultStorage } from "../../platform/storage";
 
 export type CommentDraftKey =
   | `new:${string}`              // top-level CommentInput, key = `new:${issueId}`
+  | `workflow:${string}`         // WorkflowRunViewer activity composer, key = `workflow:${issueId}`
   | `reply:${string}:${string}`  // ReplyInput inside a thread, key = `reply:${issueId}:${rootCommentId}`
   | `edit:${string}:${string}`;  // inline edit on existing comment, key = `edit:${issueId}:${commentId}`
 

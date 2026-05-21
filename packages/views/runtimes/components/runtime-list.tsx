@@ -64,7 +64,7 @@ export function buildWorkloadIndex(
     const entry = result.get(rid);
     if (!entry) continue;
     if (t.status === "running") entry.runningCount += 1;
-    else if (t.status === "queued" || t.status === "dispatched")
+    else if (t.status === "queued" || t.status === "dispatched" || t.status === "waiting")
       entry.queuedCount += 1;
   }
   return result;
