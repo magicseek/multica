@@ -206,6 +206,34 @@ func TestProviderNeedsInlineSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestRuntimeSystemPromptForInlineProvidersUsesSlimBrief(t *testing.T) {
+	t.Parallel()
+
+	ctx := execenv.TaskContextForEnv{
+		IssueID:           "issue-inline",
+		AgentID:           "agent-inline",
+		AgentName:         "Inline Agent",
+		AgentInstructions: "Prefer direct answers.",
+		AgentSkills:       []execenv.SkillContextForEnv{{Name: "Review", Content: "Review carefully."}},
+	}
+
+	prompt := runtimeSystemPrompt("kiro", ctx)
+	if prompt == "" {
+		t.Fatal("expected inline provider to receive a system prompt")
+	}
+	if strings.Contains(prompt, "## Available Commands") {
+		t.Fatal("inline provider system prompt should omit the full command catalog")
+	}
+	for _, want := range []string{"Inline Agent", "Prefer direct answers.", "issue-inline", "Review"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("inline provider system prompt missing %q", want)
+		}
+	}
+	if got := runtimeSystemPrompt("codex", ctx); got != "" {
+		t.Fatalf("codex should rely on runtime config files, got inline prompt %q", got)
+	}
+}
+
 // TestComposeOpenclawIncludeRoots — the Elon must-fix regression: the
 // daemon must grant OpenClaw permission to follow the wrapper's $include
 // link from envRoot into the user's active config dir, while preserving

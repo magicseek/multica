@@ -2130,6 +2130,13 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
+func runtimeSystemPrompt(provider string, ctx execenv.TaskContextForEnv) string {
+	if !providerNeedsInlineSystemPrompt(provider) {
+		return ""
+	}
+	return execenv.BuildInlineRuntimeBrief(provider, ctx)
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
@@ -2277,8 +2284,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
-	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
-	if err != nil {
+	if _, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	// NOTE: No cleanup — workdir is preserved for reuse by future tasks on
@@ -2455,20 +2461,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	//     workdir bootstrap reliably end-to-end.
 	//   - kiro and kimi are wrapped through their own CLIs whose cwd handling
 	//     is opaque enough that we can't trust the file-based path either.
-	// Pass the full runtime brief inline (CLI catalog + workflow steps + agent
-	// identity/persona + skills + project context) so the backend prepends the
-	// same payload that file-based runtimes pick up from disk. Without this,
-	// these providers silently miss the workflow section and never call
-	// `multica issue status` / `multica issue comment add`, leaving issues
-	// stuck in `todo`.
+	// Pass a slim runtime brief inline (task workflow + agent identity/persona
+	// + skills + project context) so the backend prepends the task-critical
+	// payload without duplicating the full command catalog already written to
+	// the provider's runtime config file.
 	//
 	// Hermes is intentionally excluded: ACP sessions start in the task cwd and
-	// Hermes loads AGENTS.md / .agent_context itself. Prepending the full runtime
-	// brief into the ACP user prompt duplicates that context, bloats every turn,
-	// and has triggered upstream safety filters on harmless tasks.
-	if providerNeedsInlineSystemPrompt(provider) {
-		execOpts.SystemPrompt = runtimeBrief
-	}
+	// Hermes loads AGENTS.md / .agent_context itself. Prepending runtime
+	// guidance into the ACP user prompt duplicates that context, bloats every
+	// turn, and has triggered upstream safety filters on harmless tasks.
+	execOpts.SystemPrompt = runtimeSystemPrompt(provider, taskCtx)
 
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
 	if err != nil {

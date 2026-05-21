@@ -116,6 +116,54 @@ func taskRepositoryRole(position int) string {
 	return "secondary"
 }
 
+const runtimeDynamicMarker = "<!-- multica:runtime-dynamic:start -->"
+
+// RuntimeBrief separates stable runtime guidance from per-task dynamic facts.
+// Stable content is kept as the file prefix so provider prompt caches can reuse
+// the large command catalog even when task identity, repositories, and workflow
+// facts change from turn to turn.
+type RuntimeBrief struct {
+	Full    string
+	Stable  string
+	Dynamic string
+}
+
+// BuildRuntimeBrief returns the full file content plus its stable/dynamic
+// split. Callers that inject inline system prompts should prefer
+// BuildInlineRuntimeBrief so they do not prepend the full command catalog into
+// every turn.
+func BuildRuntimeBrief(provider string, ctx TaskContextForEnv) RuntimeBrief {
+	full := buildMetaSkillContent(provider, ctx)
+	stable, dynamic, found := strings.Cut(full, runtimeDynamicMarker)
+	if !found {
+		return RuntimeBrief{Full: full, Stable: full}
+	}
+	return RuntimeBrief{
+		Full:    full,
+		Stable:  stable,
+		Dynamic: strings.TrimLeft(dynamic, "\n"),
+	}
+}
+
+// BuildInlineRuntimeBrief returns the task-critical runtime brief for providers
+// that need a system/developer prompt. It intentionally omits the full command
+// catalog; the per-turn prompt and dynamic workflow sections name the commands
+// required for the current task, and the agent can use `multica --help` for
+// less common operations.
+func BuildInlineRuntimeBrief(provider string, ctx TaskContextForEnv) string {
+	brief := BuildRuntimeBrief(provider, ctx)
+	dynamic := strings.TrimSpace(brief.Dynamic)
+	var b strings.Builder
+	b.WriteString("# Multica Agent Runtime\n\n")
+	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n")
+	b.WriteString("Use `--output json` for structured data. For command details beyond this turn brief, run `multica --help` or `multica <command> --help`.\n\n")
+	if dynamic != "" {
+		b.WriteString(dynamic)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // InjectRuntimeConfig writes the meta skill content into the runtime-specific
 // config file so the agent discovers its environment through its native mechanism.
 //
@@ -131,7 +179,7 @@ func taskRepositoryRole(position int) string {
 // For Kimi:     writes {workDir}/AGENTS.md  (Kimi Code CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 // For Kiro:     writes {workDir}/AGENTS.md  (Kiro CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (string, error) {
-	content := buildMetaSkillContent(provider, ctx)
+	content := BuildRuntimeBrief(provider, ctx).Full
 
 	switch provider {
 	case "claude":
@@ -153,27 +201,6 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("# Multica Agent Runtime\n\n")
 	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
-
-	// Always emit agent identity so the agent knows who it is, even when
-	// dispatched via @mention on an issue assigned to a different agent.
-	if ctx.AgentName != "" || ctx.AgentID != "" {
-		b.WriteString("## Agent Identity\n\n")
-		if ctx.AgentName != "" {
-			fmt.Fprintf(&b, "**You are: %s**", ctx.AgentName)
-			if ctx.AgentID != "" {
-				fmt.Fprintf(&b, " (ID: `%s`)", ctx.AgentID)
-			}
-			b.WriteString("\n\n")
-		}
-		if ctx.AgentInstructions != "" {
-			b.WriteString(ctx.AgentInstructions)
-			b.WriteString("\n\n")
-		}
-	} else if ctx.AgentInstructions != "" {
-		b.WriteString("## Agent Identity\n\n")
-		b.WriteString(ctx.AgentInstructions)
-		b.WriteString("\n\n")
-	}
 
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("**Use `--output json` for structured data.** Human table output now prints routable issue keys (for example `MUL-123`) and short UUID prefixes for workspace resources; use `--full-id` on list commands when you need canonical UUIDs.\n\n")
@@ -244,13 +271,6 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica workflow step complete <step-run-id>` — Complete a workflow step; human review may move it to waiting_review instead of completed\n")
 	b.WriteString("- `multica workflow step fail <step-run-id> --reason \"...\"` / `pause` / `retry` / `skip` — Control step lifecycle without editing the immutable workflow snapshot\n\n")
 
-	if ctx.WorkflowRunID != "" {
-		b.WriteString("## Workflow Step Tracking\n\n")
-		fmt.Fprintf(&b, "This task has workflow run `%s`, also available as `MULTICA_WORKFLOW_RUN_ID`. The workflow card is user-visible, so keep step state current as you work.\n\n", ctx.WorkflowRunID)
-		b.WriteString("Before each workflow phase, run `multica workflow run get \"$MULTICA_WORKFLOW_RUN_ID\" --output json`, find the next ready step, then mark it with `multica workflow step start <step-run-id>` before doing that phase and `multica workflow step complete <step-run-id>` after it is done. If the step cannot continue without a human decision and its snapshot has `input_requests.allowed=true`, ask with `multica workflow input request <step-run-id> --question-file <path|->`; otherwise use `fail` or `pause` with the reason instead of leaving the step pending.\n\n")
-		b.WriteString("Artifacts, reviews, and quality results are explicit workflow evidence records; they are not inferred from changed files, comments, or completed steps. When a phase produces durable output such as a contract, plan, implementation summary, verification report, or final handoff, persist it with `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text`. If a design, plan, or requirements doc needs user review or approval in Multica, saving only `.multica/outputs.json` or mentioning a local path in a comment is insufficient; save the complete content as a workflow artifact so the control surface can preview and diff it. After verification or check phases, record quality evidence with `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text`. Review counts only appear when the workflow actually requests a human or agent review.\n\n")
-	}
-
 	if provider == "codex" {
 		b.WriteString("## Codex-Specific Comment Formatting\n\n")
 		if runtimeGOOS == "windows" {
@@ -262,6 +282,37 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			b.WriteString("Never use inline `--content` for agent-authored comments. Keep the same `--parent` value from the trigger comment when replying. ")
 			b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 		}
+	}
+
+	b.WriteString(runtimeDynamicMarker)
+	b.WriteString("\n\n")
+
+	// Always emit agent identity so the agent knows who it is, even when
+	// dispatched via @mention on an issue assigned to a different agent.
+	if ctx.AgentName != "" || ctx.AgentID != "" {
+		b.WriteString("## Agent Identity\n\n")
+		if ctx.AgentName != "" {
+			fmt.Fprintf(&b, "**You are: %s**", ctx.AgentName)
+			if ctx.AgentID != "" {
+				fmt.Fprintf(&b, " (ID: `%s`)", ctx.AgentID)
+			}
+			b.WriteString("\n\n")
+		}
+		if ctx.AgentInstructions != "" {
+			b.WriteString(ctx.AgentInstructions)
+			b.WriteString("\n\n")
+		}
+	} else if ctx.AgentInstructions != "" {
+		b.WriteString("## Agent Identity\n\n")
+		b.WriteString(ctx.AgentInstructions)
+		b.WriteString("\n\n")
+	}
+
+	if ctx.WorkflowRunID != "" {
+		b.WriteString("## Workflow Step Tracking\n\n")
+		fmt.Fprintf(&b, "This task has workflow run `%s`, also available as `MULTICA_WORKFLOW_RUN_ID`. The workflow card is user-visible, so keep step state current as you work.\n\n", ctx.WorkflowRunID)
+		b.WriteString("Before each workflow phase, run `multica workflow run get \"$MULTICA_WORKFLOW_RUN_ID\" --output json`, find the next ready step, then mark it with `multica workflow step start <step-run-id>` before doing that phase and `multica workflow step complete <step-run-id>` after it is done. If the step cannot continue without a human decision and its snapshot has `input_requests.allowed=true`, ask with `multica workflow input request <step-run-id> --question-file <path|->`; otherwise use `fail` or `pause` with the reason instead of leaving the step pending.\n\n")
+		b.WriteString("Artifacts, reviews, and quality results are explicit workflow evidence records; they are not inferred from changed files, comments, or completed steps. When a phase produces durable output such as a contract, plan, implementation summary, verification report, or final handoff, persist it with `multica workflow artifact save <step-run-id> --name <logical-name> --file <path|-> --format markdown|json|text`. If a design, plan, or requirements doc needs user review or approval in Multica, saving only `.multica/outputs.json` or mentioning a local path in a comment is insufficient; save the complete content as a workflow artifact so the control surface can preview and diff it. After verification or check phases, record quality evidence with `multica workflow quality report <step-run-id> --status pass|fail|warning [--artifact <artifact-id>] [--blocking] [--file <path|->] --format markdown|json|text`. Review counts only appear when the workflow actually requests a human or agent review.\n\n")
 	}
 
 	// Inject available repositories section.
@@ -454,14 +505,16 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("{\"outputs\":[{\"relative_path\":\"docs/design.md\",\"kind\":\"doc\",\"size_bytes\":18342,\"mime_type\":\"text/markdown\"}]}\n")
 	b.WriteString("```\n\n")
 
-	b.WriteString("## Chat Structured Output Manifests\n\n")
-	b.WriteString("For chat tasks, the backend can ingest optional structured handoff files from `.multica/` when your run completes. ")
-	b.WriteString("Use these files only for metadata and proposals; do not create issues directly unless the user explicitly asks through the normal issue workflow.\n\n")
-	b.WriteString("- `.multica/chat-summary.json` updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n")
-	b.WriteString("- `.multica/issue-proposals.json` proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n")
-	b.WriteString("```json\n")
-	b.WriteString("{\"version\":1,\"proposals\":[{\"title\":\"Implementation follow-ups\",\"summary\":\"Suggested issues from this chat.\",\"items\":[{\"title\":\"Add chat issue proposal review flow\",\"description\":\"Let users edit and accept proposed issues.\",\"priority\":\"medium\",\"labels\":[\"chat\"]}]}]}\n")
-	b.WriteString("```\n\n")
+	if ctx.ChatSessionID != "" {
+		b.WriteString("## Chat Structured Output Manifests\n\n")
+		b.WriteString("For chat tasks, the backend can ingest optional structured handoff files from `.multica/` when your run completes. ")
+		b.WriteString("Use these files only for metadata and proposals; do not create issues directly unless the user explicitly asks through the normal issue workflow.\n\n")
+		b.WriteString("- `.multica/chat-summary.json` updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n")
+		b.WriteString("- `.multica/issue-proposals.json` proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n")
+		b.WriteString("```json\n")
+		b.WriteString("{\"version\":1,\"proposals\":[{\"title\":\"Implementation follow-ups\",\"summary\":\"Suggested issues from this chat.\",\"items\":[{\"title\":\"Add chat issue proposal review flow\",\"description\":\"Let users edit and accept proposed issues.\",\"priority\":\"medium\",\"labels\":[\"chat\"]}]}]}\n")
+		b.WriteString("```\n\n")
+	}
 
 	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
 	b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
@@ -472,6 +525,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("## Output\n\n")
 	switch {
+	case ctx.ChatSessionID != "":
+		b.WriteString("This is a chat task. Your final assistant output is captured automatically as the chat reply; do not post an issue comment just to deliver the answer. Keep the reply concise and direct.\n")
 	case ctx.AutopilotRunID != "":
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n")
 	case ctx.QuickCreatePrompt != "":

@@ -938,6 +938,120 @@ func TestInjectRuntimeConfigCodex(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeBriefSplitsStablePrefixFromDynamicTaskFacts(t *testing.T) {
+	t.Parallel()
+
+	baseCtx := TaskContextForEnv{
+		IssueID:           "issue-one",
+		AgentID:           "agent-one",
+		AgentName:         "Agent One",
+		AgentInstructions: "Always be brief.",
+		WorkflowRunID:     "workflow-run-one",
+		Repositories: []RepositoryContextForEnv{{
+			ID:          "repo-one",
+			Name:        "Primary",
+			SourceState: "remote",
+			RemoteURL:   "https://example.com/one.git",
+		}},
+		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
+	}
+	otherCtx := baseCtx
+	otherCtx.Repositories = append([]RepositoryContextForEnv(nil), baseCtx.Repositories...)
+	otherCtx.IssueID = "issue-two"
+	otherCtx.AgentID = "agent-two"
+	otherCtx.AgentName = "Agent Two"
+	otherCtx.WorkflowRunID = "workflow-run-two"
+	otherCtx.Repositories[0].ID = "repo-two"
+	otherCtx.Repositories[0].RemoteURL = "https://example.com/two.git"
+
+	first := BuildRuntimeBrief("codex", baseCtx)
+	second := BuildRuntimeBrief("codex", otherCtx)
+
+	if first.Stable == "" || first.Dynamic == "" {
+		t.Fatal("expected non-empty stable and dynamic runtime brief segments")
+	}
+	if first.Stable != second.Stable {
+		t.Fatal("stable runtime brief segment changed when only task facts changed")
+	}
+	if first.Dynamic == second.Dynamic {
+		t.Fatal("dynamic runtime brief segment did not change when task facts changed")
+	}
+	if !strings.Contains(first.Stable, "## Available Commands") {
+		t.Error("stable segment should keep the large command catalog")
+	}
+	for _, leak := range []string{"Agent One", "issue-one", "workflow-run-one", "https://example.com/one.git"} {
+		if strings.Contains(first.Stable, leak) {
+			t.Fatalf("stable segment leaked dynamic task fact %q", leak)
+		}
+	}
+	for _, want := range []string{"Agent One", "issue-one", "workflow-run-one", "https://example.com/one.git"} {
+		if !strings.Contains(first.Dynamic, want) {
+			t.Fatalf("dynamic segment missing %q", want)
+		}
+	}
+}
+
+func TestBuildInlineRuntimeBriefOmitsCommandCatalogAndKeepsChatContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := TaskContextForEnv{
+		AgentID:           "agent-chat",
+		AgentName:         "Chat Agent",
+		AgentInstructions: "Prefer concise replies.",
+		ChatSessionID:     "chat-one",
+		Repositories: []RepositoryContextForEnv{{
+			ID:          "repo-chat",
+			Name:        "Game",
+			SourceState: "local_dir",
+			Role:        "primary",
+			Binding: &RepositoryBindingContextForEnv{
+				Kind:           "local_dir",
+				State:          "ready",
+				LocalPath:      "/tmp/game",
+				Available:      true,
+				CurrentRuntime: true,
+			},
+		}},
+		AgentSkills: []SkillContextForEnv{{Name: "grill-with-docs", Content: "Discuss requirements."}},
+	}
+
+	full := BuildRuntimeBrief("kiro", ctx).Full
+	inline := BuildInlineRuntimeBrief("kiro", ctx)
+
+	if strings.Contains(inline, "## Available Commands") {
+		t.Fatal("inline runtime brief should omit the full command catalog")
+	}
+	if len(inline) >= len(full) {
+		t.Fatal("inline runtime brief should be smaller than the file runtime brief")
+	}
+	for _, want := range []string{
+		"Chat Agent",
+		"Prefer concise replies.",
+		"**You are in chat mode.**",
+		".multica/issue-proposals.json",
+		"Game",
+		"grill-with-docs",
+		"Use `--output json` for structured data",
+	} {
+		if !strings.Contains(inline, want) {
+			t.Fatalf("inline runtime brief missing %q", want)
+		}
+	}
+}
+
+func TestBuildRuntimeBriefOnlyRendersChatManifestsForChatTasks(t *testing.T) {
+	t.Parallel()
+
+	assignment := BuildRuntimeBrief("codex", TaskContextForEnv{IssueID: "issue-one"}).Full
+	if strings.Contains(assignment, "## Chat Structured Output Manifests") {
+		t.Fatal("assignment runtime brief should not include chat-only structured output manifests")
+	}
+	chat := BuildRuntimeBrief("codex", TaskContextForEnv{ChatSessionID: "chat-one"}).Full
+	if !strings.Contains(chat, "## Chat Structured Output Manifests") {
+		t.Fatal("chat runtime brief should include structured output manifest instructions")
+	}
+}
+
 func TestInjectRuntimeConfigNoSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1503,6 +1617,9 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 		if !strings.Contains(s, "You are in chat mode") {
 			t.Fatalf("chat workflow missing")
+		}
+		if !strings.Contains(s, "captured automatically as the chat reply") {
+			t.Fatalf("chat output handoff missing")
 		}
 	})
 
