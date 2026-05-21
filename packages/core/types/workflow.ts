@@ -29,20 +29,24 @@ export interface WorkflowStep {
   artifact?: {
     name?: string;
     content_kind?: "markdown" | "json" | "text" | string;
-    template?: {
-      format?: "markdown" | "json" | "text" | string;
-      content?: string;
-      files?: Array<{
-        path?: string;
-        content?: string;
-      }>;
-    };
+    format?: "markdown" | "json" | "text" | string;
+    template?:
+      | {
+          format?: "markdown" | "json" | "text" | string;
+          content?: string;
+          files?: Array<{
+            path?: string;
+            content?: string;
+          }>;
+        }
+      | string;
     inputs?: Array<{
       step_id?: string;
       artifact_name?: string;
       name?: string;
       required?: boolean;
     }>;
+    description?: string;
   };
   input_artifacts?: Array<{
     step_id?: string;
@@ -52,22 +56,38 @@ export interface WorkflowStep {
   }>;
   review?: {
     required?: boolean;
+    reviewer_role?: string;
+    instructions?: string;
   };
   quality_gate?: {
     enabled?: boolean;
     blocking?: boolean;
     prompt?: string;
-    report_mode?: string;
+    report_mode?: "summary" | "full" | "json" | string;
   };
   body_template?: string;
   description?: string;
   checklist?: string[];
+  output?: {
+    description?: string;
+  };
 }
 
 export interface WorkflowGate {
   id: string;
   title: string;
   description?: string;
+}
+
+export interface WorkflowValidationIssue {
+  code: string;
+  message: string;
+  severity: "blocking" | "warning" | string;
+}
+
+export interface WorkflowValidation {
+  publishable: boolean;
+  issues: WorkflowValidationIssue[];
 }
 
 export interface WorkflowSchema {
@@ -93,6 +113,7 @@ export interface WorkflowRevision {
   revision_number: number;
   status: WorkflowRevisionStatus;
   schema: WorkflowSchema;
+  validation?: WorkflowValidation | null;
   created_by: string | null;
   published_at: string | null;
   deprecated_at: string | null;
@@ -109,7 +130,10 @@ export interface WorkflowDefinition {
   system_key: string | null;
   forked_from_definition_id: string | null;
   current_published_revision_id: string | null;
+  published_revision?: WorkflowRevision | null;
+  draft_revision?: WorkflowRevision | null;
   current_revision?: WorkflowRevision | null;
+  has_unpublished_changes?: boolean;
   created_by: string | null;
   archived_at: string | null;
   created_at: string;

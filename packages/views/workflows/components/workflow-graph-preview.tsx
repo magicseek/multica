@@ -5,7 +5,7 @@ import type { WorkflowStep } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, Minus, Plus } from "lucide-react";
 import { useT } from "../../i18n";
 
 const NODE_WIDTH = 224;
@@ -17,6 +17,9 @@ const GAP_Y = 92;
 const VIEWPORT_PADDING = 48;
 const MIN_OVERVIEW_SCALE = 0.75;
 const MAX_FIT_SCALE = 1.15;
+const MIN_ZOOM_SCALE = 0.5;
+const MAX_ZOOM_SCALE = 1.6;
+const ZOOM_STEP = 0.1;
 
 interface ViewportSize {
   width: number;
@@ -206,6 +209,7 @@ function clamp(value: number, min: number, max: number): number {
 export function getWorkflowGraphViewportTransform(
   layout: Pick<WorkflowGraphLayout, "width" | "height">,
   viewport: ViewportSize,
+  scaleOverride?: number,
 ): WorkflowGraphViewportTransform {
   if (
     layout.width <= 0 ||
@@ -213,10 +217,13 @@ export function getWorkflowGraphViewportTransform(
     viewport.width <= 0 ||
     viewport.height <= 0
   ) {
+    const scale = scaleOverride
+      ? clamp(scaleOverride, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
+      : 1;
     return {
-      scale: 1,
-      width: layout.width,
-      height: layout.height,
+      scale,
+      width: Math.ceil(layout.width * scale),
+      height: Math.ceil(layout.height * scale),
     };
   }
 
@@ -226,7 +233,9 @@ export function getWorkflowGraphViewportTransform(
     availableWidth / layout.width,
     availableHeight / layout.height,
   );
-  const scale = clamp(fitScale, MIN_OVERVIEW_SCALE, MAX_FIT_SCALE);
+  const scale = scaleOverride
+    ? clamp(scaleOverride, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
+    : clamp(fitScale, MIN_OVERVIEW_SCALE, MAX_FIT_SCALE);
 
   return {
     scale,
@@ -249,14 +258,27 @@ export function WorkflowGraphPreview({
   const { t } = useT("workflows");
   const layout = buildWorkflowGraphLayout(steps);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const [manualScale, setManualScale] = useState<number | null>(null);
   const [viewportSize, setViewportSize] = useState<ViewportSize>({
     width: 0,
     height: 0,
   });
-  const transform = getWorkflowGraphViewportTransform(layout, viewportSize);
+  const fitTransform = getWorkflowGraphViewportTransform(layout, viewportSize);
+  const transform = getWorkflowGraphViewportTransform(
+    layout,
+    viewportSize,
+    manualScale ?? undefined,
+  );
+  const zoomPercent = Math.round(transform.scale * 100);
   const expandLabel = expanded
     ? t(($) => $.graph.collapse)
     : t(($) => $.graph.expand);
+
+  const zoomBy = (delta: number) => {
+    setManualScale((current) =>
+      clamp((current ?? fitTransform.scale) + delta, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE),
+    );
+  };
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -280,6 +302,10 @@ export function WorkflowGraphPreview({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    setManualScale(null);
+  }, [layout.height, layout.width]);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -320,9 +346,44 @@ export function WorkflowGraphPreview({
         <h2 className="text-xs font-medium">{t(($) => $.graph.title)}</h2>
         <div className="flex items-center gap-2">
           {layout.nodes.length > 0 && (
-            <span className="font-mono text-xs tabular-nums text-muted-foreground">
-              {layout.nodes.length}
-            </span>
+            <div className="flex items-center rounded-md border bg-muted/20">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-r-none"
+                onClick={() => zoomBy(-ZOOM_STEP)}
+                aria-label={t(($) => $.graph.zoom_out)}
+                title={t(($) => $.graph.zoom_out)}
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </Button>
+              <span className="min-w-11 px-1 text-center font-mono text-[11px] tabular-nums text-muted-foreground">
+                {zoomPercent}%
+              </span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 rounded-l-none rounded-r-none"
+                onClick={() => zoomBy(ZOOM_STEP)}
+                aria-label={t(($) => $.graph.zoom_in)}
+                title={t(($) => $.graph.zoom_in)}
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 rounded-l-none px-2 text-xs"
+                onClick={() => setManualScale(null)}
+                aria-label={t(($) => $.graph.fit)}
+                title={t(($) => $.graph.fit)}
+              >
+                {t(($) => $.graph.fit)}
+              </Button>
+            </div>
           )}
           {onExpandedChange && (
             <Button

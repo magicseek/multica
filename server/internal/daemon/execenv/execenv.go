@@ -49,6 +49,7 @@ type RepositoryContextForEnv struct {
 	CompatibilitySource string
 	BindingAvailable    bool
 	Binding             *RepositoryBindingContextForEnv
+	LocalCheckoutPath   string
 }
 
 // ProjectResourceForEnv describes a single resource attached to the issue's
@@ -229,8 +230,11 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		logger:          logger,
 	}
 
+	task := params.Task
+	task.Repositories = MaterializeLocalRepositoryBindings(workDir, task.Repositories, logger)
+
 	// Write context files into workdir (skills go to provider-native paths).
-	if err := writeContextFiles(workDir, params.Provider, params.Task); err != nil {
+	if err := writeContextFiles(workDir, params.Provider, task); err != nil {
 		return nil, fmt.Errorf("execenv: write context files: %w", err)
 	}
 
@@ -240,7 +244,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion}, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
-		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
+		if err := hydrateCodexSkills(codexHome, task.AgentSkills, logger); err != nil {
 			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
 		}
 		env.CodexHome = codexHome
@@ -261,7 +265,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
-	logger.Info("execenv: prepared env", "root", envRoot, "workdir", workDir, "external_workdir", externalWorkDir, "repos_available", len(params.Task.Repos))
+	logger.Info("execenv: prepared env", "root", envRoot, "workdir", workDir, "external_workdir", externalWorkDir, "remote_repos_available", len(task.Repos), "repositories_available", len(task.Repositories))
 	return env, nil
 }
 
@@ -289,8 +293,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 		logger:  logger,
 	}
 
+	task := params.Task
+	task.Repositories = MaterializeLocalRepositoryBindings(params.WorkDir, task.Repositories, logger)
+
 	// Refresh context files (issue_context.md, skills).
-	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task); err != nil {
+	if err := writeContextFiles(params.WorkDir, params.Provider, task); err != nil {
 		logger.Warn("execenv: refresh context files failed", "error", err)
 	}
 
@@ -303,7 +310,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 			logger.Warn("execenv: refresh codex-home failed", "error", err)
 		} else {
 			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
+			if err := hydrateCodexSkills(codexHome, task.AgentSkills, logger); err != nil {
 				logger.Warn("execenv: refresh codex skills failed", "error", err)
 			}
 		}
@@ -327,6 +334,88 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)
 	return env
+}
+
+func MaterializeLocalRepositoryBindings(workDir string, repositories []RepositoryContextForEnv, logger *slog.Logger) []RepositoryContextForEnv {
+	if len(repositories) == 0 {
+		return nil
+	}
+	out := make([]RepositoryContextForEnv, len(repositories))
+	copy(out, repositories)
+
+	root := filepath.Join(workDir, "repositories")
+	for i := range out {
+		repo := &out[i]
+		if repo.Binding == nil || !repo.Binding.Available || repo.Binding.Kind != "local_dir" || strings.TrimSpace(repo.Binding.LocalPath) == "" {
+			continue
+		}
+		localPath := strings.TrimSpace(repo.Binding.LocalPath)
+		if !filepath.IsAbs(localPath) {
+			logger.Warn("execenv: skipped local repository binding with non-absolute path", "repository_id", repo.ID, "local_path", localPath)
+			continue
+		}
+		info, err := os.Stat(localPath)
+		if err != nil || !info.IsDir() {
+			logger.Warn("execenv: skipped unavailable local repository binding", "repository_id", repo.ID, "local_path", localPath, "error", err)
+			continue
+		}
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			logger.Warn("execenv: create local repositories dir failed", "error", err)
+			continue
+		}
+		relativePath := filepath.Join("repositories", localRepositoryLinkName(repo.Name, repo.ID, i))
+		linkPath := filepath.Join(workDir, relativePath)
+		if existing, err := os.Lstat(linkPath); err == nil {
+			if existing.Mode()&os.ModeSymlink == 0 {
+				logger.Warn("execenv: local repository link path already exists", "path", linkPath)
+				continue
+			}
+			if err := os.Remove(linkPath); err != nil {
+				logger.Warn("execenv: refresh local repository link failed", "path", linkPath, "error", err)
+				continue
+			}
+		}
+		if err := os.Symlink(localPath, linkPath); err != nil {
+			logger.Warn("execenv: create local repository link failed", "path", linkPath, "target", localPath, "error", err)
+			continue
+		}
+		repo.LocalCheckoutPath = filepath.ToSlash(relativePath)
+	}
+	return out
+}
+
+func localRepositoryLinkName(name, id string, index int) string {
+	base := strings.ToLower(strings.TrimSpace(name))
+	if base == "" {
+		base = strings.ToLower(strings.TrimSpace(id))
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || r == '.':
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		default:
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if slug == "" {
+		slug = "repository"
+	}
+	return fmt.Sprintf("%d-%s", index+1, slug)
 }
 
 // hydrateCodexSkills populates the per-task CODEX_HOME/skills directory with

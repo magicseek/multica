@@ -129,6 +129,34 @@ func (q *Queries) CreateWorkflowRevision(ctx context.Context, arg CreateWorkflow
 	return i, err
 }
 
+const deleteDraftOnlyWorkflowDefinition = `-- name: DeleteDraftOnlyWorkflowDefinition :exec
+DELETE FROM workflow_definition
+WHERE id = $1
+  AND workspace_id = $2
+  AND origin = 'user'
+  AND current_published_revision_id IS NULL
+`
+
+type DeleteDraftOnlyWorkflowDefinitionParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeleteDraftOnlyWorkflowDefinition(ctx context.Context, arg DeleteDraftOnlyWorkflowDefinitionParams) error {
+	_, err := q.db.Exec(ctx, deleteDraftOnlyWorkflowDefinition, arg.ID, arg.WorkspaceID)
+	return err
+}
+
+const deleteWorkflowDraftRevision = `-- name: DeleteWorkflowDraftRevision :exec
+DELETE FROM workflow_revision
+WHERE id = $1 AND status = 'draft'
+`
+
+func (q *Queries) DeleteWorkflowDraftRevision(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteWorkflowDraftRevision, id)
+	return err
+}
+
 const deprecateOtherPublishedWorkflowRevisions = `-- name: DeprecateOtherPublishedWorkflowRevisions :exec
 UPDATE workflow_revision SET
     status = 'deprecated',

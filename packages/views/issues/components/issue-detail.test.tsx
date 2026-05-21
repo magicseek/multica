@@ -2,7 +2,7 @@ import { forwardRef, useRef, useState, useImperativeHandle } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Issue, TimelineEntry } from "@multica/core/types";
+import type { AgentTask, Issue, TimelineEntry } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enIssues from "../../locales/en/issues.json";
@@ -431,6 +431,41 @@ const mockTimeline: TimelineEntry[] = [
   },
 ];
 
+const mockWorkflowTask: AgentTask = {
+  id: "task-1",
+  agent_id: "agent-1",
+  runtime_id: "runtime-1",
+  issue_id: "issue-1",
+  status: "completed",
+  priority: 0,
+  dispatched_at: "2026-01-18T00:00:00Z",
+  started_at: "2026-01-18T00:00:00Z",
+  completed_at: "2026-01-18T00:05:00Z",
+  result: null,
+  error: null,
+  created_at: "2026-01-18T00:00:00Z",
+  workflow_definition_id: "workflow-1",
+  workflow_revision_id: "revision-1",
+  workflow_snapshot: {
+    schema_version: 1,
+    trigger_type: "assignment",
+    definition_id: "workflow-1",
+    revision_id: "revision-1",
+    revision_number: 1,
+    workflow_name: "Trellis task",
+    origin: "system_seeded",
+    system_key: "trellis-task",
+    schema: {
+      steps: [
+        { id: "context", title: "Context first" },
+        { id: "finish", title: "Finish work" },
+      ],
+    },
+    rendered_markdown: "## Trellis task",
+    resolved_at: "2026-01-18T00:00:00Z",
+  },
+};
+
 // ---------------------------------------------------------------------------
 // Import component under test (after mocks)
 // ---------------------------------------------------------------------------
@@ -644,6 +679,54 @@ describe("IssueDetail (shared)", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("Activity").length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("renders a completed workflow run inside Activity", async () => {
+    mockApiObj.listTasksByIssue.mockResolvedValue([mockWorkflowTask]);
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("2/2 steps")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Trellis task")).toBeInTheDocument();
+    expect(screen.getByText("Context first")).toBeInTheDocument();
+    expect(screen.getByText("Finish work")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
+  });
+
+  it("posts a comment from the workflow run card", async () => {
+    mockApiObj.listTasksByIssue.mockResolvedValue([mockWorkflowTask]);
+    mockApiObj.createComment.mockResolvedValue({
+      id: "comment-workflow",
+      author_type: "member",
+      author_id: "user-1",
+      content: "Workflow comment",
+      parent_id: null,
+      type: "comment",
+      reactions: [],
+      attachments: [],
+      created_at: "2026-01-18T00:06:00Z",
+      updated_at: "2026-01-18T00:06:00Z",
+    });
+
+    renderIssueDetail();
+
+    const composer = await screen.findByPlaceholderText("Comment on this workflow run...");
+    fireEvent.change(composer, { target: { value: "Looks good." } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Send" })[0]!);
+
+    await waitFor(() => {
+      expect(mockApiObj.createComment).toHaveBeenCalledWith(
+        "issue-1",
+        expect.stringContaining("Looks good."),
+        undefined,
+        undefined,
+        undefined,
+        { suppressAgentTrigger: true },
+      );
     });
   });
 

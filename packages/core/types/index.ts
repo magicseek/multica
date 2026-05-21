@@ -145,6 +145,8 @@ export type {
   WorkflowArtifact,
   WorkflowReview,
   WorkflowQualityGateResult,
+  WorkflowValidation,
+  WorkflowValidationIssue,
   WorkflowVariable,
   CreateWorkflowRequest,
   UpdateWorkflowRequest,

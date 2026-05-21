@@ -255,6 +255,24 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		}
 	})
 
+	t.Run("suppressed workflow run comment does not trigger agent", func(t *testing.T) {
+		clearTasks(t, issueID)
+		resp := authRequest(t, "POST", "/api/issues/"+issueID+"/comments", map[string]any{
+			"content":                "Workflow run comment: verified",
+			"type":                   "comment",
+			"suppress_agent_trigger": true,
+		})
+		if resp.StatusCode != 201 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("CreateComment: expected 201, got %d: %s", resp.StatusCode, b)
+		}
+		resp.Body.Close()
+		if n := countPendingTasks(t, issueID); n != 0 {
+			t.Errorf("expected no pending task, got %d", n)
+		}
+	})
+
 	t.Run("top-level comment mentioning only others suppresses trigger", func(t *testing.T) {
 		clearTasks(t, issueID)
 		// Mention a fake agent UUID that is not the assignee.

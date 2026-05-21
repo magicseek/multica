@@ -25,6 +25,16 @@ function runtimeNeedsUpdate(
   latestVersion: string,
   userId: string,
 ): boolean {
+  if (!runtimeCanCheckForUpdate(rt, userId)) return false;
+  const cliVersion =
+    rt.metadata && typeof rt.metadata.cli_version === "string"
+      ? rt.metadata.cli_version
+      : null;
+  if (!cliVersion) return false;
+  return isNewer(latestVersion, cliVersion);
+}
+
+function runtimeCanCheckForUpdate(rt: AgentRuntime, userId: string): boolean {
   if (rt.runtime_mode !== "local") return false;
   // Only show to the user who owns this runtime.
   if (rt.owner_id !== userId) return false;
@@ -38,7 +48,7 @@ function runtimeNeedsUpdate(
       ? rt.metadata.cli_version
       : null;
   if (!cliVersion) return false;
-  return isNewer(latestVersion, cliVersion);
+  return true;
 }
 
 /**
@@ -51,7 +61,16 @@ export function useMyRuntimesNeedUpdate(wsId: string | undefined): boolean {
     ...runtimeListOptions(wsId ?? ""),
     enabled: !!wsId,
   });
-  const { data: latestVersion } = useQuery(latestCliVersionOptions());
+  const shouldCheckLatestVersion = useMemo(
+    () =>
+      !!userId &&
+      (runtimes ?? []).some((rt) => runtimeCanCheckForUpdate(rt, userId)),
+    [runtimes, userId],
+  );
+  const { data: latestVersion } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldCheckLatestVersion,
+  });
 
   if (!runtimes || !latestVersion || !userId) return false;
 
@@ -68,7 +87,16 @@ export function useUpdatableRuntimeIds(wsId: string | undefined): Set<string> {
     ...runtimeListOptions(wsId ?? ""),
     enabled: !!wsId,
   });
-  const { data: latestVersion } = useQuery(latestCliVersionOptions());
+  const shouldCheckLatestVersion = useMemo(
+    () =>
+      !!userId &&
+      (runtimes ?? []).some((rt) => runtimeCanCheckForUpdate(rt, userId)),
+    [runtimes, userId],
+  );
+  const { data: latestVersion } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled: shouldCheckLatestVersion,
+  });
 
   return useMemo(() => {
     if (!runtimes || !latestVersion || !userId) return new Set<string>();

@@ -1,0 +1,13 @@
+{"file":"CONTEXT.md","reason":"Canonical glossary and resolved decisions for Multica workflow runs, step runs, artifacts, reviews, quality gates, import/export, and intentionally skipped ai-desk fields."}
+{"file":"docs/adr/0003-migrate-ai-desk-flows-through-multica-workflow-runs.md","reason":"Decision record for migrating ai-desk Flows through Multica workflow runs rather than browser orchestration or prompt-only steps."}
+{"file":"docs/ai-desk-flows-to-multica-workflows-plan.md","reason":"Detailed source analysis, target architecture, ai-desk-to-Multica mapping, implementation phases, and verification plan."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"This task spans database, services, daemon, CLI/API contracts, core types, and shared views."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Implementation must reuse existing Multica workflow, daemon, API, React Query, and UI patterns before adding abstractions."}
+{"file":".trellis/spec/workflows/index.md","reason":"Workflow spec entrypoint for editable workflow definitions and execution contracts."}
+{"file":".trellis/spec/workflows/execution-workflow-definitions.md","reason":"Existing workflow definition, binding, snapshot, daemon claim, and frontend contracts to extend."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Backend guideline index for DB, API, daemon claim data, and workflow-related service changes."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Agent execution prompt and daemon claim behavior must remain compatible with workflow snapshot injection."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Daemon execution and runtime metadata changes must follow existing local/cloud daemon contracts."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Shared workflow types, API client methods, schemas, and hooks belong in core with strict package boundaries."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Workflow builder and run observer UI belong in shared views and must use Multica UI patterns."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Web route wiring must stay in the app layer while shared workflow UI remains in packages/views."}

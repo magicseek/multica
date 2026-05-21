@@ -64,7 +64,7 @@ This agent has the execution protocol setting enabled. Follow this protocol for 
 	TrellisTaskSlug: {
 		Slug:        TrellisTaskSlug,
 		Name:        "Trellis task",
-		Description: "Trellis-oriented workflow for direct assignment tasks in repositories that carry Trellis metadata.",
+		Description: "Trellis-oriented workflow for direct assignment tasks in project repositories, initializing Trellis state when absent.",
 		Content: strings.TrimSpace(`
 ## Trellis Task Protocol
 

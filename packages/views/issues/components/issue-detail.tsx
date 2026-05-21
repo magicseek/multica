@@ -40,7 +40,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
-import type { Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { AgentTask, Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
@@ -60,7 +60,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { issueKeys, issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { issueLabelsOptions } from "@multica/core/labels";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useRecentIssuesStore } from "@multica/core/issues/stores";
@@ -327,6 +327,11 @@ type TimelineItem =
   | { kind: "resolved-bar"; id: string; entry: TimelineEntry }
   | { kind: "activity-group"; id: string; entries: TimelineEntry[] };
 
+type WorkflowStepSummary = {
+  id: string;
+  title: string;
+};
+
 type RawTimelineGroup = {
   type: "comment" | "activities";
   entries: TimelineEntry[];
@@ -468,6 +473,279 @@ function ActivityBlock({
       })}
     </div>
   );
+}
+
+function WorkflowRunActivity({
+  tasks,
+  onComment,
+}: {
+  tasks: AgentTask[];
+  onComment: (
+    content: string,
+    attachmentIds?: string[],
+    options?: { suppressAgentTrigger?: boolean },
+  ) => Promise<void>;
+}) {
+  const { t } = useT("issues");
+  const { getActorName } = useActorName();
+  const workflowTasks = useMemo(
+    () =>
+      tasks
+        .filter((task) => !!task.workflow_snapshot)
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime(),
+        ),
+    [tasks],
+  );
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set());
+  const [comments, setComments] = useState<Record<string, string>>({});
+  const [sendingId, setSendingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (workflowTasks.length === 0) return;
+    setOpenIds((prev) => {
+      const first = workflowTasks[0]!.id;
+      if (prev.has(first)) return prev;
+      const next = new Set(prev);
+      next.add(first);
+      return next;
+    });
+  }, [workflowTasks]);
+
+  if (workflowTasks.length === 0) return null;
+
+  const toggleOpen = (taskId: string) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  const handleSubmit = async (task: AgentTask) => {
+    const raw = comments[task.id]?.trim();
+    if (!raw || sendingId) return;
+    const workflowName =
+      task.workflow_snapshot?.workflow_name ??
+      t(($) => $.workflow_activity.title);
+    setSendingId(task.id);
+    try {
+      await onComment(
+        `${t(($) => $.workflow_activity.comment_prefix, { name: workflowName })}\n\n${raw}`,
+        undefined,
+        { suppressAgentTrigger: true },
+      );
+      setComments((prev) => ({ ...prev, [task.id]: "" }));
+    } finally {
+      setSendingId(null);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      {workflowTasks.map((task) => {
+        const steps = workflowSteps(task);
+        const completed = completedWorkflowStepCount(task, steps.length);
+        const percent =
+          steps.length > 0 ? Math.round((completed / steps.length) * 100) : 0;
+        const open = openIds.has(task.id);
+        const status = workflowTaskStatusLabel(task.status, t);
+        const tone = workflowTaskStatusTone(task.status);
+        const comment = comments[task.id] ?? "";
+
+        return (
+          <div
+            key={task.id}
+            className="rounded-lg border bg-card/70 px-4 py-3 shadow-sm"
+          >
+            <button
+              type="button"
+              onClick={() => toggleOpen(task.id)}
+              className="flex w-full items-start gap-3 text-left"
+            >
+              <ActorAvatar
+                actorType="agent"
+                actorId={task.agent_id ?? ""}
+                size={28}
+                enableHoverCard
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium">
+                    {task.workflow_snapshot?.workflow_name ??
+                      t(($) => $.workflow_activity.title)}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                      tone,
+                    )}
+                  >
+                    {status}
+                  </span>
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                    {timeAgo(task.completed_at ?? task.created_at)}
+                  </span>
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                      open && "rotate-90",
+                    )}
+                  />
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="truncate">
+                    {getActorName("agent", task.agent_id ?? "")}
+                  </span>
+                  <span aria-hidden>·</span>
+                  <span>
+                    {t(($) => $.workflow_activity.steps_count, {
+                      completed,
+                      total: steps.length,
+                    })}
+                  </span>
+                  <span className="ml-auto font-mono tabular-nums">
+                    {t(($) => $.workflow_activity.percent, { percent })}
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-[width]",
+                      task.status === "failed"
+                        ? "bg-destructive"
+                        : task.status === "cancelled"
+                          ? "bg-muted-foreground"
+                          : "bg-success",
+                    )}
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+              </div>
+            </button>
+
+            {open && (
+              <div className="mt-3 border-t pt-3">
+                {steps.length > 0 ? (
+                  <div className="space-y-2">
+                    {steps.map((step, index) => {
+                      const done = index < completed;
+                      return (
+                        <div
+                          key={`${task.id}:${step.id}`}
+                          className="flex items-center gap-2 text-sm"
+                        >
+                          <span
+                            className={cn(
+                              "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                              done
+                                ? "border-success bg-success text-success-foreground"
+                                : "border-muted-foreground/30",
+                            )}
+                          >
+                            {done && <CircleCheck className="h-3 w-3" />}
+                          </span>
+                          <span className={done ? "text-foreground" : "text-muted-foreground"}>
+                            {step.title}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {t(($) => $.workflow_activity.no_steps)}
+                  </p>
+                )}
+
+                <div className="mt-3 flex items-end gap-2">
+                  <textarea
+                    value={comment}
+                    onChange={(e) =>
+                      setComments((prev) => ({
+                        ...prev,
+                        [task.id]: e.target.value,
+                      }))
+                    }
+                    placeholder={t(($) => $.workflow_activity.comment_placeholder)}
+                    className="min-h-16 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:ring-2 focus:ring-ring"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!comment.trim() || sendingId === task.id}
+                    onClick={() => void handleSubmit(task)}
+                  >
+                    {t(($) => $.workflow_activity.send_comment)}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function workflowSteps(task: AgentTask): WorkflowStepSummary[] {
+  const schema = task.workflow_snapshot?.schema;
+  if (!schema || typeof schema !== "object") return [];
+  const rawSteps = (schema as { steps?: unknown }).steps;
+  if (!Array.isArray(rawSteps)) return [];
+  return rawSteps.map((raw, index) => {
+    const step =
+      raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const id =
+      typeof step.id === "string" && step.id.trim()
+        ? step.id.trim()
+        : String(index + 1);
+    const title =
+      (typeof step.title === "string" && step.title.trim()) ||
+      (typeof step.name === "string" && step.name.trim()) ||
+      id;
+    return { id, title };
+  });
+}
+
+function completedWorkflowStepCount(task: AgentTask, total: number): number {
+  if (task.status === "completed") return total;
+  return 0;
+}
+
+function workflowTaskStatusLabel(status: AgentTask["status"], t: ActivityT): string {
+  switch (status) {
+    case "queued":
+      return t(($) => $.execution_log.status_queued);
+    case "dispatched":
+      return t(($) => $.execution_log.status_dispatched);
+    case "running":
+      return t(($) => $.execution_log.status_running);
+    case "completed":
+      return t(($) => $.execution_log.status_completed);
+    case "failed":
+      return t(($) => $.execution_log.status_failed);
+    case "cancelled":
+      return t(($) => $.execution_log.status_cancelled);
+  }
+}
+
+function workflowTaskStatusTone(status: AgentTask["status"]): string {
+  switch (status) {
+    case "completed":
+      return "border-success/30 bg-success/10 text-success";
+    case "failed":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "cancelled":
+      return "border-muted bg-muted text-muted-foreground";
+    case "running":
+      return "border-info/30 bg-info/10 text-info";
+    default:
+      return "border-warning/30 bg-warning/10 text-warning";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -920,6 +1198,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Token usage
   const { data: usage } = useQuery(issueUsageOptions(id));
+  const { data: issueTasks = [] } = useQuery({
+    queryKey: issueKeys.tasks(id),
+    queryFn: () => api.listTasksByIssue(id),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
 
   // Attachments uploaded against this issue. Drives the description
   // editor's click-time fresh-sign download: NodeViews match
@@ -1796,6 +2080,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 lives in the right panel via ExecutionLogSection — this
                 card is just a header-style "agent is working" anchor. */}
             <AgentLiveCard key={id} issueId={id} />
+
+            <WorkflowRunActivity tasks={issueTasks} onComment={submitComment} />
 
             {/* Timeline entries — virtualized via react-virtuoso to keep
                 first-paint cost O(viewport) instead of O(N). On a 500-comment

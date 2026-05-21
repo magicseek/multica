@@ -125,10 +125,11 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateCommentRequest struct {
-	Content       string   `json:"content"`
-	Type          string   `json:"type"`
-	ParentID      *string  `json:"parent_id"`
-	AttachmentIDs []string `json:"attachment_ids"`
+	Content              string   `json:"content"`
+	Type                 string   `json:"type"`
+	ParentID             *string  `json:"parent_id"`
+	AttachmentIDs        []string `json:"attachment_ids"`
+	SuppressAgentTrigger bool     `json:"suppress_agent_trigger"`
 }
 
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +275,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// the user is talking to someone else, not requesting work from the assignee.
 	// Also skip when replying in a member-started thread without mentioning the
 	// assignee — the user is continuing a member-to-member conversation.
-	if authorType == "member" && h.shouldEnqueueOnComment(r.Context(), issue) &&
+	if !req.SuppressAgentTrigger && authorType == "member" && h.shouldEnqueueOnComment(r.Context(), issue) &&
 		!h.commentMentionsOthersButNotAssignee(comment.Content, issue) &&
 		!h.isReplyToMemberThread(r.Context(), parentComment, comment.Content, issue) {
 		// Always use the current comment as the trigger so the agent reads
@@ -291,13 +292,15 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// Skip when the comment author is the leader (prevent internal loops), or
 	// when a member explicitly @mentions anyone (agent/member/squad/all) — that
 	// counts as deliberate routing and the leader stays out.
-	if h.shouldEnqueueSquadLeaderOnComment(r.Context(), issue, comment.Content, authorType, authorID) {
+	if !req.SuppressAgentTrigger && h.shouldEnqueueSquadLeaderOnComment(r.Context(), issue, comment.Content, authorType, authorID) {
 		h.enqueueSquadLeaderTask(r.Context(), issue, comment.ID, authorType, authorID)
 	}
 
 	// Trigger @mentioned agents: parse agent mentions and enqueue tasks for each.
 	// Pass parentComment so that replies inherit mentions from the thread root.
-	h.enqueueMentionedAgentTasks(r.Context(), issue, comment, parentComment, authorType, authorID)
+	if !req.SuppressAgentTrigger {
+		h.enqueueMentionedAgentTasks(r.Context(), issue, comment, parentComment, authorType, authorID)
+	}
 
 	writeJSON(w, http.StatusCreated, resp)
 }

@@ -53,9 +53,10 @@ type Step struct {
 	Name           string           `json:"name,omitempty"`
 	Title          string           `json:"title"`
 	Order          int              `json:"order,omitempty"`
-	Required       bool             `json:"required,omitempty"`
+	Required       *bool            `json:"required,omitempty"`
 	DependsOn      []string         `json:"depends_on,omitempty"`
 	Execution      *StepExecution   `json:"execution,omitempty"`
+	Output         *StepOutput      `json:"output,omitempty"`
 	Artifact       *StepArtifact    `json:"artifact,omitempty"`
 	InputArtifacts []ArtifactInput  `json:"input_artifacts,omitempty"`
 	Review         *StepReview      `json:"review,omitempty"`
@@ -72,17 +73,38 @@ type StepExecution struct {
 	Rules  string `json:"rules,omitempty"`
 }
 
+type StepOutput struct {
+	Description string `json:"description,omitempty"`
+}
+
 type StepArtifact struct {
 	Name        string            `json:"name,omitempty"`
 	ContentKind string            `json:"content_kind,omitempty"`
+	Format      string            `json:"format,omitempty"`
 	Template    *ArtifactTemplate `json:"template,omitempty"`
 	Inputs      []ArtifactInput   `json:"inputs,omitempty"`
+	Description string            `json:"description,omitempty"`
 }
 
 type ArtifactTemplate struct {
 	Format  string                 `json:"format,omitempty"`
 	Content string                 `json:"content,omitempty"`
 	Files   []ArtifactTemplateFile `json:"files,omitempty"`
+}
+
+func (t *ArtifactTemplate) UnmarshalJSON(data []byte) error {
+	var content string
+	if err := json.Unmarshal(data, &content); err == nil {
+		t.Content = content
+		return nil
+	}
+	type alias ArtifactTemplate
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*t = ArtifactTemplate(decoded)
+	return nil
 }
 
 type ArtifactTemplateFile struct {
@@ -98,7 +120,9 @@ type ArtifactInput struct {
 }
 
 type StepReview struct {
-	Required bool `json:"required,omitempty"`
+	Required     bool   `json:"required,omitempty"`
+	ReviewerRole string `json:"reviewer_role,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 type StepQualityGate struct {
@@ -122,6 +146,17 @@ type RenderContext struct {
 type RenderResult struct {
 	Markdown string   `json:"rendered_markdown"`
 	Warnings []string `json:"warnings"`
+}
+
+type ValidationIssue struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+}
+
+type ValidationResult struct {
+	Publishable bool              `json:"publishable"`
+	Issues      []ValidationIssue `json:"issues"`
 }
 
 func SystemSeeds() []Seed {
@@ -208,7 +243,7 @@ This task was triggered by a new issue comment.
 
 func DefaultUserSchema(name, description string) []byte {
 	s := Schema{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Name:          strings.TrimSpace(name),
 		Description:   strings.TrimSpace(description),
 		Applicability: []string{"assignment"},
@@ -234,14 +269,14 @@ func DefaultUserSchema(name, description string) []byte {
 	return raw
 }
 
-func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, error) {
+func NormalizeDraftSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, ValidationResult, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
-		return DefaultUserSchema(fallbackName, fallbackDescription), nil
+		raw = DefaultUserSchema(fallbackName, fallbackDescription)
 	}
 
 	var s Schema
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, fmt.Errorf("schema must be a JSON object: %w", err)
+		return nil, ValidationResult{}, fmt.Errorf("schema must be a JSON object: %w", err)
 	}
 	if s.SchemaVersion == 0 && s.Version != 0 {
 		s.SchemaVersion = s.Version
@@ -249,24 +284,15 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 	if s.SchemaVersion == 0 {
 		s.SchemaVersion = 2
 	}
-	if s.SchemaVersion != 1 && s.SchemaVersion != 2 {
-		return nil, fmt.Errorf("unsupported schema_version %d", s.SchemaVersion)
+	if s.SchemaVersion == 1 {
+		s.SchemaVersion = 2
 	}
-	s.SchemaVersion = 2
 	s.Version = 0
 	if strings.TrimSpace(s.Name) == "" {
 		s.Name = strings.TrimSpace(fallbackName)
 	}
 	if strings.TrimSpace(s.Description) == "" {
 		s.Description = strings.TrimSpace(fallbackDescription)
-	}
-	if len(s.Applicability) == 0 {
-		return nil, fmt.Errorf("schema applicability is required")
-	}
-	for _, item := range s.Applicability {
-		if item != "assignment" && item != "comment" && item != "chat" && item != "autopilot" {
-			return nil, fmt.Errorf("unsupported workflow applicability %q", item)
-		}
 	}
 	if s.Source.Format == "" && s.Source.Mode != "" {
 		s.Source.Format = s.Source.Mode
@@ -276,14 +302,56 @@ func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]by
 	}
 	s.Source.Mode = ""
 	normalizeSteps(s.Steps)
-	if err := validateSteps(s.Steps); err != nil {
-		return nil, err
-	}
 	normalized, err := json.Marshal(s)
 	if err != nil {
-		return nil, fmt.Errorf("normalize schema: %w", err)
+		return nil, ValidationResult{}, fmt.Errorf("normalize schema: %w", err)
+	}
+	return normalized, ValidateSchema(normalized), nil
+}
+
+func NormalizeSchema(raw []byte, fallbackName, fallbackDescription string) ([]byte, error) {
+	normalized, validation, err := NormalizeDraftSchema(raw, fallbackName, fallbackDescription)
+	if err != nil {
+		return nil, err
+	}
+	if !validation.Publishable {
+		return nil, fmt.Errorf("%s", validation.Issues[0].Message)
 	}
 	return normalized, nil
+}
+
+func ValidateSchema(raw []byte) ValidationResult {
+	result := ValidationResult{Publishable: true}
+	addBlocking := func(code, message string) {
+		result.Publishable = false
+		result.Issues = append(result.Issues, ValidationIssue{
+			Code:     code,
+			Message:  message,
+			Severity: "blocking",
+		})
+	}
+
+	var s Schema
+	if err := json.Unmarshal(raw, &s); err != nil {
+		addBlocking("schema_parse_failed", "schema must be a JSON object")
+		return result
+	}
+	if s.SchemaVersion != 1 && s.SchemaVersion != 2 {
+		addBlocking("unsupported_schema_version", fmt.Sprintf("unsupported schema_version %d", s.SchemaVersion))
+	}
+	if len(s.Applicability) == 0 {
+		addBlocking("missing_applicability", "schema applicability is required")
+	}
+	for _, item := range s.Applicability {
+		if item != "assignment" && item != "comment" && item != "chat" && item != "autopilot" {
+			addBlocking("unsupported_applicability", fmt.Sprintf("unsupported workflow applicability %q", item))
+		}
+	}
+	normalizeSteps(s.Steps)
+	if err := validateSteps(s.Steps); err != nil {
+		addBlocking("invalid_steps", err.Error())
+	}
+	return result
 }
 
 func normalizeSteps(steps []Step) {
@@ -322,8 +390,16 @@ func normalizeSteps(steps []Step) {
 		}
 		if step.Artifact != nil {
 			step.Artifact.Name = strings.TrimSpace(step.Artifact.Name)
+			if step.Artifact.ContentKind == "" {
+				step.Artifact.ContentKind = step.Artifact.Format
+			}
 			step.Artifact.ContentKind = normalizeArtifactContentKind(step.Artifact.ContentKind)
+			step.Artifact.Format = ""
+			step.Artifact.Description = strings.TrimSpace(step.Artifact.Description)
 			if step.Artifact.Template != nil {
+				if step.Artifact.Template.Format == "" {
+					step.Artifact.Template.Format = step.Artifact.ContentKind
+				}
 				step.Artifact.Template.Format = normalizeArtifactContentKind(step.Artifact.Template.Format)
 				step.Artifact.Template.Content = strings.TrimSpace(step.Artifact.Template.Content)
 			}
@@ -468,6 +544,15 @@ func Render(raw []byte, ctx RenderContext) RenderResult {
 			if desc != "" {
 				fmt.Fprintf(&b, "   - %s\n", desc)
 			}
+			if step.Output != nil && strings.TrimSpace(step.Output.Description) != "" {
+				fmt.Fprintf(&b, "   - Done when: %s\n", strings.TrimSpace(step.Output.Description))
+			}
+			if step.Review != nil && step.Review.Required {
+				b.WriteString("   - Gate: human review required\n")
+			}
+			if step.QualityGate != nil && step.QualityGate.Enabled {
+				b.WriteString("   - Gate: quality check required\n")
+			}
 			for _, item := range step.Checklist {
 				if trimmed := strings.TrimSpace(item); trimmed != "" {
 					fmt.Fprintf(&b, "   - %s\n", trimmed)
@@ -498,7 +583,7 @@ func seedFromTemplate(key string, tpl execprotocol.Template, applicability []str
 
 func systemSeed(key, name, description string, applicability []string, body string, steps []Step) Seed {
 	s := Schema{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Name:          name,
 		Description:   description,
 		Applicability: applicability,

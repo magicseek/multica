@@ -78,12 +78,28 @@ func ExportSchema(raw []byte, format string) (ExportResult, error) {
 	}
 }
 
-func SchemaMetadata(raw []byte) (name, description string) {
+func SchemaMetadata(raw []byte, fallback ...string) (name, description string) {
+	fallbackName := ""
+	fallbackDescription := ""
+	if len(fallback) > 0 {
+		fallbackName = strings.TrimSpace(fallback[0])
+	}
+	if len(fallback) > 1 {
+		fallbackDescription = strings.TrimSpace(fallback[1])
+	}
 	var schema Schema
 	if err := json.Unmarshal(raw, &schema); err != nil {
-		return "", ""
+		return fallbackName, fallbackDescription
 	}
-	return strings.TrimSpace(schema.Name), strings.TrimSpace(schema.Description)
+	name = strings.TrimSpace(schema.Name)
+	if name == "" {
+		name = fallbackName
+	}
+	description = strings.TrimSpace(schema.Description)
+	if description == "" {
+		description = fallbackDescription
+	}
+	return name, description
 }
 
 func decodeImportDocument(format string, content []byte) (map[string]any, error) {

@@ -14,16 +14,28 @@ import (
 )
 
 type WorkflowRevisionResponse struct {
-	ID                   string  `json:"id"`
-	WorkflowDefinitionID string  `json:"workflow_definition_id"`
-	RevisionNumber       int32   `json:"revision_number"`
-	Status               string  `json:"status"`
-	Schema               any     `json:"schema"`
-	CreatedBy            *string `json:"created_by"`
-	PublishedAt          *string `json:"published_at"`
-	DeprecatedAt         *string `json:"deprecated_at"`
-	CreatedAt            string  `json:"created_at"`
-	UpdatedAt            string  `json:"updated_at"`
+	ID                   string                      `json:"id"`
+	WorkflowDefinitionID string                      `json:"workflow_definition_id"`
+	RevisionNumber       int32                       `json:"revision_number"`
+	Status               string                      `json:"status"`
+	Schema               any                         `json:"schema"`
+	CreatedBy            *string                     `json:"created_by"`
+	PublishedAt          *string                     `json:"published_at"`
+	DeprecatedAt         *string                     `json:"deprecated_at"`
+	CreatedAt            string                      `json:"created_at"`
+	UpdatedAt            string                      `json:"updated_at"`
+	Validation           *WorkflowValidationResponse `json:"validation,omitempty"`
+}
+
+type WorkflowValidationIssueResponse struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+}
+
+type WorkflowValidationResponse struct {
+	Publishable bool                              `json:"publishable"`
+	Issues      []WorkflowValidationIssueResponse `json:"issues"`
 }
 
 type WorkflowDefinitionResponse struct {
@@ -35,7 +47,10 @@ type WorkflowDefinitionResponse struct {
 	SystemKey                  *string                   `json:"system_key"`
 	ForkedFromDefinitionID     *string                   `json:"forked_from_definition_id"`
 	CurrentPublishedRevisionID *string                   `json:"current_published_revision_id"`
+	PublishedRevision          *WorkflowRevisionResponse `json:"published_revision,omitempty"`
+	DraftRevision              *WorkflowRevisionResponse `json:"draft_revision,omitempty"`
 	CurrentRevision            *WorkflowRevisionResponse `json:"current_revision,omitempty"`
+	HasUnpublishedChanges      bool                      `json:"has_unpublished_changes"`
 	CreatedBy                  *string                   `json:"created_by"`
 	ArchivedAt                 *string                   `json:"archived_at"`
 	CreatedAt                  string                    `json:"created_at"`
@@ -92,6 +107,14 @@ func decodeWorkflowSchema(raw []byte) any {
 }
 
 func workflowRevisionToResponse(rev db.WorkflowRevision) WorkflowRevisionResponse {
+	resp := workflowRevisionToResponseWithoutValidation(rev)
+	if rev.Status == "draft" {
+		resp.Validation = workflowValidationToResponse(workflowdefs.ValidateSchema(rev.Schema))
+	}
+	return resp
+}
+
+func workflowRevisionToResponseWithoutValidation(rev db.WorkflowRevision) WorkflowRevisionResponse {
 	return WorkflowRevisionResponse{
 		ID:                   uuidToString(rev.ID),
 		WorkflowDefinitionID: uuidToString(rev.WorkflowDefinitionID),
@@ -103,6 +126,21 @@ func workflowRevisionToResponse(rev db.WorkflowRevision) WorkflowRevisionRespons
 		DeprecatedAt:         timestampToPtr(rev.DeprecatedAt),
 		CreatedAt:            timestampToString(rev.CreatedAt),
 		UpdatedAt:            timestampToString(rev.UpdatedAt),
+	}
+}
+
+func workflowValidationToResponse(result workflowdefs.ValidationResult) *WorkflowValidationResponse {
+	issues := make([]WorkflowValidationIssueResponse, len(result.Issues))
+	for i, issue := range result.Issues {
+		issues[i] = WorkflowValidationIssueResponse{
+			Code:     issue.Code,
+			Message:  issue.Message,
+			Severity: issue.Severity,
+		}
+	}
+	return &WorkflowValidationResponse{
+		Publishable: result.Publishable,
+		Issues:      issues,
 	}
 }
 
@@ -137,6 +175,18 @@ func currentWorkflowRevisionResponse(
 }
 
 func workflowDetailRowToResponse(row db.GetWorkflowDefinitionWithCurrentRevisionRow) WorkflowDefinitionResponse {
+	published := currentWorkflowRevisionResponse(
+		row.ID,
+		row.CurrentRevisionID,
+		row.CurrentRevisionNumber,
+		row.CurrentRevisionStatus,
+		row.CurrentRevisionSchema,
+		row.CurrentRevisionCreatedBy,
+		row.CurrentRevisionPublishedAt,
+		row.CurrentRevisionDeprecatedAt,
+		row.CurrentRevisionCreatedAt,
+		row.CurrentRevisionUpdatedAt,
+	)
 	return WorkflowDefinitionResponse{
 		ID:                         uuidToString(row.ID),
 		WorkspaceID:                uuidToString(row.WorkspaceID),
@@ -146,26 +196,28 @@ func workflowDetailRowToResponse(row db.GetWorkflowDefinitionWithCurrentRevision
 		SystemKey:                  textToPtr(row.SystemKey),
 		ForkedFromDefinitionID:     uuidToPtr(row.ForkedFromDefinitionID),
 		CurrentPublishedRevisionID: uuidToPtr(row.CurrentPublishedRevisionID),
-		CurrentRevision: currentWorkflowRevisionResponse(
-			row.ID,
-			row.CurrentRevisionID,
-			row.CurrentRevisionNumber,
-			row.CurrentRevisionStatus,
-			row.CurrentRevisionSchema,
-			row.CurrentRevisionCreatedBy,
-			row.CurrentRevisionPublishedAt,
-			row.CurrentRevisionDeprecatedAt,
-			row.CurrentRevisionCreatedAt,
-			row.CurrentRevisionUpdatedAt,
-		),
-		CreatedBy:  uuidToPtr(row.CreatedBy),
-		ArchivedAt: timestampToPtr(row.ArchivedAt),
-		CreatedAt:  timestampToString(row.CreatedAt),
-		UpdatedAt:  timestampToString(row.UpdatedAt),
+		PublishedRevision:          published,
+		CurrentRevision:            published,
+		CreatedBy:                  uuidToPtr(row.CreatedBy),
+		ArchivedAt:                 timestampToPtr(row.ArchivedAt),
+		CreatedAt:                  timestampToString(row.CreatedAt),
+		UpdatedAt:                  timestampToString(row.UpdatedAt),
 	}
 }
 
 func workflowListRowToResponse(row db.ListWorkflowDefinitionsByWorkspaceRow) WorkflowDefinitionResponse {
+	published := currentWorkflowRevisionResponse(
+		row.ID,
+		row.CurrentRevisionID,
+		row.CurrentRevisionNumber,
+		row.CurrentRevisionStatus,
+		row.CurrentRevisionSchema,
+		row.CurrentRevisionCreatedBy,
+		row.CurrentRevisionPublishedAt,
+		row.CurrentRevisionDeprecatedAt,
+		row.CurrentRevisionCreatedAt,
+		row.CurrentRevisionUpdatedAt,
+	)
 	return WorkflowDefinitionResponse{
 		ID:                         uuidToString(row.ID),
 		WorkspaceID:                uuidToString(row.WorkspaceID),
@@ -175,26 +227,28 @@ func workflowListRowToResponse(row db.ListWorkflowDefinitionsByWorkspaceRow) Wor
 		SystemKey:                  textToPtr(row.SystemKey),
 		ForkedFromDefinitionID:     uuidToPtr(row.ForkedFromDefinitionID),
 		CurrentPublishedRevisionID: uuidToPtr(row.CurrentPublishedRevisionID),
-		CurrentRevision: currentWorkflowRevisionResponse(
-			row.ID,
-			row.CurrentRevisionID,
-			row.CurrentRevisionNumber,
-			row.CurrentRevisionStatus,
-			row.CurrentRevisionSchema,
-			row.CurrentRevisionCreatedBy,
-			row.CurrentRevisionPublishedAt,
-			row.CurrentRevisionDeprecatedAt,
-			row.CurrentRevisionCreatedAt,
-			row.CurrentRevisionUpdatedAt,
-		),
-		CreatedBy:  uuidToPtr(row.CreatedBy),
-		ArchivedAt: timestampToPtr(row.ArchivedAt),
-		CreatedAt:  timestampToString(row.CreatedAt),
-		UpdatedAt:  timestampToString(row.UpdatedAt),
+		PublishedRevision:          published,
+		CurrentRevision:            published,
+		CreatedBy:                  uuidToPtr(row.CreatedBy),
+		ArchivedAt:                 timestampToPtr(row.ArchivedAt),
+		CreatedAt:                  timestampToString(row.CreatedAt),
+		UpdatedAt:                  timestampToString(row.UpdatedAt),
 	}
 }
 
 func workflowApplicabilityRowToResponse(row db.ListWorkflowDefinitionsByApplicabilityRow) WorkflowDefinitionResponse {
+	published := &WorkflowRevisionResponse{
+		ID:                   uuidToString(row.CurrentRevisionID),
+		WorkflowDefinitionID: uuidToString(row.ID),
+		RevisionNumber:       row.CurrentRevisionNumber,
+		Status:               row.CurrentRevisionStatus,
+		Schema:               decodeWorkflowSchema(row.CurrentRevisionSchema),
+		CreatedBy:            uuidToPtr(row.CurrentRevisionCreatedBy),
+		PublishedAt:          timestampToPtr(row.CurrentRevisionPublishedAt),
+		DeprecatedAt:         timestampToPtr(row.CurrentRevisionDeprecatedAt),
+		CreatedAt:            timestampToString(row.CurrentRevisionCreatedAt),
+		UpdatedAt:            timestampToString(row.CurrentRevisionUpdatedAt),
+	}
 	return WorkflowDefinitionResponse{
 		ID:                         uuidToString(row.ID),
 		WorkspaceID:                uuidToString(row.WorkspaceID),
@@ -204,23 +258,30 @@ func workflowApplicabilityRowToResponse(row db.ListWorkflowDefinitionsByApplicab
 		SystemKey:                  textToPtr(row.SystemKey),
 		ForkedFromDefinitionID:     uuidToPtr(row.ForkedFromDefinitionID),
 		CurrentPublishedRevisionID: uuidToPtr(row.CurrentPublishedRevisionID),
-		CurrentRevision: &WorkflowRevisionResponse{
-			ID:                   uuidToString(row.CurrentRevisionID),
-			WorkflowDefinitionID: uuidToString(row.ID),
-			RevisionNumber:       row.CurrentRevisionNumber,
-			Status:               row.CurrentRevisionStatus,
-			Schema:               decodeWorkflowSchema(row.CurrentRevisionSchema),
-			CreatedBy:            uuidToPtr(row.CurrentRevisionCreatedBy),
-			PublishedAt:          timestampToPtr(row.CurrentRevisionPublishedAt),
-			DeprecatedAt:         timestampToPtr(row.CurrentRevisionDeprecatedAt),
-			CreatedAt:            timestampToString(row.CurrentRevisionCreatedAt),
-			UpdatedAt:            timestampToString(row.CurrentRevisionUpdatedAt),
-		},
-		CreatedBy:  uuidToPtr(row.CreatedBy),
-		ArchivedAt: timestampToPtr(row.ArchivedAt),
-		CreatedAt:  timestampToString(row.CreatedAt),
-		UpdatedAt:  timestampToString(row.UpdatedAt),
+		PublishedRevision:          published,
+		CurrentRevision:            published,
+		CreatedBy:                  uuidToPtr(row.CreatedBy),
+		ArchivedAt:                 timestampToPtr(row.ArchivedAt),
+		CreatedAt:                  timestampToString(row.CreatedAt),
+		UpdatedAt:                  timestampToString(row.UpdatedAt),
 	}
+}
+
+func (h *Handler) attachWorkflowDraft(r *http.Request, workspaceID pgtype.UUID, resp *WorkflowDefinitionResponse) error {
+	draft, err := h.Queries.GetLatestDraftWorkflowRevision(r.Context(), db.GetLatestDraftWorkflowRevisionParams{
+		ID:          parseUUID(resp.ID),
+		WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	draftResp := workflowRevisionToResponse(draft)
+	resp.DraftRevision = &draftResp
+	resp.HasUnpublishedChanges = true
+	return nil
 }
 
 func (h *Handler) ensureWorkflowSeeds(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID) bool {
@@ -299,6 +360,10 @@ func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
 	resp := make([]WorkflowDefinitionResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = workflowListRowToResponse(row)
+		if err := h.attachWorkflowDraft(r, wsUUID, &resp[i]); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load workflow drafts")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -316,7 +381,12 @@ func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "workflow not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, workflowDetailRowToResponse(row))
+	resp := workflowDetailRowToResponse(row)
+	if err := h.attachWorkflowDraft(r, wsUUID, &resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow draft")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +409,7 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	schema, err := workflowdefs.NormalizeSchema(req.Schema, req.Name, req.Description)
+	schema, _, err := workflowdefs.NormalizeDraftSchema(req.Schema, req.Name, req.Description)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -355,29 +425,14 @@ func (h *Handler) CreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow")
 		return
 	}
-	rev, err := h.Queries.CreateWorkflowRevision(r.Context(), db.CreateWorkflowRevisionParams{
+	if _, err := h.Queries.CreateWorkflowRevision(r.Context(), db.CreateWorkflowRevisionParams{
 		WorkflowDefinitionID: def.ID,
 		RevisionNumber:       1,
-		Status:               "published",
+		Status:               "draft",
 		Schema:               schema,
 		CreatedBy:            parseUUID(userID),
-	})
-	if err != nil {
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow revision")
-		return
-	}
-	if err := h.Queries.DeprecateOtherPublishedWorkflowRevisions(r.Context(), db.DeprecateOtherPublishedWorkflowRevisionsParams{
-		WorkflowDefinitionID: def.ID,
-		ID:                   rev.ID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to deprecate old workflow revisions")
-		return
-	}
-	if _, err := h.Queries.SetWorkflowCurrentPublishedRevision(r.Context(), db.SetWorkflowCurrentPublishedRevisionParams{
-		ID:                         def.ID,
-		CurrentPublishedRevisionID: rev.ID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to publish workflow")
 		return
 	}
 	h.writeWorkflowDetail(w, r, http.StatusCreated, def.ID, wsUUID)
@@ -510,12 +565,27 @@ func (h *Handler) CreateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	def, current, ok := h.editableWorkflowWithCurrent(w, r, idUUID, wsUUID)
+	def, ok := h.editableWorkflow(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
 	userID, ok := requireUserID(w, r)
 	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetLatestDraftWorkflowRevision(r.Context(), db.GetLatestDraftWorkflowRevisionParams{ID: idUUID, WorkspaceID: wsUUID}); err == nil {
+		h.writeWorkflowDetail(w, r, http.StatusOK, idUUID, wsUUID)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow draft")
+		return
+	}
+	current, err := h.Queries.GetCurrentWorkflowRevision(r.Context(), db.GetCurrentWorkflowRevisionParams{ID: idUUID, WorkspaceID: wsUUID})
+	baseSchema := workflowdefs.DefaultUserSchema(def.Name, def.Description)
+	if err == nil {
+		baseSchema = current.Schema
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow revision")
 		return
 	}
 	next, err := h.Queries.GetNextWorkflowRevisionNumber(r.Context(), def.ID)
@@ -527,7 +597,7 @@ func (h *Handler) CreateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		WorkflowDefinitionID: def.ID,
 		RevisionNumber:       next,
 		Status:               "draft",
-		Schema:               current.Schema,
+		Schema:               baseSchema,
 		CreatedBy:            parseUUID(userID),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workflow draft")
@@ -541,7 +611,7 @@ func (h *Handler) UpdateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	def, _, ok := h.editableWorkflowWithCurrent(w, r, idUUID, wsUUID)
+	def, ok := h.editableWorkflow(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
@@ -550,7 +620,7 @@ func (h *Handler) UpdateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	schema, err := workflowdefs.NormalizeSchema(req.Schema, def.Name, def.Description)
+	schema, _, err := workflowdefs.NormalizeDraftSchema(req.Schema, def.Name, def.Description)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -589,12 +659,39 @@ func (h *Handler) UpdateWorkflowDraft(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workflowRevisionToResponse(draft))
 }
 
+func (h *Handler) DeleteWorkflowDraft(w http.ResponseWriter, r *http.Request) {
+	idUUID, wsUUID, ok := h.workflowIDAndWorkspace(w, r)
+	if !ok {
+		return
+	}
+	if _, ok := h.editableWorkflow(w, r, idUUID, wsUUID); !ok {
+		return
+	}
+	draft, err := h.Queries.GetLatestDraftWorkflowRevision(r.Context(), db.GetLatestDraftWorkflowRevisionParams{
+		ID:          idUUID,
+		WorkspaceID: wsUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow draft")
+		return
+	}
+	if err := h.Queries.DeleteWorkflowDraftRevision(r.Context(), draft.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to discard workflow draft")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) PublishWorkflow(w http.ResponseWriter, r *http.Request) {
 	idUUID, wsUUID, ok := h.workflowIDAndWorkspace(w, r)
 	if !ok {
 		return
 	}
-	def, _, ok := h.editableWorkflowWithCurrent(w, r, idUUID, wsUUID)
+	def, ok := h.editableWorkflow(w, r, idUUID, wsUUID)
 	if !ok {
 		return
 	}
@@ -628,6 +725,19 @@ func (h *Handler) PublishWorkflow(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rev, err = h.Queries.GetLatestDraftWorkflowRevision(r.Context(), db.GetLatestDraftWorkflowRevisionParams{ID: idUUID, WorkspaceID: wsUUID})
 		if err == nil {
+			schema, normalizeErr := workflowdefs.NormalizeSchema(rev.Schema, def.Name, def.Description)
+			if normalizeErr != nil {
+				writeError(w, http.StatusBadRequest, normalizeErr.Error())
+				return
+			}
+			rev, err = h.Queries.UpdateWorkflowRevisionSchema(r.Context(), db.UpdateWorkflowRevisionSchemaParams{
+				ID:     rev.ID,
+				Schema: schema,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update workflow draft")
+				return
+			}
 			rev, err = h.Queries.PublishWorkflowRevision(r.Context(), rev.ID)
 		}
 	}
@@ -640,6 +750,16 @@ func (h *Handler) PublishWorkflow(w http.ResponseWriter, r *http.Request) {
 		ID:                   rev.ID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to deprecate old workflow revisions")
+		return
+	}
+	name, description := workflowdefs.SchemaMetadata(rev.Schema, def.Name, def.Description)
+	if _, err := h.Queries.UpdateWorkflowDefinitionMetadata(r.Context(), db.UpdateWorkflowDefinitionMetadataParams{
+		ID:          def.ID,
+		WorkspaceID: wsUUID,
+		Name:        pgtype.Text{String: name, Valid: true},
+		Description: pgtype.Text{String: description, Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update workflow metadata")
 		return
 	}
 	if _, err := h.Queries.SetWorkflowCurrentPublishedRevision(r.Context(), db.SetWorkflowCurrentPublishedRevisionParams{
@@ -687,29 +807,14 @@ func (h *Handler) ForkWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to fork workflow")
 		return
 	}
-	rev, err := h.Queries.CreateWorkflowRevision(r.Context(), db.CreateWorkflowRevisionParams{
+	if _, err := h.Queries.CreateWorkflowRevision(r.Context(), db.CreateWorkflowRevisionParams{
 		WorkflowDefinitionID: def.ID,
 		RevisionNumber:       1,
-		Status:               "published",
+		Status:               "draft",
 		Schema:               row.CurrentRevisionSchema,
 		CreatedBy:            parseUUID(userID),
-	})
-	if err != nil {
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fork workflow revision")
-		return
-	}
-	if err := h.Queries.DeprecateOtherPublishedWorkflowRevisions(r.Context(), db.DeprecateOtherPublishedWorkflowRevisionsParams{
-		WorkflowDefinitionID: def.ID,
-		ID:                   rev.ID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to deprecate old workflow revisions")
-		return
-	}
-	if _, err := h.Queries.SetWorkflowCurrentPublishedRevision(r.Context(), db.SetWorkflowCurrentPublishedRevisionParams{
-		ID:                         def.ID,
-		CurrentPublishedRevisionID: rev.ID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to publish forked workflow")
 		return
 	}
 	h.writeWorkflowDetail(w, r, http.StatusCreated, def.ID, wsUUID)
@@ -721,7 +826,7 @@ func (h *Handler) PreviewWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	schema, err := workflowdefs.NormalizeSchema(req.Schema, "Preview workflow", "")
+	schema, _, err := workflowdefs.NormalizeDraftSchema(req.Schema, "Preview workflow", "")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -768,6 +873,17 @@ func (h *Handler) DeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "system workflows cannot be archived")
 		return
 	}
+	if !def.CurrentPublishedRevisionID.Valid {
+		if err := h.Queries.DeleteDraftOnlyWorkflowDefinition(r.Context(), db.DeleteDraftOnlyWorkflowDefinitionParams{
+			ID:          idUUID,
+			WorkspaceID: wsUUID,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete workflow")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if _, err := h.Queries.ArchiveWorkflowDefinition(r.Context(), db.ArchiveWorkflowDefinitionParams{ID: idUUID, WorkspaceID: wsUUID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive workflow")
 		return
@@ -788,13 +904,8 @@ func (h *Handler) workflowIDAndWorkspace(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) editableWorkflowWithCurrent(w http.ResponseWriter, r *http.Request, id, workspaceID pgtype.UUID) (db.WorkflowDefinition, db.WorkflowRevision, bool) {
-	def, err := h.Queries.GetWorkflowDefinitionInWorkspace(r.Context(), db.GetWorkflowDefinitionInWorkspaceParams{ID: id, WorkspaceID: workspaceID})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "workflow not found")
-		return db.WorkflowDefinition{}, db.WorkflowRevision{}, false
-	}
-	if def.Origin == "system_seeded" {
-		writeError(w, http.StatusForbidden, "system workflows are read-only; fork before editing")
+	def, ok := h.editableWorkflow(w, r, id, workspaceID)
+	if !ok {
 		return db.WorkflowDefinition{}, db.WorkflowRevision{}, false
 	}
 	current, err := h.Queries.GetCurrentWorkflowRevision(r.Context(), db.GetCurrentWorkflowRevisionParams{ID: id, WorkspaceID: workspaceID})
@@ -803,6 +914,19 @@ func (h *Handler) editableWorkflowWithCurrent(w http.ResponseWriter, r *http.Req
 		return db.WorkflowDefinition{}, db.WorkflowRevision{}, false
 	}
 	return def, current, true
+}
+
+func (h *Handler) editableWorkflow(w http.ResponseWriter, r *http.Request, id, workspaceID pgtype.UUID) (db.WorkflowDefinition, bool) {
+	def, err := h.Queries.GetWorkflowDefinitionInWorkspace(r.Context(), db.GetWorkflowDefinitionInWorkspaceParams{ID: id, WorkspaceID: workspaceID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "workflow not found")
+		return db.WorkflowDefinition{}, false
+	}
+	if def.Origin == "system_seeded" {
+		writeError(w, http.StatusForbidden, "system workflows are read-only; fork before editing")
+		return db.WorkflowDefinition{}, false
+	}
+	return def, true
 }
 
 func (h *Handler) writeWorkflowDetail(w http.ResponseWriter, r *http.Request, status int, id, workspaceID pgtype.UUID) {
@@ -814,5 +938,10 @@ func (h *Handler) writeWorkflowDetail(w http.ResponseWriter, r *http.Request, st
 		writeError(w, http.StatusInternalServerError, "failed to load workflow")
 		return
 	}
-	writeJSON(w, status, workflowDetailRowToResponse(row))
+	resp := workflowDetailRowToResponse(row)
+	if err := h.attachWorkflowDraft(r, workspaceID, &resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load workflow draft")
+		return
+	}
+	writeJSON(w, status, resp)
 }

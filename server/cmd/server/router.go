@@ -533,6 +533,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/export", h.ExportWorkflow)
 					r.Post("/draft", h.CreateWorkflowDraft)
 					r.Put("/draft", h.UpdateWorkflowDraft)
+					r.Delete("/draft", h.DeleteWorkflowDraft)
 					r.Post("/publish", h.PublishWorkflow)
 					r.Post("/fork", h.ForkWorkflow)
 				})
