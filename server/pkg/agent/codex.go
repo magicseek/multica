@@ -297,15 +297,16 @@ func (b *codexBackend) executeOneShot(ctx context.Context, prompt string, opts E
 		c.usageMu.Lock()
 		u := c.usage
 		c.usageMu.Unlock()
-		usageMap := codexUsageMap(startTime, &opts, u)
+		usageMap, usageSource := codexUsageMap(startTime, threadID, &opts, u)
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			SessionID:  threadID,
-			DurationMs: duration.Milliseconds(),
-			Usage:      usageMap,
+			Status:      finalStatus,
+			Output:      finalOutput,
+			Error:       finalError,
+			SessionID:   threadID,
+			DurationMs:  duration.Milliseconds(),
+			Usage:       usageMap,
+			Diagnostics: codexResultDiagnostics(opts, usageSource),
 		}
 	}()
 
@@ -344,14 +345,15 @@ func (b *codexBackend) executeWithRunner(ctx context.Context, prompt string, opt
 
 	args := buildCodexArgs(opts, b.cfg.Logger)
 	key := codexRunnerPoolKey(opts.RunnerKey, execPath, args, opts.Cwd, b.cfg.Env)
-	runner, err := globalCodexRunnerPool.acquire(acquireCtx, key, b.cfg, execPath, args, opts.Cwd)
+	runner, reused, err := globalCodexRunnerPool.acquire(acquireCtx, key, b.cfg, execPath, args, opts.Cwd)
 	if err != nil {
 		return nil, err
 	}
+	opts.RunnerReused = reused
 	return runner.execute(ctx, prompt, opts), nil
 }
 
-func (p *codexRunnerPool) acquire(initCtx context.Context, key string, cfg Config, execPath string, args []string, cwd string) (*codexRunner, error) {
+func (p *codexRunnerPool) acquire(initCtx context.Context, key string, cfg Config, execPath string, args []string, cwd string) (*codexRunner, bool, error) {
 	var stale *codexRunner
 	p.mu.Lock()
 	if p.runners == nil {
@@ -362,7 +364,7 @@ func (p *codexRunnerPool) acquire(initCtx context.Context, key string, cfg Confi
 			existing.stopIdleTimer()
 			p.mu.Unlock()
 			cfg.Logger.Info("codex reusing app-server runner", "cwd", cwd)
-			return existing, nil
+			return existing, true, nil
 		}
 		delete(p.runners, key)
 		stale = existing
@@ -375,18 +377,18 @@ func (p *codexRunnerPool) acquire(initCtx context.Context, key string, cfg Confi
 
 	runner, err := newCodexRunner(initCtx, key, cfg, execPath, args, cwd)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	p.mu.Lock()
 	if existing := p.runners[key]; existing != nil && !existing.isClosed() {
 		p.mu.Unlock()
 		runner.close()
-		return existing, nil
+		return existing, true, nil
 	}
 	p.runners[key] = runner
 	p.mu.Unlock()
-	return runner, nil
+	return runner, false, nil
 }
 
 func (p *codexRunnerPool) remove(key string, runner *codexRunner) {
@@ -657,18 +659,19 @@ func (r *codexRunner) execute(ctx context.Context, prompt string, opts ExecOptio
 		r.client.usageMu.Lock()
 		u := r.client.usage
 		r.client.usageMu.Unlock()
-		usageMap := codexUsageMap(startTime, &opts, u)
+		usageMap, usageSource := codexUsageMap(startTime, threadID, &opts, u)
 
 		if fatalRunner {
 			globalCodexRunnerPool.remove(r.key, r)
 		}
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			SessionID:  threadID,
-			DurationMs: duration.Milliseconds(),
-			Usage:      usageMap,
+			Status:      finalStatus,
+			Output:      finalOutput,
+			Error:       finalError,
+			SessionID:   threadID,
+			DurationMs:  duration.Milliseconds(),
+			Usage:       usageMap,
+			Diagnostics: codexResultDiagnostics(opts, usageSource),
 		}
 
 		if fatalRunner {
@@ -734,23 +737,42 @@ func codexInitializeParams() map[string]any {
 	}
 }
 
-func codexUsageMap(startTime time.Time, opts *ExecOptions, u TokenUsage) map[string]TokenUsage {
+func codexUsageMap(startTime time.Time, sessionID string, opts *ExecOptions, u TokenUsage) (map[string]TokenUsage, string) {
+	usageSource := ""
 	if u.InputTokens == 0 && u.OutputTokens == 0 {
-		if scanned := scanCodexSessionUsage(startTime); scanned != nil {
+		if scanned := scanCodexSessionUsage(startTime, sessionID); scanned != nil {
 			u = scanned.usage
+			usageSource = "session_log"
 			if scanned.model != "" && opts.Model == "" {
 				opts.Model = scanned.model
 			}
 		}
+	} else {
+		usageSource = "event"
 	}
 	if u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
-		return nil
+		return nil, usageSource
 	}
 	model := opts.Model
 	if model == "" {
 		model = "unknown"
 	}
-	return map[string]TokenUsage{model: u}
+	return map[string]TokenUsage{model: u}, usageSource
+}
+
+func codexResultDiagnostics(opts ExecOptions, usageSource string) map[string]any {
+	diagnostics := make(map[string]any)
+	if usageSource != "" {
+		diagnostics["usage_source"] = usageSource
+	}
+	if opts.RunnerKey != "" {
+		diagnostics["runner_enabled"] = true
+		diagnostics["runner_reused"] = opts.RunnerReused
+	}
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	return diagnostics
 }
 
 func writeCodexRuntimeEnvFile(path string, values map[string]string) error {
@@ -1514,9 +1536,10 @@ type codexSessionUsage struct {
 }
 
 // scanCodexSessionUsage scans Codex session JSONL files written after startTime
-// to extract token usage. Codex writes token_count events to
-// ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
-func scanCodexSessionUsage(startTime time.Time) *codexSessionUsage {
+// to extract token usage. When sessionID is known, only files containing that
+// thread/session id are considered so concurrent Codex tasks cannot steal the
+// newest token_count from an unrelated session.
+func scanCodexSessionUsage(startTime time.Time, sessionID string) *codexSessionUsage {
 	root := codexSessionRoot()
 	if root == "" {
 		return nil
@@ -1541,7 +1564,7 @@ func scanCodexSessionUsage(startTime time.Time) *codexSessionUsage {
 		if err != nil || info.ModTime().Before(startTime) {
 			continue
 		}
-		if u := parseCodexSessionFile(f); u != nil {
+		if u := parseCodexSessionFile(f, sessionID); u != nil {
 			// Take the last matching file's data (usually there's only one per task).
 			result = *u
 		}
@@ -1601,7 +1624,7 @@ type codexSessionTokenCount struct {
 }
 
 // parseCodexSessionFile extracts the final token_count from a Codex session file.
-func parseCodexSessionFile(path string) *codexSessionUsage {
+func parseCodexSessionFile(path, sessionID string) *codexSessionUsage {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -1610,12 +1633,16 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 
 	var result codexSessionUsage
 	found := false
+	matchedSession := sessionID == ""
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		if !matchedSession && bytesContainsStr(line, sessionID) {
+			matchedSession = true
+		}
 
 		// Fast pre-filter.
 		if !bytesContainsStr(line, "token_count") && !bytesContainsStr(line, "turn_context") {
@@ -1657,7 +1684,7 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 		}
 	}
 
-	if !found {
+	if !found || !matchedSession {
 		return nil
 	}
 	return &result

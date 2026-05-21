@@ -180,17 +180,22 @@ func BuildInlineRuntimeBrief(provider string, ctx TaskContextForEnv) string {
 // For Kiro:     writes {workDir}/AGENTS.md  (Kiro CLI reads AGENTS.md natively; skills auto-discovered from project skills dirs)
 func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (string, error) {
 	content := BuildRuntimeBrief(provider, ctx).Full
+	return content, WriteRuntimeConfig(workDir, provider, content)
+}
 
+// WriteRuntimeConfig writes pre-rendered runtime config content into the
+// provider-native guidance file.
+func WriteRuntimeConfig(workDir, provider, content string) error {
 	switch provider {
 	case "claude":
-		return content, os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), []byte(content), 0o644)
+		return os.WriteFile(filepath.Join(workDir, "CLAUDE.md"), []byte(content), 0o644)
 	case "codex", "copilot", "opencode", "openclaw", "hermes", "pi", "cursor", "kimi", "kiro":
-		return content, os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte(content), 0o644)
+		return os.WriteFile(filepath.Join(workDir, "AGENTS.md"), []byte(content), 0o644)
 	case "gemini":
-		return content, os.WriteFile(filepath.Join(workDir, "GEMINI.md"), []byte(content), 0o644)
+		return os.WriteFile(filepath.Join(workDir, "GEMINI.md"), []byte(content), 0o644)
 	default:
 		// Unknown provider — skip config injection, prompt-only mode.
-		return content, nil
+		return nil
 	}
 }
 

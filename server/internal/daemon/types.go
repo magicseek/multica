@@ -240,12 +240,13 @@ type SkillFileData struct {
 
 // TaskUsageEntry represents token usage for a single model during a task execution.
 type TaskUsageEntry struct {
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	Provider         string          `json:"provider"`
+	Model            string          `json:"model"`
+	InputTokens      int64           `json:"input_tokens"`
+	OutputTokens     int64           `json:"output_tokens"`
+	CacheReadTokens  int64           `json:"cache_read_tokens"`
+	CacheWriteTokens int64           `json:"cache_write_tokens"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
 }
 
 type TaskOutputManifest struct {

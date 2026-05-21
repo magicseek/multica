@@ -2284,7 +2284,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
-	if _, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx); err != nil {
+	runtimeBrief := execenv.BuildRuntimeBrief(provider, taskCtx)
+	if err := execenv.WriteRuntimeConfig(env.WorkDir, provider, runtimeBrief.Full); err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
 	// NOTE: No cleanup — workdir is preserved for reuse by future tasks on
@@ -2292,6 +2293,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// task completion and passed back via PriorWorkDir on the next claim.
 
 	prompt := BuildPrompt(task, provider)
+	systemPrompt := runtimeSystemPrompt(provider, taskCtx)
+	usageMetadata := newTaskUsageMetadata(prompt, systemPrompt, runtimeBrief)
 
 	// Pass the daemon's auth credentials and context so the spawned agent CLI
 	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
@@ -2401,6 +2404,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	reused := task.PriorWorkDir != "" && env.WorkDir == task.PriorWorkDir
 	reusedEnvRoot := task.PriorWorkDir != "" && env.RootDir != predictedRoot
+	usageMetadata.WorkDirReused = reused
+	usageMetadata.EnvRootReused = reusedEnvRoot
+	usageMetadata.CodexRunnerEnabled = runnerKey != ""
+	usageMetadata.RuntimeEnvFile = runtimeEnvFile != ""
+	usageMetadata.ResumeAttempted = task.PriorSessionID != ""
+	usageMetadata.PriorSessionID = task.PriorSessionID
 	taskLog.Info("starting agent",
 		"provider", provider,
 		"workdir", env.WorkDir,
@@ -2470,7 +2479,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Hermes loads AGENTS.md / .agent_context itself. Prepending runtime
 	// guidance into the ACP user prompt duplicates that context, bloats every
 	// turn, and has triggered upstream safety filters on harmless tasks.
-	execOpts.SystemPrompt = runtimeSystemPrompt(provider, taskCtx)
+	execOpts.SystemPrompt = systemPrompt
 
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
 	if err != nil {
@@ -2480,8 +2489,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Fallback: if session resume failed before establishing a session, retry
 	// with a fresh session. We check SessionID == "" to distinguish a resume
 	// failure (no session established) from a failure during actual execution.
+	resumeFallback := false
 	if result.Status == "failed" && task.PriorSessionID != "" && result.SessionID == "" {
 		firstUsage := result.Usage
+		resumeFallback = true
 		taskLog.Warn("session resume failed, retrying with fresh session", "error", result.Error)
 		execOpts.ResumeSessionID = ""
 		retryResult, retryTools, retryErr := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID)
@@ -2501,6 +2512,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"tools", tools,
 	)
 
+	usageMetadata.SessionID = result.SessionID
+	usageMetadata.ResumeFallback = resumeFallback
+	usageMetadata.ResumeHit = usageMetadata.ResumeAttempted && !resumeFallback && result.SessionID != "" && result.SessionID == task.PriorSessionID
+	if len(result.Diagnostics) > 0 {
+		usageMetadata.AgentDiagnostics = result.Diagnostics
+		if v, ok := result.Diagnostics["runner_reused"].(bool); ok {
+			usageMetadata.CodexRunnerReused = v
+		}
+	}
+	usageMetadataRaw := usageMetadata.raw()
+
 	// Convert agent usage map to task usage entries.
 	var usageEntries []TaskUsageEntry
 	for model, u := range result.Usage {
@@ -2514,6 +2536,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			OutputTokens:     u.OutputTokens,
 			CacheReadTokens:  u.CacheReadTokens,
 			CacheWriteTokens: u.CacheWriteTokens,
+			Metadata:         usageMetadataRaw,
 		})
 	}
 

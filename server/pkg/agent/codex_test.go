@@ -1435,6 +1435,69 @@ func closeCodexRunnerPoolForTest(t *testing.T) {
 	}
 }
 
+func TestScanCodexSessionUsageMatchesSessionID(t *testing.T) {
+	start := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	sessionDir := filepath.Join(root, "sessions", "2026", "05", "21")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeSession := func(name, sessionID, model string, input, output, cached int64) {
+		t.Helper()
+		path := filepath.Join(sessionDir, name)
+		content := fmt.Sprintf(
+			"{\"type\":\"turn_context\",\"payload\":{\"threadId\":%q,\"model\":%q}}\n"+
+				"{\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"model\":%q,\"total_token_usage\":{\"input_tokens\":%d,\"output_tokens\":%d,\"cached_input_tokens\":%d}}}}\n",
+			sessionID, model, model, input, output, cached,
+		)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, start.Add(time.Second), start.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeSession("wrong.jsonl", "thr-wrong", "gpt-wrong", 999, 888, 777)
+	writeSession("target.jsonl", "thr-target", "gpt-target", 123, 45, 67)
+
+	got := scanCodexSessionUsage(start, "thr-target")
+	if got == nil {
+		t.Fatal("expected usage for matching session")
+	}
+	if got.model != "gpt-target" {
+		t.Fatalf("model = %q, want gpt-target", got.model)
+	}
+	if got.usage.InputTokens != 123 || got.usage.OutputTokens != 45 || got.usage.CacheReadTokens != 67 {
+		t.Fatalf("unexpected usage: %+v", got.usage)
+	}
+}
+
+func TestScanCodexSessionUsageDoesNotGuessWhenSessionIDMissing(t *testing.T) {
+	start := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	sessionDir := filepath.Join(root, "sessions", "2026", "05", "21")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(sessionDir, "other.jsonl")
+	content := "{\"type\":\"turn_context\",\"payload\":{\"threadId\":\"thr-other\",\"model\":\"gpt-other\"}}\n" +
+		"{\"type\":\"event\",\"payload\":{\"type\":\"token_count\",\"info\":{\"model\":\"gpt-other\",\"total_token_usage\":{\"input_tokens\":500,\"output_tokens\":100}}}}\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, start.Add(time.Second), start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := scanCodexSessionUsage(start, "thr-missing"); got != nil {
+		t.Fatalf("expected no usage for missing session id, got %+v", got)
+	}
+}
+
 func TestWithAgentStderrAppendsHint(t *testing.T) {
 	t.Parallel()
 
