@@ -265,6 +265,16 @@ ORDER BY created_at ASC;
 SELECT * FROM chat_message
 WHERE id = $1;
 
+-- name: GetChatMessageInSession :one
+SELECT * FROM chat_message
+WHERE id = $1 AND chat_session_id = $2;
+
+-- name: SetChatMessageTaskID :one
+UPDATE chat_message
+SET task_id = $2
+WHERE id = $1
+RETURNING *;
+
 -- name: GetAssistantChatMessageByTask :one
 SELECT * FROM chat_message
 WHERE chat_session_id = $1
@@ -274,8 +284,16 @@ ORDER BY created_at DESC
 LIMIT 1;
 
 -- name: CreateChatTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (
+    agent_id,
+    runtime_id,
+    issue_id,
+    status,
+    priority,
+    chat_session_id,
+    trigger_chat_message_id
+)
+VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
 RETURNING *;
 
 -- name: GetLastChatTaskSession :one

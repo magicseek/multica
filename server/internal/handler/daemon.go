@@ -1272,6 +1272,75 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
+func (h *Handler) populateClaimChatMessageContext(ctx context.Context, resp *AgentTaskResponse, task db.AgentTaskQueue, session db.ChatSession) {
+	msg, ok := h.claimChatMessageForTask(ctx, task, session)
+	if !ok {
+		return
+	}
+	resp.ChatMessage = msg.Content
+	resp.ChatMessageAttachments = h.claimChatAttachmentMeta(ctx, resp.WorkspaceID, msg.ID)
+}
+
+func (h *Handler) claimChatMessageForTask(ctx context.Context, task db.AgentTaskQueue, session db.ChatSession) (db.ChatMessage, bool) {
+	if task.TriggerChatMessageID.Valid {
+		msg, err := h.Queries.GetChatMessageInSession(ctx, db.GetChatMessageInSessionParams{
+			ID:            task.TriggerChatMessageID,
+			ChatSessionID: session.ID,
+		})
+		if err == nil && msg.Role == "user" {
+			return msg, true
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("claim chat trigger message lookup failed", "task_id", uuidToString(task.ID), "trigger_chat_message_id", uuidToString(task.TriggerChatMessageID), "error", err)
+		}
+		if err == nil {
+			slog.Warn("claim chat trigger message ignored: not a user message", "task_id", uuidToString(task.ID), "trigger_chat_message_id", uuidToString(task.TriggerChatMessageID), "role", msg.Role)
+			return db.ChatMessage{}, false
+		}
+	}
+
+	// Legacy queued tasks predate trigger_chat_message_id. Fall back to the old
+	// transcript scan for those rows and for rare races where the FK was cleared
+	// after claim but before the response context was built.
+	msgs, err := h.Queries.ListChatMessages(ctx, session.ID)
+	if err != nil {
+		slog.Warn("claim chat message fallback failed", "task_id", uuidToString(task.ID), "chat_session_id", uuidToString(session.ID), "error", err)
+		return db.ChatMessage{}, false
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i], true
+		}
+	}
+	return db.ChatMessage{}, false
+}
+
+func (h *Handler) claimChatAttachmentMeta(ctx context.Context, workspaceID string, messageID pgtype.UUID) []ChatAttachmentMeta {
+	if workspaceID == "" {
+		return nil
+	}
+	atts, err := h.Queries.ListAttachmentsByChatMessage(ctx, db.ListAttachmentsByChatMessageParams{
+		ChatMessageID: messageID,
+		WorkspaceID:   parseUUID(workspaceID),
+	})
+	if err != nil {
+		slog.Warn("claim chat attachments lookup failed", "message_id", uuidToString(messageID), "workspace_id", workspaceID, "error", err)
+		return nil
+	}
+	if len(atts) == 0 {
+		return nil
+	}
+	out := make([]ChatAttachmentMeta, len(atts))
+	for i, a := range atts {
+		out[i] = ChatAttachmentMeta{
+			ID:          uuidToString(a.ID),
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+		}
+	}
+	return out
+}
+
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
 // The response includes the agent's name and skills, fetched fresh from the DB.
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
@@ -1535,33 +1604,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					resp.PriorWorkDir = prior.WorkDir.String
 				}
 			}
-			// Load the latest user message for the chat prompt, plus any
-			// attachments linked to that exact message. Without the structured
-			// attachment list the agent only sees the markdown URL in
-			// `ChatMessage` — fine for vision models inline but unusable when
-			// the agent wants to `multica attachment download <id>` (URL is
-			// signed and 30-min expiring on private CDN).
-			if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err == nil && len(msgs) > 0 {
-				for i := len(msgs) - 1; i >= 0; i-- {
-					if msgs[i].Role == "user" {
-						resp.ChatMessage = msgs[i].Content
-						if atts, attErr := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{
-							ChatMessageID: msgs[i].ID,
-							WorkspaceID:   parseUUID(resp.WorkspaceID),
-						}); attErr == nil && len(atts) > 0 {
-							resp.ChatMessageAttachments = make([]ChatAttachmentMeta, len(atts))
-							for j, a := range atts {
-								resp.ChatMessageAttachments[j] = ChatAttachmentMeta{
-									ID:          uuidToString(a.ID),
-									Filename:    a.Filename,
-									ContentType: a.ContentType,
-								}
-							}
-						}
-						break
-					}
-				}
-			}
+			h.populateClaimChatMessageContext(r.Context(), &resp, *task, cs)
 		}
 	}
 

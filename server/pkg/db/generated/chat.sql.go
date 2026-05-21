@@ -261,16 +261,25 @@ func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionPa
 }
 
 const createChatTask = `-- name: CreateChatTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot
+INSERT INTO agent_task_queue (
+    agent_id,
+    runtime_id,
+    issue_id,
+    status,
+    priority,
+    chat_session_id,
+    trigger_chat_message_id
+)
+VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id
 `
 
 type CreateChatTaskParams struct {
-	AgentID       pgtype.UUID `json:"agent_id"`
-	RuntimeID     pgtype.UUID `json:"runtime_id"`
-	Priority      int32       `json:"priority"`
-	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	AgentID              pgtype.UUID `json:"agent_id"`
+	RuntimeID            pgtype.UUID `json:"runtime_id"`
+	Priority             int32       `json:"priority"`
+	ChatSessionID        pgtype.UUID `json:"chat_session_id"`
+	TriggerChatMessageID pgtype.UUID `json:"trigger_chat_message_id"`
 }
 
 func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) (AgentTaskQueue, error) {
@@ -279,6 +288,7 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		arg.RuntimeID,
 		arg.Priority,
 		arg.ChatSessionID,
+		arg.TriggerChatMessageID,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -310,6 +320,7 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		&i.WorkflowDefinitionID,
 		&i.WorkflowRevisionID,
 		&i.WorkflowSnapshot,
+		&i.TriggerChatMessageID,
 	)
 	return i, err
 }
@@ -392,6 +403,32 @@ WHERE id = $1
 
 func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessage, error) {
 	row := q.db.QueryRow(ctx, getChatMessage, id)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.Role,
+		&i.Content,
+		&i.TaskID,
+		&i.CreatedAt,
+		&i.FailureReason,
+		&i.ElapsedMs,
+	)
+	return i, err
+}
+
+const getChatMessageInSession = `-- name: GetChatMessageInSession :one
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+WHERE id = $1 AND chat_session_id = $2
+`
+
+type GetChatMessageInSessionParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+}
+
+func (q *Queries) GetChatMessageInSession(ctx context.Context, arg GetChatMessageInSessionParams) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, getChatMessageInSession, arg.ID, arg.ChatSessionID)
 	var i ChatMessage
 	err := row.Scan(
 		&i.ID,
@@ -1811,6 +1848,34 @@ func (q *Queries) SetChatIssueProposalStatus(ctx context.Context, arg SetChatIss
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setChatMessageTaskID = `-- name: SetChatMessageTaskID :one
+UPDATE chat_message
+SET task_id = $2
+WHERE id = $1
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+`
+
+type SetChatMessageTaskIDParams struct {
+	ID     pgtype.UUID `json:"id"`
+	TaskID pgtype.UUID `json:"task_id"`
+}
+
+func (q *Queries) SetChatMessageTaskID(ctx context.Context, arg SetChatMessageTaskIDParams) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, setChatMessageTaskID, arg.ID, arg.TaskID)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.Role,
+		&i.Content,
+		&i.TaskID,
+		&i.CreatedAt,
+		&i.FailureReason,
+		&i.ElapsedMs,
 	)
 	return i, err
 }

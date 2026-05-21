@@ -100,6 +100,7 @@ type AgentTaskQueue struct {
 	WorkflowDefinitionID pgtype.UUID        `json:"workflow_definition_id"`
 	WorkflowRevisionID   pgtype.UUID        `json:"workflow_revision_id"`
 	WorkflowSnapshot     []byte             `json:"workflow_snapshot"`
+	TriggerChatMessageID pgtype.UUID        `json:"trigger_chat_message_id"`
 }
 
 type Attachment struct {

@@ -862,11 +862,19 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enqueue a chat task after the message exists.
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session)
+	// Enqueue a chat task after the message exists, binding the queued work to
+	// this exact user message so daemon claim never has to guess under rapid
+	// back-to-back sends.
+	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, msg.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task: "+err.Error())
 		return
+	}
+	if _, err := h.Queries.SetChatMessageTaskID(r.Context(), db.SetChatMessageTaskIDParams{
+		ID:     msg.ID,
+		TaskID: task.ID,
+	}); err != nil {
+		slog.Warn("failed to bind chat message to task", "message_id", uuidToString(msg.ID), "task_id", uuidToString(task.ID), "error", err)
 	}
 
 	// Touch session updated_at.

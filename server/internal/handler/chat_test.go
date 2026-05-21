@@ -113,6 +113,46 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	}
 }
 
+func TestSendChatMessage_BindsTaskToUserMessage(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatSendBindTaskAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	sendReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "bind this turn to the task",
+	})
+	sendReq = withURLParam(sendReq, "sessionId", sessionID)
+	sendReq = withChatTestWorkspaceCtx(t, sendReq)
+	sendW := httptest.NewRecorder()
+	testHandler.SendChatMessage(sendW, sendReq)
+	if sendW.Code != http.StatusCreated {
+		t.Fatalf("SendChatMessage: expected 201, got %d: %s", sendW.Code, sendW.Body.String())
+	}
+
+	var sendResp SendChatMessageResponse
+	if err := json.Unmarshal(sendW.Body.Bytes(), &sendResp); err != nil {
+		t.Fatalf("decode send: %v", err)
+	}
+	if sendResp.MessageID == "" || sendResp.TaskID == "" {
+		t.Fatalf("expected message_id and task_id in response: %+v", sendResp)
+	}
+
+	var persistedTaskID, triggerMessageID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT cm.task_id::text, atq.trigger_chat_message_id::text
+		FROM chat_message cm
+		JOIN agent_task_queue atq ON atq.id = $2
+		WHERE cm.id = $1
+	`, sendResp.MessageID, sendResp.TaskID).Scan(&persistedTaskID, &triggerMessageID); err != nil {
+		t.Fatalf("query chat turn binding: %v", err)
+	}
+	if persistedTaskID != sendResp.TaskID {
+		t.Fatalf("chat_message.task_id = %s, want %s", persistedTaskID, sendResp.TaskID)
+	}
+	if triggerMessageID != sendResp.MessageID {
+		t.Fatalf("task.trigger_chat_message_id = %s, want %s", triggerMessageID, sendResp.MessageID)
+	}
+}
+
 // TestUpdateChatSession_RenamesTitle confirms PATCH writes the new title,
 // returns the updated row, and the server-side row reflects it.
 func TestUpdateChatSession_RenamesTitle(t *testing.T) {

@@ -2069,6 +2069,96 @@ func TestClaimTask_ProjectChatIncludesProjectContext(t *testing.T) {
 	}
 }
 
+func TestClaimTask_ChatUsesBoundTriggerMessage(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var sessionID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
+		VALUES ($1, $2, $3, 'bound trigger claim', 'active')
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
+		t.Fatalf("create chat session: %v", err)
+	}
+
+	var firstMessageID, secondMessageID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'first prompt should be claimed', now())
+		RETURNING id
+	`, sessionID).Scan(&firstMessageID); err != nil {
+		t.Fatalf("create first chat message: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'later prompt must not leak into first task', now() + interval '1 second')
+		RETURNING id
+	`, sessionID).Scan(&secondMessageID); err != nil {
+		t.Fatalf("create second chat message: %v", err)
+	}
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO attachment (
+			workspace_id, chat_session_id, chat_message_id,
+			uploader_type, uploader_id, filename, url, content_type, size_bytes
+		) VALUES
+			($1, $2, $3, 'member', $4, 'first.png', 'https://cdn.example.com/first.png', 'image/png', 11),
+			($1, $2, $5, 'member', $4, 'second.png', 'https://cdn.example.com/second.png', 'image/png', 22)
+	`, testWorkspaceID, sessionID, firstMessageID, testUserID, secondMessageID); err != nil {
+		t.Fatalf("create chat attachments: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, trigger_chat_message_id, status, priority
+		)
+		VALUES ($1, $2, $3, $4, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, sessionID, firstMessageID).Scan(&taskID); err != nil {
+		t.Fatalf("create chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, daemonID)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			ChatMessage            string               `json:"chat_message"`
+			ChatMessageAttachments []ChatAttachmentMeta `json:"chat_message_attachments"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if resp.Task.ChatMessage != "first prompt should be claimed" {
+		t.Fatalf("chat_message = %q", resp.Task.ChatMessage)
+	}
+	if len(resp.Task.ChatMessageAttachments) != 1 {
+		t.Fatalf("attachments = %+v, want exactly first message attachment", resp.Task.ChatMessageAttachments)
+	}
+	if got := resp.Task.ChatMessageAttachments[0].Filename; got != "first.png" {
+		t.Fatalf("attachment filename = %q, want first.png", got)
+	}
+}
+
 // Regression test for #1276: ClaimTaskByRuntime must populate workspace_id in
 // the response for run_only autopilot tasks. Before the fix, resp.WorkspaceID
 // stayed empty because ClaimTaskByRuntime only handled IssueID and

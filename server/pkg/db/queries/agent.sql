@@ -121,14 +121,14 @@ WHERE id = $1 AND issue_id IS NULL;
 -- the self-trigger guard in shouldEnqueueSquadLeaderOnComment continues to
 -- recognise it as a leader task.
 INSERT INTO agent_task_queue (
-    agent_id, runtime_id, issue_id, chat_session_id, autopilot_run_id,
+    agent_id, runtime_id, issue_id, chat_session_id, trigger_chat_message_id, autopilot_run_id,
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, is_leader_task,
     workflow_definition_id, workflow_revision_id, workflow_snapshot
 )
 SELECT
-    p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.autopilot_run_id,
+    p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.trigger_chat_message_id, p.autopilot_run_id,
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     p.session_id, p.work_dir,
     p.attempt + 1, p.max_attempts, p.id, p.is_leader_task,
