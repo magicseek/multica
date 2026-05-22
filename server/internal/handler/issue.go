@@ -1847,7 +1847,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// Enqueue agent task when an agent-assigned issue is created.
 	if issue.AssigneeType.Valid && issue.AssigneeID.Valid {
 		if h.shouldEnqueueAgentTask(r.Context(), issue) {
-			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
+			h.TaskService.EnqueueTaskForIssueByDelegatedUser(r.Context(), issue, connectorDelegatedUserFromActor(creatorType, actualCreatorID))
 		}
 		// Squad assigned at creation: trigger the squad leader (skipping
 		// backlog, same parking-lot semantics as agent assignment).
@@ -2096,7 +2096,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 
 		if h.shouldEnqueueAgentTask(r.Context(), issue) {
-			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
+			h.TaskService.EnqueueTaskForIssueByDelegatedUser(r.Context(), issue, connectorDelegatedUserFromActor(actorType, actorID))
 		}
 
 		// Squad assign: trigger the squad leader, respecting the backlog
@@ -2112,7 +2112,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if statusChanged && !assigneeChanged && actorType == "member" &&
 		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 		if h.isAgentAssigneeReady(r.Context(), issue) {
-			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
+			h.TaskService.EnqueueTaskForIssueByDelegatedUser(r.Context(), issue, connectorDelegatedUserFromActor(actorType, actorID))
 		}
 		if h.isSquadLeaderReady(r.Context(), issue) {
 			h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
@@ -2503,7 +2503,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if assigneeChanged {
 			h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
 			if h.shouldEnqueueAgentTask(r.Context(), issue) {
-				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
+				h.TaskService.EnqueueTaskForIssueByDelegatedUser(r.Context(), issue, connectorDelegatedUserFromActor(actorType, actorID))
 			}
 			if h.shouldEnqueueSquadLeaderOnAssign(r.Context(), issue) {
 				h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)
@@ -2514,7 +2514,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if statusChanged && !assigneeChanged && actorType == "member" &&
 			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" {
 			if h.isAgentAssigneeReady(r.Context(), issue) {
-				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
+				h.TaskService.EnqueueTaskForIssueByDelegatedUser(r.Context(), issue, connectorDelegatedUserFromActor(actorType, actorID))
 			}
 			if h.isSquadLeaderReady(r.Context(), issue) {
 				h.enqueueSquadLeaderTask(r.Context(), issue, pgtype.UUID{}, actorType, actorID)

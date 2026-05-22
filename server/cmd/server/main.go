@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/connectors"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -282,12 +283,18 @@ func main() {
 	// alongside the sweeper, and Stop is called explicitly during graceful
 	// shutdown so any pending bumps are flushed before we exit.
 	heartbeatScheduler := handler.NewBatchedHeartbeatScheduler(queries, handler.DefaultHeartbeatBatchInterval)
+	connectorConfig, err := connectors.LoadConfigFromEnv()
+	if err != nil {
+		slog.Error("invalid connector profile configuration", "error", err)
+		os.Exit(1)
+	}
 
 	r := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:        httpMetrics,
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
+		ConnectorConfig:    connectorConfig,
 	})
 
 	srv := &http.Server{

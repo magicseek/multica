@@ -171,6 +171,21 @@ The [GitHub PR ↔ issue integration](/github-integration) needs two variables. 
 
 **Note:** `GITHUB_WEBHOOK_SECRET` is reused as the signing key for the install-flow state token, so operators only need to manage one secret. It is **not** the GitHub App's *Client* secret — Client secrets are OAuth-related and not used by this integration. See [GitHub integration → Self-host setup](/github-integration#self-host-setup) for the full walkthrough.
 
+## Connector profiles
+
+Private or deployment-specific connectors are hidden unless an operator enables their profile explicitly. RingCentral connectors require all of these values:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MULTICA_CONNECTOR_PROFILES` | empty | Comma-separated connector profiles. Include `ringcentral` to register RingCentral GitLab, Jira, and Wiki providers |
+| `CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` | empty | 32-byte key, base64/hex/raw encoded. Required when `ringcentral` is enabled; the server fails closed without it |
+| `RINGCENTRAL_GITLAB_API_BASE_URL` | empty | GitLab API base URL, for example `https://git.example.com/api/v4` |
+| `RINGCENTRAL_GITLAB_WEB_BASE_URL` | empty | GitLab web base URL used for repository and merge request links |
+| `RINGCENTRAL_JIRA_BASE_URL` | empty | Jira base URL |
+| `RINGCENTRAL_WIKI_BASE_URL` | empty | Wiki base URL |
+
+When `ringcentral` is not present in `MULTICA_CONNECTOR_PROFILES`, Settings → Integrations does not render the RingCentral section and no RingCentral provider metadata is exposed.
+
 ## Usage analytics
 
 By default, the server reports to Multica's official PostHog instance. To opt out, set `ANALYTICS_DISABLED=true`.

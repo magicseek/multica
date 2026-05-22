@@ -49,11 +49,196 @@ The agent selected to bootstrap, coordinate, or own work when a repository start
 **Output Metadata**:
 Privacy-minimized facts about local or agent-managed task outputs, such as file names, relative paths, sizes, MIME types, and creation times, excluding file contents, diffs, logs, stack traces, screenshots, and absolute local paths.
 
+**Connector**:
+A workspace- or user-authorized connection to an external system that agents may use through scoped project resources.
+_Avoid_: Integration, auth provider, project resource
+
+**Connector Provider**:
+A stable provider identity, such as GitHub, RingCentral GitLab, RingCentral Jira, or RingCentral Wiki, that can be registered into the connector framework.
+_Avoid_: Integration card, provider-specific table
+
+**Connector Provider Registry**:
+The server-side registry that exposes available connector providers for the current deployment profile.
+_Avoid_: Global hardcoded integrations list
+
+**Workspace Connector**:
+A workspace-level enablement and configuration record for one connector provider.
+_Avoid_: User token, project resource
+
+**Connector Adapter**:
+A provider-specific implementation that translates a connector into external API calls without becoming the product domain model.
+_Avoid_: Direct service import, token store, domain model
+
+**Connector Capability**:
+A named operation that an agent may perform through a connector adapter when the current task has a matching project-scoped resource and credential authority.
+_Avoid_: Full API access, token permission, prompt instruction
+
+**Connector Command**:
+A Multica-controlled CLI command that invokes a Connector Capability through server-side authorization and provider adapter logic.
+_Avoid_: Raw curl, MCP-only tool, direct token exposure
+
+**Task-scoped Connector Command**:
+A connector command invoked from an agent task and authorized by the task's agent identity, task identity, delegated user, and attached project resources.
+_Avoid_: User-global CLI access, agent-local token use, runtime-inferred authority
+
+**Connector Capability Audit Event**:
+An audit record for one connector capability invocation, including task, agent, delegated user, provider, capability, resource, and result metadata.
+_Avoid_: Prompt transcript, raw external response, secret log
+
+**Semantic Task Branch**:
+A Git branch created for one task using an intent prefix such as `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`, or `perf/`, plus issue/task identifiers and a short slug.
+_Avoid_: Product-name prefix, default branch, shared long-lived branch
+
+**Remote Write Policy**:
+A workspace connector setting that determines which remote write capabilities are allowed for a provider.
+_Avoid_: Token scope, agent preference, prompt instruction
+
+**Git Auth Broker**:
+A future daemon/server mediation layer that would let a local git process authenticate to a connector-backed repository without exposing raw connector credentials to the agent.
+_Avoid_: PAT in git remote URL, PAT in environment, direct credential helper injection
+
+**Connector Endpoint Configuration**:
+Deployment- or profile-level base URL configuration for a connector provider's upstream API and web links.
+_Avoid_: User preference, raw provider URL in task context, hardcoded public product URL
+
+**Connector Credential Status**:
+The validation state of a connector credential, such as `valid`, `invalid`, or `never_validated`, with upstream identity metadata and validation timestamps.
+_Avoid_: Token truth, permission guarantee, background health check
+
+**Connector Credential**:
+A workspace- or user-owned secret reference used by a connector without copying raw secret values into task context.
+_Avoid_: Raw token, permission snapshot
+
+**Connector Credential Vault**:
+The server-side encrypted storage boundary for connector credentials in deployments that explicitly enable credential-bearing connector profiles.
+_Avoid_: custom_env, agent environment, project resource JSON
+
+**User-owned Connector Credential**:
+A connector credential controlled by one user and usable only under that user's delegated authority.
+_Avoid_: Workspace token, service account
+
+**Connector Delegated User**:
+The human user whose connector credentials authorize connector operations for one queued agent task.
+_Avoid_: Agent assignee, runtime owner, workspace owner by default
+
+**Project Resource**:
+A project-scoped pointer to external or local context, such as a repository, Jira project, Wiki space, or external document.
+_Avoid_: Integration, workspace setting, copied content
+
+**Container Project Resource**:
+A project resource that bounds discovery or operations inside an external container, such as a GitLab repository, Jira project, or Wiki space.
+_Avoid_: Company-wide scope, free search
+
+**Pinned Project Resource**:
+A project resource that points at a specific external item, such as a Jira issue or Wiki page, for task context.
+_Avoid_: Search scope, copied content
+
+**RingCentral Connector Profile**:
+An explicit deployment profile that enables RingCentral-specific connector adapters and RingCentral settings UI.
+_Avoid_: Default public integration, CLI profile, user profile
+
+**Connector Profile Registration**:
+The server startup step that conditionally registers connector providers, adapters, routes, resource validators, runtime guidance, and settings UI metadata for enabled connector profiles.
+_Avoid_: Always-on import side effect, public integration default
+
+**RingCentral Section**:
+The settings section shown only under the RingCentral Connector Profile for configuring RingCentral GitLab, Jira, and Wiki connectors.
+_Avoid_: Always-visible public settings, generic integration page
+
+**Project Resource Management UI**:
+The project-level UI for searching, attaching, reviewing, and removing Project Resources.
+_Avoid_: Connector credential settings, provider admin panel, task prompt editor
+
+**Security-first Connector Implementation Sequence**:
+The implementation order that establishes profile gating, credential storage, delegated authority, and resource scoping before exposing agent-facing connector commands.
+_Avoid_: UI-first connector rollout, adapter-first shortcut, token-first spike
+
+**Connector Acceptance Gate**:
+The minimum verification suite required before RingCentral connector work can be considered complete.
+_Avoid_: Happy-path demo, manual-only test, unchecked token handling
+
 ## Relationships
 
 - A **Workspace** contains zero or more **Repositories**
 - A **Workspace** contains zero or more **Projects**
 - A **Workspace** contains zero or more **Chat Sessions**
+- A **Workspace** may have zero or more **Workspace Connectors**
+- A **Workspace Connector** enables one **Connector Provider** for one **Workspace**
+- A **Workspace Connector** may expose read-only status derived from **Connector Endpoint Configuration**
+- The **Connector Provider Registry** exposes only providers available to the current deployment profile
+- **Connector Profile Registration** determines which providers appear in the **Connector Provider Registry**
+- A **Connector Provider** may have one **Connector Adapter**
+- A **Connector** exposes zero or more **Connector Capabilities**
+- Agents invoke **Connector Capabilities** through **Connector Commands** first; MCP wrappers may be added later over the same backend capability model
+- Agent-initiated connector operations use **Task-scoped Connector Commands**
+- A **Task-scoped Connector Command** requires a valid agent identity, task identity, workspace match, active task, **Connector Delegated User**, matching **Project Resource**, and authorized **Connector Credential**
+- Each **Task-scoped Connector Command** produces a **Connector Capability Audit Event**
+- A **Connector** uses one or more **Connector Credentials**
+- A **Connector Credential Vault** stores raw connector secrets only as encrypted ciphertext plus ownership and validation metadata
+- A **Connector Credential** has a **Connector Credential Status** derived from save-time validation, manual validation, or upstream auth failures
+- RingCentral GitLab, Jira, and Wiki connectors initially use **User-owned Connector Credentials**
+- An agent task that uses user-owned connector credentials captures a **Connector Delegated User** when the task is queued
+- Retried or rerun agent tasks inherit the original **Connector Delegated User** unless a user explicitly re-authorizes the run
+- Comment-triggered agent tasks use the comment author as the **Connector Delegated User** when the author is a human member
+- Agent-authored comment triggers inherit the parent task's **Connector Delegated User** rather than granting the agent new connector authority
+- Chat tasks use the chat session creator or triggering human chat message author as the **Connector Delegated User**
+- Autopilot tasks require an explicitly configured **Connector Delegated User** before using user-owned connector credentials
+- A **Project** may have zero or more **Project Resources**
+- A **Project Resource** may reference a **Connector** and narrows what a **Project** can use
+- A **Project Resource** may be a **Container Project Resource** or **Pinned Project Resource**
+- Agents may use connector-backed external data only through **Project Resources** attached to the current **Project**
+- Agents may use RingCentral **Connector Capabilities** only when the current task has a matching **Project Resource** and **Connector Delegated User**
+- RingCentral GitLab repositories are represented as `ringcentral_gitlab_repo` **Container Project Resources** with GitLab project identity, path, web URL, and default branch metadata
+- RingCentral GitLab write operations use **Semantic Task Branches** rather than product-name prefixes such as `multica/`
+- A **Semantic Task Branch** must not target a default or protected branch
+- RingCentral GitLab write operations obey the workspace connector's **Remote Write Policy**
+- RingCentral Jira projects are represented as `ringcentral_jira_project` **Container Project Resources** for bounded search, while Jira issues are represented as `ringcentral_jira_issue` **Pinned Project Resources** for specific context
+- RingCentral Wiki spaces are represented as `ringcentral_wiki_space` **Container Project Resources** for bounded search, while Wiki pages are represented as `ringcentral_wiki_page` **Pinned Project Resources** for specific context
+- RingCentral connector commands default to search and read only inside attached **Container Project Resources**; specific external context should be attached as **Pinned Project Resources**
+- RingCentral GitLab MVP capabilities include token validation, project access validation, repository tree/file reads, branch and merge request listing, branch creation, commits/pushes, and merge request creation
+- RingCentral GitLab MVP write capabilities allow branch creation, commits/pushes, and merge request creation only for attached repositories and task-scoped **Semantic Task Branches**
+- RingCentral GitLab MVP file reads, branch creation, commits, pushes, and merge request creation are server-mediated API operations, not local git operations authenticated with a raw PAT
+- RingCentral GitLab MVP write capabilities do not merge merge requests, delete branches, modify project settings, or modify protected branch rules
+- When the GitLab **Remote Write Policy** disables ordinary remote writes, the adapter rejects generic branch writes and may allow only explicitly whitelisted merge-request preparation operations
+- Full local checkout and test workflows continue to use Multica **Repository** and **Repository Binding** flows; RingCentral connector credentials are not injected into local git for MVP
+- A **Git Auth Broker** may later allow task-scoped private GitLab clone/push without exposing raw RingCentral PATs to agents
+- RingCentral Jira MVP capabilities include token validation, project listing, issue search, issue retrieval, and read-only Jira issue context attachment
+- RingCentral Wiki MVP capabilities include token validation, page or space search, page retrieval, and read-only Wiki page context attachment
+- RingCentral Jira and Wiki MVP capabilities do not write comments, status, pages, or spaces
+- RingCentral connector adapters do not grant agents unbounded company-wide exploration outside attached **Project Resources**
+- RingCentral MVP is CLI-first so every supported runtime can use connector capabilities through Multica-controlled commands; MCP is optional and provider-specific
+- RingCentral **User-owned Connector Credentials** are stored in the **Connector Credential Vault**, not in `custom_env`, task context, `.multica/project/resources.json`, or agent environment variables
+- RingCentral **User-owned Connector Credentials** are validated before save; invalid tokens are rejected rather than stored
+- RingCentral credential status stores upstream identity metadata and `last_validated_at` when validation succeeds
+- RingCentral settings UI shows configured/valid/invalid/never_validated status and upstream identity without returning raw token values
+- RingCentral connector commands mark credentials invalid when upstream returns authentication or authorization failures, and tasks surface recoverable reconfiguration errors
+- RingCentral MVP does not run periodic background validation across all credentials
+- A **Connector Command** calls the Multica server, and the server resolves the task's **Connector Delegated User**, decrypts that user's credential, and invokes the RingCentral **Connector Adapter**
+- RingCentral agent operations are allowed only through **Task-scoped Connector Commands**, not through user-global CLI commands or agent-visible raw tokens
+- Human UI and CLI flows may configure credentials, validate credentials, search external resources, and attach **Project Resources**, but they do not bypass task-scoped authorization for agent capability execution
+- The **RingCentral Connector Profile** requires a configured credential encryption key or KMS before startup can expose RingCentral credential storage
+- If a required **User-owned Connector Credential** is missing, the task waits for explicit user configuration or authorization instead of falling back to a workspace-wide secret
+- The **RingCentral Section** is visible only when the **RingCentral Connector Profile** is enabled
+- The **RingCentral Section** appears under workspace integration settings, but each member configures their own **User-owned Connector Credentials** there
+- The **RingCentral Section** contains provider cards for RingCentral GitLab, Jira, and Wiki with endpoint status, workspace connector status, current-user credential status, and token save/test/delete controls
+- Workspace admins may control RingCentral connector availability and see aggregate credential readiness, but they may not view or edit another member's **User-owned Connector Credentials**
+- Workspace admins may configure RingCentral GitLab **Remote Write Policy** from the **RingCentral Section**
+- **Project Resource Management UI** lives on Project surfaces, not inside the **RingCentral Section**
+- RingCentral GitLab, Jira, and Wiki are optional **Connector Providers** registered by the **RingCentral Connector Profile**, not RingCentral-specific top-level tables or public always-on integrations
+- The **RingCentral Connector Profile** enables RingCentral GitLab, Jira, and Wiki **Connector Adapters** without making them default public Multica features
+- RingCentral code lives in isolated connector packages and is registered only through **Connector Profile Registration** when the RingCentral profile is enabled at server startup
+- The RingCentral connector MVP uses runtime profile gating and provider registration rather than Go build tags, plugin binaries, or a separate server binary
+- RingCentral GitLab, Jira, and Wiki base URLs come from **Connector Endpoint Configuration** at deployment/profile startup, not from per-user settings
+- RingCentral **Connector Endpoint Configuration** includes GitLab API base URL, GitLab web base URL, Jira base URL, and Wiki base URL
+- RingCentral **Workspace Connectors** may display configured endpoints and status, but ordinary workspace admins do not edit base URLs in the MVP
+- When the RingCentral profile is not enabled, RingCentral providers, routes, settings UI metadata, resource validators, and agent runtime guidance are absent
+- Existing GitHub App integration remains on its current GitHub-specific installation, webhook, pull request mirror, and settings flows during the RingCentral connector MVP
+- The generic connector framework may reserve a GitHub provider identity later, but the RingCentral connector MVP does not migrate GitHub storage or behavior
+- RingCentral connector implementation follows the **Security-first Connector Implementation Sequence**
+- The **Security-first Connector Implementation Sequence** starts with connector schema, registry, profile gating, and credential vault
+- The **Security-first Connector Implementation Sequence** then adds task queue delegated-user capture before provider adapters, settings UI, project resource UI, task-scoped commands, audit logs, tests, and docs
+- RingCentral connector delivery must pass the **Connector Acceptance Gate**
+- The **Connector Acceptance Gate** verifies profile-disabled absence, credential vault secrecy, startup failure without encryption key, delegated-user capture, task-scoped command rejection cases, fake-provider adapter behavior, UI separation, and end-to-end connector smoke flows
 - A **Project** may reference one or more **Repositories**
 - A **Project** may group zero or more **Project-Associated Chat Sessions**
 - A **Project-Associated Chat Session** remains visible only to its creator
@@ -134,9 +319,81 @@ Privacy-minimized facts about local or agent-managed task outputs, such as file 
 > **Dev:** "Should we create a new codebase object for from-scratch work?"
 > **Domain expert:** "No. Reuse **Repository**. A repository may start as a local draft before it has any remote Git URL."
 
+> **Dev:** "Should RingCentral GitLab be a normal integration card in every Multica workspace?"
+> **Domain expert:** "No. It appears only when the **RingCentral Connector Profile** is enabled; public Multica exposes the generic connector framework."
+
+> **Dev:** "If RingCentral credentials are user-owned, should they still be configured from workspace integration settings?"
+> **Domain expert:** "Yes. The **RingCentral Section** is the discovery surface, but every member edits only their own **User-owned Connector Credentials**."
+
+> **Dev:** "Should RingCentral Jira and Wiki support write operations in the first version?"
+> **Domain expert:** "No. Keep Jira and Wiki read-only for MVP; GitLab may write only through project-scoped repository operations."
+
+> **Dev:** "Should RingCentral connector access be MCP-only?"
+> **Domain expert:** "No. Start with Multica **Connector Commands** so every runtime can use the same guarded capabilities; MCP can wrap those commands later."
+
+> **Dev:** "Can RingCentral PATs reuse agent `custom_env`?"
+> **Domain expert:** "No. Store them in the encrypted **Connector Credential Vault** and never inject raw tokens into agent runtime context."
+
+> **Dev:** "Should RingCentral Jira, GitLab, and Wiki each get dedicated settings tables?"
+> **Domain expert:** "No. Model them as optional **Connector Providers** registered into the generic connector framework."
+
+> **Dev:** "Should a Project Resource point only to a whole RingCentral system, or to precise external objects?"
+> **Domain expert:** "Use both: **Container Project Resources** bound search and operations, and **Pinned Project Resources** attach exact Jira issues or Wiki pages as context."
+
+> **Dev:** "Can an agent use a normal user CLI command to call RingCentral connectors?"
+> **Domain expert:** "No. Agent connector calls must be **Task-scoped Connector Commands** with task, delegated-user, resource, credential, and audit checks."
+
+> **Dev:** "Should the first connector framework pass migrate the existing GitHub integration too?"
+> **Domain expert:** "No. Keep GitHub on its existing GitHub App path for now; introduce RingCentral connectors in parallel."
+
+> **Dev:** "Does RingCentral require a separate Multica binary or build tag in the first version?"
+> **Domain expert:** "No. Use startup-time **Connector Profile Registration** and isolated packages first; add stronger build-time separation later only if needed."
+
+> **Dev:** "Should RingCentral GitLab agent branches use a `multica/` prefix?"
+> **Domain expert:** "No. Use semantic intent prefixes such as `feat/` or `fix/`, with task identifiers for traceability."
+
+> **Dev:** "Should RingCentral GitLab PATs be used by local git checkout in the first version?"
+> **Domain expert:** "No. Start with server-mediated GitLab API capabilities; local git credential brokering is a later design."
+
+> **Dev:** "Should every user configure their own RingCentral Jira/GitLab/Wiki base URLs?"
+> **Domain expert:** "No. Base URLs are **Connector Endpoint Configuration** supplied by the deployment or connector profile."
+
+> **Dev:** "Should RingCentral tokens be saved before validation and checked later in the background?"
+> **Domain expert:** "No. Validate on save, support manual test, and mark invalid on use-time auth failures; do not run periodic background validation in MVP."
+
+> **Dev:** "Should RingCentral settings also be where users attach Jira issues, Wiki pages, and GitLab repos to projects?"
+> **Domain expert:** "No. Settings is for provider and credential readiness; **Project Resource Management UI** handles project-scoped external context."
+
+> **Dev:** "Should we build RingCentral UI first and backfill authorization later?"
+> **Domain expert:** "No. Follow the **Security-first Connector Implementation Sequence** so storage, profile gating, delegated user capture, and resource scoping exist before agent commands."
+
+> **Dev:** "Is a successful happy-path demo enough to ship RingCentral connectors?"
+> **Domain expert:** "No. The **Connector Acceptance Gate** must prove absence when disabled, credential secrecy, delegated authority, task scoping, provider guardrails, and UI/resource separation."
+
 ## Flagged Ambiguities
 
 - "Project" was used to mean both a planning container and a codebase. Resolved: **Project** remains the issue-planning container; **Repository** is the code working target.
+- "Integration" can mean a settings page, an external connection, or provider code. Resolved: product domain uses **Connector**, project scoping uses **Project Resource**, and provider code uses **Connector Adapter**; UI copy may still label the settings area Integrations.
+- "Profile" already appears as user profile and CLI profile language. Resolved: use **RingCentral Connector Profile** for the deployment opt-in that exposes RingCentral-specific connector surfaces.
+- RingCentral could be implemented as dedicated Jira/GitLab/Wiki settings tables. Resolved: use generic **Workspace Connector**, **Connector Provider**, **Connector Credential**, and **Project Resource** contracts, with RingCentral providers registered only by the **RingCentral Connector Profile**.
+- RingCentral code could require build tags, plugins, or a separate binary. Resolved: MVP uses startup-time **Connector Profile Registration** plus isolated packages; public deployments do not enable the RingCentral profile.
+- RingCentral upstream URLs could be hardcoded or user-configurable. Resolved: use deployment/profile-level **Connector Endpoint Configuration**, visible as read-only workspace connector status in MVP.
+- RingCentral token status could be discovered by periodic background validation. Resolved: validate before save, allow manual validation, and mark invalid on use-time upstream auth failures.
+- GitHub already has a production GitHub App integration with webhook and PR mirror behavior. Resolved: do not migrate GitHub in the RingCentral connector MVP; leave existing GitHub tables, routes, and UI behavior intact.
+- Project Resources could point at broad systems such as "RingCentral Jira" or only exact external objects. Resolved: use **Container Project Resources** for bounded discovery and **Pinned Project Resources** for exact external context.
+- "Capability" can mean an external token scope or an agent action. Resolved: **Connector Capability** means an agent-exposed operation gated by Project Resource scope and delegated user authority, not the raw upstream token scope.
+- MCP is not the first RingCentral connector surface because current Multica runtime support is provider-dependent. Resolved: MVP exposes **Connector Commands** first and may add MCP wrappers later.
+- Multica public docs say the server does not see user API keys, while RingCentral PATs require server-mediated API calls. Resolved: this behavior is limited to explicit credential-bearing connector profiles such as the **RingCentral Connector Profile**, and startup requires configured credential encryption.
+- Agent connector operations could rely on the daemon's current user token or global CLI config. Resolved: use **Task-scoped Connector Commands** that validate `X-Agent-ID`, `X-Task-ID`, active task state, **Connector Delegated User**, matching **Project Resource**, and credential ownership on every invocation.
+- RingCentral GitLab task branches could use a product-name prefix such as `multica/`. Resolved: use **Semantic Task Branches** with conventional intent prefixes and task traceability instead.
+- RingCentral GitLab could power local git checkout by injecting PATs into the daemon or agent environment. Resolved: MVP is server-mediated API-first; a task-scoped **Git Auth Broker** is a future extension.
+- RingCentral tokens could be modeled as workspace-managed service credentials or copied from ai-desk user settings. Resolved: first-version RingCentral GitLab, Jira, and Wiki credentials are **User-owned Connector Credentials**.
+- "Workspace integration settings" can imply workspace-owned secrets. Resolved: the **RingCentral Section** lives in workspace settings for discovery and provider administration, while each member manages only their own **User-owned Connector Credentials**.
+- The RingCentral settings page could become a project context editor. Resolved: keep provider readiness and credentials in the **RingCentral Section**, and place project-scoped search/attach flows in **Project Resource Management UI**.
+- Implementation could begin with UI or provider adapters before security boundaries are in place. Resolved: follow the **Security-first Connector Implementation Sequence**.
+- RingCentral connector completion could be judged by manual happy-path testing. Resolved: require the **Connector Acceptance Gate** across profile gating, credential handling, delegated authority, command authorization, adapters, UI, and smoke flows.
+- The user for connector access could be inferred at runtime from issue creator, assignee, commenter, or workspace owner. Resolved: each queued agent task captures a **Connector Delegated User** at queue time.
+- RingCentral capabilities could copy every AI Desk operation immediately. Resolved: MVP keeps GitLab write-capable within attached project repositories, while Jira and Wiki are read-only context sources.
 - "Project chat" can imply a shared team conversation. Resolved: use **Project-Associated Chat Session** for private chats grouped under a project.
 - The primary **Chats** navigation entry can imply every chat in the workspace. Resolved: **Chats** is the total entry for loose **Chat Sessions**; **Project-Associated Chat Sessions** are found through **Projects** navigation and Project detail.
 - **Recents** is a sidebar quick-access label for recent loose **Chat Sessions**, not a replacement term for **Chat Session** or the full **Chats** archive.

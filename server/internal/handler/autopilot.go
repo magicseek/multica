@@ -24,19 +24,20 @@ func computeNextRun(cronExpr, timezone string) (time.Time, error) {
 // ── Response types ──────────────────────────────────────────────────────────
 
 type AutopilotResponse struct {
-	ID                 string  `json:"id"`
-	WorkspaceID        string  `json:"workspace_id"`
-	Title              string  `json:"title"`
-	Description        *string `json:"description"`
-	AssigneeID         string  `json:"assignee_id"`
-	Status             string  `json:"status"`
-	ExecutionMode      string  `json:"execution_mode"`
-	IssueTitleTemplate *string `json:"issue_title_template"`
-	CreatedByType      string  `json:"created_by_type"`
-	CreatedByID        string  `json:"created_by_id"`
-	LastRunAt          *string `json:"last_run_at"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	ID                       string  `json:"id"`
+	WorkspaceID              string  `json:"workspace_id"`
+	Title                    string  `json:"title"`
+	Description              *string `json:"description"`
+	AssigneeID               string  `json:"assignee_id"`
+	Status                   string  `json:"status"`
+	ExecutionMode            string  `json:"execution_mode"`
+	IssueTitleTemplate       *string `json:"issue_title_template"`
+	ConnectorDelegatedUserID *string `json:"connector_delegated_user_id,omitempty"`
+	CreatedByType            string  `json:"created_by_type"`
+	CreatedByID              string  `json:"created_by_id"`
+	LastRunAt                *string `json:"last_run_at"`
+	CreatedAt                string  `json:"created_at"`
+	UpdatedAt                string  `json:"updated_at"`
 }
 
 type AutopilotTriggerResponse struct {
@@ -74,19 +75,20 @@ type AutopilotRunResponse struct {
 
 func autopilotToResponse(a db.Autopilot) AutopilotResponse {
 	return AutopilotResponse{
-		ID:                 uuidToString(a.ID),
-		WorkspaceID:        uuidToString(a.WorkspaceID),
-		Title:              a.Title,
-		Description:        textToPtr(a.Description),
-		AssigneeID:         uuidToString(a.AssigneeID),
-		Status:             a.Status,
-		ExecutionMode:      a.ExecutionMode,
-		IssueTitleTemplate: textToPtr(a.IssueTitleTemplate),
-		CreatedByType:      a.CreatedByType,
-		CreatedByID:        uuidToString(a.CreatedByID),
-		LastRunAt:          timestampToPtr(a.LastRunAt),
-		CreatedAt:          timestampToString(a.CreatedAt),
-		UpdatedAt:          timestampToString(a.UpdatedAt),
+		ID:                       uuidToString(a.ID),
+		WorkspaceID:              uuidToString(a.WorkspaceID),
+		Title:                    a.Title,
+		Description:              textToPtr(a.Description),
+		AssigneeID:               uuidToString(a.AssigneeID),
+		Status:                   a.Status,
+		ExecutionMode:            a.ExecutionMode,
+		IssueTitleTemplate:       textToPtr(a.IssueTitleTemplate),
+		ConnectorDelegatedUserID: uuidToPtr(a.ConnectorDelegatedUserID),
+		CreatedByType:            a.CreatedByType,
+		CreatedByID:              uuidToString(a.CreatedByID),
+		LastRunAt:                timestampToPtr(a.LastRunAt),
+		CreatedAt:                timestampToString(a.CreatedAt),
+		UpdatedAt:                timestampToString(a.UpdatedAt),
 	}
 }
 
@@ -136,20 +138,22 @@ func runToResponse(r db.AutopilotRun) AutopilotRunResponse {
 // ── Request types ───────────────────────────────────────────────────────────
 
 type CreateAutopilotRequest struct {
-	Title              string  `json:"title"`
-	Description        *string `json:"description"`
-	AssigneeID         string  `json:"assignee_id"`
-	ExecutionMode      string  `json:"execution_mode"`
-	IssueTitleTemplate *string `json:"issue_title_template"`
+	Title                    string  `json:"title"`
+	Description              *string `json:"description"`
+	AssigneeID               string  `json:"assignee_id"`
+	ExecutionMode            string  `json:"execution_mode"`
+	IssueTitleTemplate       *string `json:"issue_title_template"`
+	ConnectorDelegatedUserID *string `json:"connector_delegated_user_id"`
 }
 
 type UpdateAutopilotRequest struct {
-	Title              *string `json:"title"`
-	Description        *string `json:"description"`
-	AssigneeID         *string `json:"assignee_id"`
-	Status             *string `json:"status"`
-	ExecutionMode      *string `json:"execution_mode"`
-	IssueTitleTemplate *string `json:"issue_title_template"`
+	Title                    *string `json:"title"`
+	Description              *string `json:"description"`
+	AssigneeID               *string `json:"assignee_id"`
+	Status                   *string `json:"status"`
+	ExecutionMode            *string `json:"execution_mode"`
+	IssueTitleTemplate       *string `json:"issue_title_template"`
+	ConnectorDelegatedUserID *string `json:"connector_delegated_user_id"`
 }
 
 type CreateAutopilotTriggerRequest struct {
@@ -240,6 +244,24 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 	return autopilot, true
 }
 
+func (h *Handler) parseConnectorDelegatedUserInWorkspace(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, userID *string) (pgtype.UUID, bool) {
+	if userID == nil || *userID == "" {
+		return pgtype.UUID{}, true
+	}
+	delegatedUserID, ok := parseUUIDOrBadRequest(w, *userID, "connector_delegated_user_id")
+	if !ok {
+		return pgtype.UUID{}, false
+	}
+	if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+		UserID:      delegatedUserID,
+		WorkspaceID: workspaceID,
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, "connector_delegated_user_id must be a workspace member")
+		return pgtype.UUID{}, false
+	}
+	return delegatedUserID, true
+}
+
 func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	var req CreateAutopilotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -287,17 +309,22 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "assignee must be a valid agent in this workspace")
 		return
 	}
+	connectorDelegatedUserID, ok := h.parseConnectorDelegatedUserInWorkspace(w, r, wsUUID, req.ConnectorDelegatedUserID)
+	if !ok {
+		return
+	}
 
 	autopilot, err := h.Queries.CreateAutopilot(r.Context(), db.CreateAutopilotParams{
-		WorkspaceID:        wsUUID,
-		Title:              req.Title,
-		AssigneeID:         assigneeUUID,
-		Status:             "active",
-		ExecutionMode:      req.ExecutionMode,
-		CreatedByType:      "member",
-		CreatedByID:        parseUUID(userID),
-		Description:        ptrToText(req.Description),
-		IssueTitleTemplate: ptrToText(req.IssueTitleTemplate),
+		WorkspaceID:              wsUUID,
+		Title:                    req.Title,
+		AssigneeID:               assigneeUUID,
+		Status:                   "active",
+		ExecutionMode:            req.ExecutionMode,
+		CreatedByType:            "member",
+		CreatedByID:              parseUUID(userID),
+		Description:              ptrToText(req.Description),
+		IssueTitleTemplate:       ptrToText(req.IssueTitleTemplate),
+		ConnectorDelegatedUserID: connectorDelegatedUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
@@ -372,6 +399,14 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			}
 			params.AssigneeID = assigneeUUID
 		}
+	}
+	if _, ok := rawFields["connector_delegated_user_id"]; ok {
+		connectorDelegatedUserID, ok := h.parseConnectorDelegatedUserInWorkspace(w, r, prev.WorkspaceID, req.ConnectorDelegatedUserID)
+		if !ok {
+			return
+		}
+		params.SetConnectorDelegatedUserID = true
+		params.ConnectorDelegatedUserID = connectorDelegatedUserID
 	}
 
 	autopilot, err := h.Queries.UpdateAutopilot(r.Context(), params)

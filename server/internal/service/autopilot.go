@@ -146,13 +146,13 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	}
 
 	issue, err := qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
-		WorkspaceID:   ap.WorkspaceID,
-		Title:         title,
-		Description:   description,
-		Status:        "todo",
-		Priority:      "none",
-		AssigneeType:  pgtype.Text{String: "agent", Valid: true},
-		AssigneeID:    ap.AssigneeID,
+		WorkspaceID:  ap.WorkspaceID,
+		Title:        title,
+		Description:  description,
+		Status:       "todo",
+		Priority:     "none",
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   ap.AssigneeID,
 		// The agent that the autopilot dispatches to is the issue's creator,
 		// not the human who originally configured the autopilot. The latter
 		// is captured separately via origin_type=autopilot + origin_id.
@@ -198,8 +198,10 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	})
 	s.captureIssueCreatedFromAutopilot(ap, run, issue)
 
-	// Enqueue agent task via the existing flow.
-	if _, err := s.TaskSvc.EnqueueTaskForIssue(ctx, issue); err != nil {
+	// Enqueue agent task via the existing flow, preserving the explicitly
+	// configured connector identity when one is available. Autopilot-created
+	// issues have an agent creator, so no human authority is inferred.
+	if _, err := s.TaskSvc.EnqueueTaskForIssueByDelegatedUser(ctx, issue, ap.ConnectorDelegatedUserID); err != nil {
 		return fmt.Errorf("enqueue task for issue: %w", err)
 	}
 
@@ -225,10 +227,11 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 	}
 
 	task, err := s.Queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
-		AgentID:        ap.AssigneeID,
-		RuntimeID:      agent.RuntimeID,
-		Priority:       0,
-		AutopilotRunID: run.ID,
+		AgentID:                  ap.AssigneeID,
+		RuntimeID:                agent.RuntimeID,
+		Priority:                 0,
+		AutopilotRunID:           run.ID,
+		ConnectorDelegatedUserID: ap.ConnectorDelegatedUserID,
 		// Snapshot the autopilot title so task rows self-describe later
 		// without joining back to autopilot. Truncated for the same
 		// transmission-cost reason as comment-driven summaries.

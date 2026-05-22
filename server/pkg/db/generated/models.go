@@ -72,35 +72,36 @@ type AgentSkill struct {
 }
 
 type AgentTaskQueue struct {
-	ID                   pgtype.UUID        `json:"id"`
-	AgentID              pgtype.UUID        `json:"agent_id"`
-	IssueID              pgtype.UUID        `json:"issue_id"`
-	Status               string             `json:"status"`
-	Priority             int32              `json:"priority"`
-	DispatchedAt         pgtype.Timestamptz `json:"dispatched_at"`
-	StartedAt            pgtype.Timestamptz `json:"started_at"`
-	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
-	Result               []byte             `json:"result"`
-	Error                pgtype.Text        `json:"error"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	Context              []byte             `json:"context"`
-	RuntimeID            pgtype.UUID        `json:"runtime_id"`
-	SessionID            pgtype.Text        `json:"session_id"`
-	WorkDir              pgtype.Text        `json:"work_dir"`
-	TriggerCommentID     pgtype.UUID        `json:"trigger_comment_id"`
-	ChatSessionID        pgtype.UUID        `json:"chat_session_id"`
-	AutopilotRunID       pgtype.UUID        `json:"autopilot_run_id"`
-	Attempt              int32              `json:"attempt"`
-	MaxAttempts          int32              `json:"max_attempts"`
-	ParentTaskID         pgtype.UUID        `json:"parent_task_id"`
-	FailureReason        pgtype.Text        `json:"failure_reason"`
-	TriggerSummary       pgtype.Text        `json:"trigger_summary"`
-	ForceFreshSession    bool               `json:"force_fresh_session"`
-	IsLeaderTask         bool               `json:"is_leader_task"`
-	WorkflowDefinitionID pgtype.UUID        `json:"workflow_definition_id"`
-	WorkflowRevisionID   pgtype.UUID        `json:"workflow_revision_id"`
-	WorkflowSnapshot     []byte             `json:"workflow_snapshot"`
-	TriggerChatMessageID pgtype.UUID        `json:"trigger_chat_message_id"`
+	ID                       pgtype.UUID        `json:"id"`
+	AgentID                  pgtype.UUID        `json:"agent_id"`
+	IssueID                  pgtype.UUID        `json:"issue_id"`
+	Status                   string             `json:"status"`
+	Priority                 int32              `json:"priority"`
+	DispatchedAt             pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt                pgtype.Timestamptz `json:"started_at"`
+	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
+	Result                   []byte             `json:"result"`
+	Error                    pgtype.Text        `json:"error"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	Context                  []byte             `json:"context"`
+	RuntimeID                pgtype.UUID        `json:"runtime_id"`
+	SessionID                pgtype.Text        `json:"session_id"`
+	WorkDir                  pgtype.Text        `json:"work_dir"`
+	TriggerCommentID         pgtype.UUID        `json:"trigger_comment_id"`
+	ChatSessionID            pgtype.UUID        `json:"chat_session_id"`
+	AutopilotRunID           pgtype.UUID        `json:"autopilot_run_id"`
+	Attempt                  int32              `json:"attempt"`
+	MaxAttempts              int32              `json:"max_attempts"`
+	ParentTaskID             pgtype.UUID        `json:"parent_task_id"`
+	FailureReason            pgtype.Text        `json:"failure_reason"`
+	TriggerSummary           pgtype.Text        `json:"trigger_summary"`
+	ForceFreshSession        bool               `json:"force_fresh_session"`
+	IsLeaderTask             bool               `json:"is_leader_task"`
+	WorkflowDefinitionID     pgtype.UUID        `json:"workflow_definition_id"`
+	WorkflowRevisionID       pgtype.UUID        `json:"workflow_revision_id"`
+	WorkflowSnapshot         []byte             `json:"workflow_snapshot"`
+	TriggerChatMessageID     pgtype.UUID        `json:"trigger_chat_message_id"`
+	ConnectorDelegatedUserID pgtype.UUID        `json:"connector_delegated_user_id"`
 }
 
 type Attachment struct {
@@ -120,19 +121,20 @@ type Attachment struct {
 }
 
 type Autopilot struct {
-	ID                 pgtype.UUID        `json:"id"`
-	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
-	Title              string             `json:"title"`
-	Description        pgtype.Text        `json:"description"`
-	AssigneeID         pgtype.UUID        `json:"assignee_id"`
-	Status             string             `json:"status"`
-	ExecutionMode      string             `json:"execution_mode"`
-	IssueTitleTemplate pgtype.Text        `json:"issue_title_template"`
-	CreatedByType      string             `json:"created_by_type"`
-	CreatedByID        pgtype.UUID        `json:"created_by_id"`
-	LastRunAt          pgtype.Timestamptz `json:"last_run_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	Title                    string             `json:"title"`
+	Description              pgtype.Text        `json:"description"`
+	AssigneeID               pgtype.UUID        `json:"assignee_id"`
+	Status                   string             `json:"status"`
+	ExecutionMode            string             `json:"execution_mode"`
+	IssueTitleTemplate       pgtype.Text        `json:"issue_title_template"`
+	CreatedByType            string             `json:"created_by_type"`
+	CreatedByID              pgtype.UUID        `json:"created_by_id"`
+	LastRunAt                pgtype.Timestamptz `json:"last_run_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	ConnectorDelegatedUserID pgtype.UUID        `json:"connector_delegated_user_id"`
 }
 
 type AutopilotRun struct {
@@ -252,6 +254,37 @@ type CommentReaction struct {
 	ActorID     pgtype.UUID        `json:"actor_id"`
 	Emoji       string             `json:"emoji"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type ConnectorCapabilityAuditEvent struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProviderID        string             `json:"provider_id"`
+	Capability        string             `json:"capability"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	DelegatedUserID   pgtype.UUID        `json:"delegated_user_id"`
+	ProjectResourceID pgtype.UUID        `json:"project_resource_id"`
+	Status            string             `json:"status"`
+	Reason            pgtype.Text        `json:"reason"`
+	Metadata          []byte             `json:"metadata"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type ConnectorCredential struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ProviderID       string             `json:"provider_id"`
+	OwnerUserID      pgtype.UUID        `json:"owner_user_id"`
+	EncryptedSecret  []byte             `json:"encrypted_secret"`
+	SecretNonce      []byte             `json:"secret_nonce"`
+	KeyID            string             `json:"key_id"`
+	Status           string             `json:"status"`
+	UpstreamIdentity []byte             `json:"upstream_identity"`
+	LastValidatedAt  pgtype.Timestamptz `json:"last_validated_at"`
+	InvalidatedAt    pgtype.Timestamptz `json:"invalidated_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DaemonConnection struct {
@@ -857,6 +890,17 @@ type Workspace struct {
 	IssueCounter                          int32              `json:"issue_counter"`
 	DefaultAssignmentWorkflowDefinitionID pgtype.UUID        `json:"default_assignment_workflow_definition_id"`
 	DefaultCommentWorkflowDefinitionID    pgtype.UUID        `json:"default_comment_workflow_definition_id"`
+}
+
+type WorkspaceConnector struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProviderID  string             `json:"provider_id"`
+	Enabled     bool               `json:"enabled"`
+	Settings    []byte             `json:"settings"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceInvitation struct {

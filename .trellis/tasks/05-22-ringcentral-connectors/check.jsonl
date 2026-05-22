@@ -1,0 +1,50 @@
+{"file":"CONTEXT.md","reason":"Verify implementation uses the accepted connector vocabulary and relationships consistently."}
+{"file":"docs/ringcentral-connectors-implementation-plan.md","reason":"Primary review checklist for architecture, implementation sequence, acceptance gate, and deferred work."}
+{"file":"docs/adr/0005-enable-ringcentral-connectors-through-an-explicit-profile.md","reason":"Check RingCentral providers stay hidden unless profile-enabled."}
+{"file":"docs/adr/0006-start-ringcentral-connectors-with-user-owned-credentials.md","reason":"Check user-owned credentials are used and no workspace secret fallback appears."}
+{"file":"docs/adr/0007-capture-connector-delegated-user-at-task-queue-time.md","reason":"Check delegated user capture and inheritance rules across task entry points."}
+{"file":"docs/adr/0008-split-ringcentral-section-admin-controls-from-user-credentials.md","reason":"Check settings UI/admin controls do not expose or edit other users' credentials."}
+{"file":"docs/adr/0009-limit-ringcentral-mvp-to-project-scoped-capabilities.md","reason":"Check provider capabilities stay within MVP project-scoped boundaries."}
+{"file":"docs/adr/0010-expose-ringcentral-capabilities-through-cli-first.md","reason":"Check agent-facing access is server-mediated CLI/API first, not MCP-only."}
+{"file":"docs/adr/0011-store-ringcentral-credentials-in-an-encrypted-vault.md","reason":"Check encrypted vault behavior, fail-closed startup, and token secrecy."}
+{"file":"docs/adr/0012-register-ringcentral-as-optional-connector-providers.md","reason":"Check provider registration is generic and optional."}
+{"file":"docs/adr/0013-use-container-and-pinned-project-resources.md","reason":"Check resource modeling uses container and pinned RingCentral resource types correctly."}
+{"file":"docs/adr/0014-authorize-agent-connector-commands-by-task-scope.md","reason":"Check every agent connector command enforces task-scoped authorization."}
+{"file":"docs/adr/0015-do-not-migrate-github-in-the-ringcentral-mvp.md","reason":"Check existing GitHub App integration behavior remains intact."}
+{"file":"docs/adr/0016-gate-ringcentral-through-startup-profile-registration.md","reason":"Check profile registration, not build tags or separate binaries, gates RingCentral behavior."}
+{"file":"docs/adr/0017-constrain-gitlab-writes-to-semantic-task-branches.md","reason":"Check GitLab write guardrails and semantic branch prefixes."}
+{"file":"docs/adr/0018-use-server-mediated-gitlab-api-before-git-auth-broker.md","reason":"Check MVP GitLab writes are API-mediated and do not inject PATs into local git."}
+{"file":"docs/adr/0019-configure-ringcentral-endpoints-at-deployment-profile-level.md","reason":"Check endpoints are deployment/profile-level read-only configuration."}
+{"file":"docs/adr/0020-validate-ringcentral-credentials-before-save.md","reason":"Check save-time validation, manual tests, status metadata, and use-time invalidation."}
+{"file":"docs/adr/0021-keep-ringcentral-settings-separate-from-project-resource-management.md","reason":"Check settings/resource UI responsibility split."}
+{"file":"docs/adr/0022-implement-ringcentral-connectors-security-first.md","reason":"Check implementation order did not expose agent commands before security foundations."}
+{"file":"docs/adr/0023-verify-ringcentral-connectors-with-an-acceptance-gate.md","reason":"Use as the final acceptance gate for verification."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review DB, service, handler, daemon, CLI, core, and view contracts together."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review that existing patterns are reused before new abstractions are introduced."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Backend review guidelines for migrations, sqlc, handlers, services, and tests."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Verify connector behavior does not regress agent execution identity or prompt/context boundaries."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Verify daemon runtime does not receive or persist connector secrets."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Verify shared types, API parsing, and hooks remain inside packages/core boundaries."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Verify settings and project resource UI stays in packages/views and follows shared UI patterns."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Verify app-specific wiring remains outside shared packages."}
+{"file":"server/internal/handler/github_test.go","reason":"Regression reference for existing GitHub integration behavior that should stay unchanged."}
+{"file":"server/internal/handler/project_resource_test.go","reason":"Review and extend project resource validation coverage."}
+{"file":"server/internal/handler/agent_test.go","reason":"Review and extend agent task/delegated-user behavior coverage."}
+{"file":"server/internal/handler/daemon_test.go","reason":"Review daemon task identity behavior for task-scoped command authorization."}
+{"file":"server/cmd/server/comment_trigger_integration_test.go","reason":"Review comment-trigger task behavior for delegated user inheritance."}
+{"file":"server/pkg/db/queries/agent.sql","reason":"Check queued task schema/query changes for delegated user."}
+{"file":"server/pkg/db/queries/chat.sql","reason":"Check chat task delegated-user query changes."}
+{"file":"server/pkg/db/queries/autopilot.sql","reason":"Check Autopilot delegated-user query changes."}
+{"file":"server/internal/daemon/execenv/context.go","reason":"Check task context rendering and runtime guidance do not leak secrets."}
+{"file":"server/internal/daemon/execenv/runtime_config.go","reason":"Check resources config generation excludes raw connector credentials."}
+{"file":"server/cmd/multica/main.go","reason":"Check CLI command registration and help surface for connector commands."}
+{"file":"server/internal/cli/client.go","reason":"Check CLI request headers preserve agent/task identity for authorization."}
+{"file":"packages/core/api/client.test.ts","reason":"Frontend API client regression tests and patterns for new connector API methods."}
+{"file":"packages/core/api/schema.test.ts","reason":"Schema parser test patterns for connector response validation."}
+{"file":"packages/core/types/project.ts","reason":"Review project resource type additions and compatibility with existing resources."}
+{"file":"packages/views/settings/components/settings-page.test.tsx","reason":"Settings UI regression pattern for profile-gated RingCentral Section behavior."}
+{"file":"packages/views/projects/components/project-resources-section.test.tsx","reason":"Project resource UI regression pattern for resource attach/search behavior."}
+{"file":"verification:pnpm typecheck","reason":"Passed after installing workspace dependencies from lockfile."}
+{"file":"verification:server go test ./... -run '^$'","reason":"Passed compile-only backend verification across all Go packages."}
+{"file":"verification:connector focused tests","reason":"Passed connector provider, credential lifecycle, delegated-user, chat, and autopilot focused handler tests."}
+{"file":"verification:git diff --check","reason":"Passed whitespace conflict check."}

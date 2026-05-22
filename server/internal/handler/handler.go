@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/connectors"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -68,6 +69,8 @@ type Config struct {
 	//   3) cron job scheduled (`rollup_task_usage_dashboard_daily`) and
 	//      `task_usage_dashboard_rollup_lag_seconds()` < 900.
 	UseDailyRollupForDashboard bool
+	ConnectorRegistry          *connectors.Registry
+	ConnectorVault             *connectors.CredentialVault
 }
 
 type Handler struct {
@@ -165,6 +168,13 @@ func timestampToString(t pgtype.Timestamptz) string { return util.TimestampToStr
 func timestampToPtr(t pgtype.Timestamptz) *string   { return util.TimestampToPtr(t) }
 func uuidToPtr(u pgtype.UUID) *string               { return util.UUIDToPtr(u) }
 func int8ToPtr(v pgtype.Int8) *int64                { return util.Int8ToPtr(v) }
+
+func connectorDelegatedUserFromActor(actorType, actorID string) pgtype.UUID {
+	if actorType == "member" && actorID != "" {
+		return parseUUID(actorID)
+	}
+	return pgtype.UUID{}
+}
 
 // parseUUIDOrBadRequest validates a UUID string sourced from user input
 // (URL params, request body, headers). On invalid input it writes a 400

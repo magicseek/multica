@@ -20,11 +20,11 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_id,
     status, execution_mode, issue_title_template,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, connector_delegated_user_id
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3,
     $4, $5, sqlc.narg('issue_title_template'),
-    $6, $7
+    $6, $7, sqlc.narg('connector_delegated_user_id')
 ) RETURNING *;
 
 -- name: UpdateAutopilot :one
@@ -34,6 +34,11 @@ UPDATE autopilot SET
     assignee_id = COALESCE(sqlc.narg('assignee_id')::uuid, assignee_id),
     status = COALESCE(sqlc.narg('status'), status),
     execution_mode = COALESCE(sqlc.narg('execution_mode'), execution_mode),
+    connector_delegated_user_id = CASE
+        WHEN sqlc.arg('set_connector_delegated_user_id')::boolean
+        THEN sqlc.narg('connector_delegated_user_id')::uuid
+        ELSE connector_delegated_user_id
+    END,
     issue_title_template = sqlc.narg('issue_title_template'),
     updated_at = now()
 WHERE id = $1
@@ -178,8 +183,14 @@ RETURNING t.*, a.workspace_id AS autopilot_workspace_id;
 -- =====================
 
 -- name: CreateAutopilotTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, autopilot_run_id, trigger_summary)
-VALUES ($1, $2, NULL, 'queued', $3, $4, sqlc.narg(trigger_summary))
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, autopilot_run_id,
+    trigger_summary, connector_delegated_user_id
+)
+VALUES (
+    $1, $2, NULL, 'queued', $3, $4,
+    sqlc.narg(trigger_summary), sqlc.narg('connector_delegated_user_id')
+)
 RETURNING *;
 
 -- =====================

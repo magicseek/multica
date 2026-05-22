@@ -1,0 +1,72 @@
+{"file":"CONTEXT.md","reason":"Canonical connector terminology, relationships, delegated-user rules, project resource vocabulary, and accepted RingCentral profile boundaries."}
+{"file":"docs/ringcentral-connectors-implementation-plan.md","reason":"Consolidated source analysis, approved architecture, implementation sequence, acceptance gate, and deferred scope."}
+{"file":"docs/adr/0005-enable-ringcentral-connectors-through-an-explicit-profile.md","reason":"Profile-gated RingCentral visibility and public product isolation decision."}
+{"file":"docs/adr/0006-start-ringcentral-connectors-with-user-owned-credentials.md","reason":"User-owned credential model and no workspace-secret fallback decision."}
+{"file":"docs/adr/0007-capture-connector-delegated-user-at-task-queue-time.md","reason":"Queue-time delegated user capture and inheritance rules for task entry points."}
+{"file":"docs/adr/0008-split-ringcentral-section-admin-controls-from-user-credentials.md","reason":"Settings ownership model separating admin provider controls from per-user credentials."}
+{"file":"docs/adr/0009-limit-ringcentral-mvp-to-project-scoped-capabilities.md","reason":"MVP provider capability boundaries and project-scoped discovery limits."}
+{"file":"docs/adr/0010-expose-ringcentral-capabilities-through-cli-first.md","reason":"Agent-facing CLI-first connector command decision."}
+{"file":"docs/adr/0011-store-ringcentral-credentials-in-an-encrypted-vault.md","reason":"Encrypted credential vault, fail-closed profile startup, and raw-token secrecy decision."}
+{"file":"docs/adr/0012-register-ringcentral-as-optional-connector-providers.md","reason":"Generic connector provider registry and isolated RingCentral adapter registration decision."}
+{"file":"docs/adr/0013-use-container-and-pinned-project-resources.md","reason":"Container and pinned project resource model for RingCentral GitLab, Jira, and Wiki."}
+{"file":"docs/adr/0014-authorize-agent-connector-commands-by-task-scope.md","reason":"Server-side task-scoped connector command authorization model."}
+{"file":"docs/adr/0015-do-not-migrate-github-in-the-ringcentral-mvp.md","reason":"Existing GitHub App integration must remain unchanged in MVP."}
+{"file":"docs/adr/0016-gate-ringcentral-through-startup-profile-registration.md","reason":"Runtime profile registration decision instead of build tags or separate binaries."}
+{"file":"docs/adr/0017-constrain-gitlab-writes-to-semantic-task-branches.md","reason":"GitLab write guardrails, semantic branch prefixes, and forbidden operations."}
+{"file":"docs/adr/0018-use-server-mediated-gitlab-api-before-git-auth-broker.md","reason":"API-first GitLab operations and deferred local git auth broker decision."}
+{"file":"docs/adr/0019-configure-ringcentral-endpoints-at-deployment-profile-level.md","reason":"Deployment/profile endpoint configuration decision."}
+{"file":"docs/adr/0020-validate-ringcentral-credentials-before-save.md","reason":"Credential validation, status metadata, manual test, and invalidation behavior."}
+{"file":"docs/adr/0021-keep-ringcentral-settings-separate-from-project-resource-management.md","reason":"Settings versus Project Resource UI responsibility split."}
+{"file":"docs/adr/0022-implement-ringcentral-connectors-security-first.md","reason":"Implementation ordering that establishes security boundaries before agent capability exposure."}
+{"file":"docs/adr/0023-verify-ringcentral-connectors-with-an-acceptance-gate.md","reason":"Required acceptance gate for profile gating, secrecy, delegated user, authorization, adapters, UI, and smoke flow."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Connector work spans database, handlers, daemon runtime, CLI, core types, views, and settings UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Implementation must reuse existing Multica patterns before adding connector abstractions."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Backend migration, handler, service, sqlc, and test conventions."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Agent task identity and runtime prompt/context behavior must stay compatible with connector commands."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Daemon runtime boundaries and task environment handling are central to token secrecy."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Core package boundary for API client methods, schemas, shared types, and React Query hooks."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Shared settings and project resource UI belongs in packages/views and must use Multica UI patterns."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Web app wiring must stay in app-level code while shared UI remains in packages/views."}
+{"file":"server/cmd/server/main.go","reason":"Server startup/profile configuration entry point for optional RingCentral provider registration."}
+{"file":"server/cmd/server/router.go","reason":"Route registration patterns for profile-gated connector APIs."}
+{"file":"server/internal/handler/config.go","reason":"Existing runtime/config exposure patterns that may carry profile availability to the frontend."}
+{"file":"server/internal/handler/github.go","reason":"Existing GitHub integration handler pattern to keep unchanged and avoid migrating in the MVP."}
+{"file":"server/internal/handler/project_resource.go","reason":"Existing project resource validation and API behavior to extend with RingCentral resource types."}
+{"file":"server/internal/handler/agent.go","reason":"Agent task creation paths and daemon claim behavior affected by connector delegated user capture."}
+{"file":"server/internal/handler/chat.go","reason":"Chat task creation paths affected by connector delegated user capture."}
+{"file":"server/internal/handler/daemon.go","reason":"Daemon task identity and runtime claim behavior used by task-scoped connector commands."}
+{"file":"server/internal/service/task.go","reason":"Task lifecycle and retry/rerun behavior affected by delegated user inheritance."}
+{"file":"server/internal/service/autopilot.go","reason":"Autopilot task creation must explicitly carry connector delegated user before using user-owned credentials."}
+{"file":"server/pkg/db/queries/agent.sql","reason":"Queued agent task creation, retry, rerun, and delegated-user sqlc changes."}
+{"file":"server/pkg/db/queries/chat.sql","reason":"Chat task creation sqlc changes for delegated user capture."}
+{"file":"server/pkg/db/queries/autopilot.sql","reason":"Autopilot sqlc changes for explicit delegated user handling."}
+{"file":"server/pkg/db/queries/project_resource.sql","reason":"Project resource query patterns to extend for RingCentral resource metadata."}
+{"file":"server/pkg/db/queries/github.sql","reason":"Existing GitHub integration query patterns to keep isolated from the new connector framework."}
+{"file":"server/migrations/065_project_resources.up.sql","reason":"Project resource schema to extend without turning resources into credential stores."}
+{"file":"server/migrations/079_github_integration.up.sql","reason":"Existing GitHub schema reference that should remain unchanged in MVP."}
+{"file":"server/cmd/multica/main.go","reason":"CLI command registration entry point for `multica connector ...`."}
+{"file":"server/cmd/multica/runtime_env.go","reason":"Runtime identity environment behavior used by task-scoped connector CLI calls."}
+{"file":"server/internal/cli/client.go","reason":"CLI API client sends agent/task identity headers for server-side connector authorization."}
+{"file":"server/internal/daemon/execenv/context.go","reason":"Task context rendering must not include raw connector secrets and may include resource guidance."}
+{"file":"server/internal/daemon/execenv/runtime_config.go","reason":"Runtime configuration and `.multica/project/resources.json` handling must keep secrets out."}
+{"file":"packages/core/api/client.ts","reason":"Frontend API client surface for connector settings, credentials, resources, and command metadata."}
+{"file":"packages/core/api/schema.ts","reason":"Shared API schema parsing/type validation for new connector responses."}
+{"file":"packages/core/types/project.ts","reason":"Project resource types must include RingCentral container and pinned resource variants."}
+{"file":"packages/core/types/github.ts","reason":"Existing GitHub types reference that should stay separate from RingCentral connector types."}
+{"file":"packages/core/github/queries.ts","reason":"Existing GitHub query hooks reference that should remain unchanged by the MVP."}
+{"file":"packages/core/projects/resource-queries.ts","reason":"Project resource hooks/mutations to extend for RingCentral resource attach/search flows."}
+{"file":"packages/views/settings/components/integrations-tab.tsx","reason":"Settings Integrations tab receives the profile-gated RingCentral Section while preserving GitHub card behavior."}
+{"file":"packages/views/settings/components/settings-page.tsx","reason":"Settings page tab structure and package boundary reference."}
+{"file":"packages/views/projects/components/project-resources-section.tsx","reason":"Project Resource management UI is where RingCentral resource search/attach/remove belongs."}
+{"file":"server/migrations/103_connector_delegated_user.up.sql","reason":"Implemented task-scoped connector delegated user storage for agent tasks and explicit autopilot configuration."}
+{"file":"server/pkg/db/queries/agent.sql","reason":"Agent task, quick-create, retry, and delegated-user inheritance SQL now preserve connector_delegated_user_id."}
+{"file":"server/internal/service/task.go","reason":"Task enqueue paths now resolve delegated user from member comments, inherited agent comments, manual issue actors, quick-create requesters, chat creators, retries, and reruns."}
+{"file":"server/internal/handler/autopilot.go","reason":"Autopilot API now accepts and validates explicit connector_delegated_user_id, including update clearing semantics."}
+{"file":"server/internal/handler/connector_delegated_user_test.go","reason":"Added focused regression coverage for delegated user capture across issue/comment/chat/autopilot task paths."}
+{"file":"packages/core/connectors/queries.ts","reason":"Added React Query options for profile-gated connector provider discovery."}
+{"file":"packages/core/types/connector.ts","reason":"Typed generic connector provider, capability, and remote write policy metadata for frontend use."}
+{"file":"packages/views/settings/components/integrations-tab.tsx","reason":"Settings Integrations now renders a RingCentral section only when the server profile registers RingCentral providers."}
+{"file":"server/internal/handler/connectors.go","reason":"Added user-owned connector credential status, save, and delete handlers backed by encrypted vault storage."}
+{"file":"packages/core/api/client.ts","reason":"Added connector credential API methods for settings UI configuration flows."}
+{"file":"packages/views/settings/components/integrations-tab.tsx","reason":"RingCentral provider cards now expose per-user token save/remove controls for configured providers."}
+{"file":"apps/docs/content/docs/environment-variables.mdx","reason":"Documented explicit connector profile and RingCentral endpoint/encryption environment variables."}

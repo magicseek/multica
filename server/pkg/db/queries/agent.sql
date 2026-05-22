@@ -81,7 +81,8 @@ ORDER BY created_at DESC;
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     trigger_summary, force_fresh_session, is_leader_task,
-    workflow_definition_id, workflow_revision_id, workflow_snapshot
+    workflow_definition_id, workflow_revision_id, workflow_snapshot,
+    connector_delegated_user_id
 )
 VALUES (
     $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
@@ -90,7 +91,8 @@ VALUES (
     COALESCE(sqlc.narg('is_leader_task')::boolean, FALSE),
     sqlc.narg('workflow_definition_id'),
     sqlc.narg('workflow_revision_id'),
-    sqlc.narg('workflow_snapshot')
+    sqlc.narg('workflow_snapshot'),
+    sqlc.narg('connector_delegated_user_id')
 )
 RETURNING *;
 
@@ -98,8 +100,8 @@ RETURNING *;
 -- Quick-create tasks have no issue / chat / autopilot link; the entire job
 -- description (prompt, requester, workspace) lives in context JSONB. The
 -- daemon detects this variant via context.type == "quick_create".
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context, connector_delegated_user_id)
+VALUES ($1, $2, NULL, 'queued', $3, $4, sqlc.narg('connector_delegated_user_id'))
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
@@ -125,17 +127,28 @@ INSERT INTO agent_task_queue (
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, is_leader_task,
-    workflow_definition_id, workflow_revision_id, workflow_snapshot
+    workflow_definition_id, workflow_revision_id, workflow_snapshot,
+    connector_delegated_user_id
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.trigger_chat_message_id, p.autopilot_run_id,
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     p.session_id, p.work_dir,
     p.attempt + 1, p.max_attempts, p.id, p.is_leader_task,
-    p.workflow_definition_id, p.workflow_revision_id, p.workflow_snapshot
+    p.workflow_definition_id, p.workflow_revision_id, p.workflow_snapshot,
+    p.connector_delegated_user_id
 FROM agent_task_queue p
 WHERE p.id = $1
 RETURNING *;
+
+-- name: GetLatestConnectorDelegatedUserForIssueAndAgent :one
+SELECT connector_delegated_user_id
+FROM agent_task_queue
+WHERE issue_id = $1
+  AND agent_id = $2
+  AND connector_delegated_user_id IS NOT NULL
+ORDER BY COALESCE(completed_at, started_at, dispatched_at, created_at) DESC
+LIMIT 1;
 
 -- name: CancelAgentTasksByIssue :many
 -- Cancels every active task on the issue and returns the affected rows so the

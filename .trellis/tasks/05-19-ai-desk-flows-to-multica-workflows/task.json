@@ -21,7 +21,8 @@
   "children": [
     "05-22-project-chat-analytics-tabs",
     "05-22-chat-structured-output-isolation",
-    "05-22-project-chat-tabs-title-polish"
+    "05-22-project-chat-tabs-title-polish",
+    "05-22-ringcentral-connectors"
   ],
   "parent": null,
   "relatedFiles": [],

@@ -102,24 +102,25 @@ const createAutopilot = `-- name: CreateAutopilot :one
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_id,
     status, execution_mode, issue_title_template,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, connector_delegated_user_id
 ) VALUES (
     $1, $2, $8, $3,
     $4, $5, $9,
-    $6, $7
-) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at
+    $6, $7, $10
+) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id
 `
 
 type CreateAutopilotParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	Title              string      `json:"title"`
-	AssigneeID         pgtype.UUID `json:"assignee_id"`
-	Status             string      `json:"status"`
-	ExecutionMode      string      `json:"execution_mode"`
-	CreatedByType      string      `json:"created_by_type"`
-	CreatedByID        pgtype.UUID `json:"created_by_id"`
-	Description        pgtype.Text `json:"description"`
-	IssueTitleTemplate pgtype.Text `json:"issue_title_template"`
+	WorkspaceID              pgtype.UUID `json:"workspace_id"`
+	Title                    string      `json:"title"`
+	AssigneeID               pgtype.UUID `json:"assignee_id"`
+	Status                   string      `json:"status"`
+	ExecutionMode            string      `json:"execution_mode"`
+	CreatedByType            string      `json:"created_by_type"`
+	CreatedByID              pgtype.UUID `json:"created_by_id"`
+	Description              pgtype.Text `json:"description"`
+	IssueTitleTemplate       pgtype.Text `json:"issue_title_template"`
+	ConnectorDelegatedUserID pgtype.UUID `json:"connector_delegated_user_id"`
 }
 
 func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams) (Autopilot, error) {
@@ -133,6 +134,7 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		arg.CreatedByID,
 		arg.Description,
 		arg.IssueTitleTemplate,
+		arg.ConnectorDelegatedUserID,
 	)
 	var i Autopilot
 	err := row.Scan(
@@ -149,6 +151,7 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }
@@ -202,17 +205,24 @@ func (q *Queries) CreateAutopilotRun(ctx context.Context, arg CreateAutopilotRun
 
 const createAutopilotTask = `-- name: CreateAutopilotTask :one
 
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, autopilot_run_id, trigger_summary)
-VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, autopilot_run_id,
+    trigger_summary, connector_delegated_user_id
+)
+VALUES (
+    $1, $2, NULL, 'queued', $3, $4,
+    $5, $6
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id
 `
 
 type CreateAutopilotTaskParams struct {
-	AgentID        pgtype.UUID `json:"agent_id"`
-	RuntimeID      pgtype.UUID `json:"runtime_id"`
-	Priority       int32       `json:"priority"`
-	AutopilotRunID pgtype.UUID `json:"autopilot_run_id"`
-	TriggerSummary pgtype.Text `json:"trigger_summary"`
+	AgentID                  pgtype.UUID `json:"agent_id"`
+	RuntimeID                pgtype.UUID `json:"runtime_id"`
+	Priority                 int32       `json:"priority"`
+	AutopilotRunID           pgtype.UUID `json:"autopilot_run_id"`
+	TriggerSummary           pgtype.Text `json:"trigger_summary"`
+	ConnectorDelegatedUserID pgtype.UUID `json:"connector_delegated_user_id"`
 }
 
 // =====================
@@ -225,6 +235,7 @@ func (q *Queries) CreateAutopilotTask(ctx context.Context, arg CreateAutopilotTa
 		arg.Priority,
 		arg.AutopilotRunID,
 		arg.TriggerSummary,
+		arg.ConnectorDelegatedUserID,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -257,6 +268,7 @@ func (q *Queries) CreateAutopilotTask(ctx context.Context, arg CreateAutopilotTa
 		&i.WorkflowRevisionID,
 		&i.WorkflowSnapshot,
 		&i.TriggerChatMessageID,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }
@@ -344,7 +356,7 @@ func (q *Queries) FailAutopilotRunsByIssue(ctx context.Context, issueID pgtype.U
 }
 
 const getAutopilot = `-- name: GetAutopilot :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id FROM autopilot
 WHERE id = $1
 `
 
@@ -365,12 +377,13 @@ func (q *Queries) GetAutopilot(ctx context.Context, id pgtype.UUID) (Autopilot, 
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }
 
 const getAutopilotInWorkspace = `-- name: GetAutopilotInWorkspace :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id FROM autopilot
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -396,6 +409,7 @@ func (q *Queries) GetAutopilotInWorkspace(ctx context.Context, arg GetAutopilotI
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }
@@ -574,7 +588,7 @@ func (q *Queries) ListAutopilotTriggers(ctx context.Context, autopilotID pgtype.
 
 const listAutopilots = `-- name: ListAutopilots :many
 
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id FROM autopilot
 WHERE workspace_id = $1
   AND ($2::text IS NULL OR status = $2)
 ORDER BY created_at DESC
@@ -611,6 +625,7 @@ func (q *Queries) ListAutopilots(ctx context.Context, arg ListAutopilotsParams) 
 			&i.LastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ConnectorDelegatedUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -776,7 +791,7 @@ const systemPauseAutopilot = `-- name: SystemPauseAutopilot :one
 UPDATE autopilot
 SET status = 'paused', updated_at = now()
 WHERE id = $1 AND status = 'active'
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id
 `
 
 // Atomically pauses an autopilot only if it is currently active. Returns no
@@ -800,6 +815,7 @@ func (q *Queries) SystemPauseAutopilot(ctx context.Context, id pgtype.UUID) (Aut
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }
@@ -811,20 +827,27 @@ UPDATE autopilot SET
     assignee_id = COALESCE($4::uuid, assignee_id),
     status = COALESCE($5, status),
     execution_mode = COALESCE($6, execution_mode),
-    issue_title_template = $7,
+    connector_delegated_user_id = CASE
+        WHEN $7::boolean
+        THEN $8::uuid
+        ELSE connector_delegated_user_id
+    END,
+    issue_title_template = $9,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, connector_delegated_user_id
 `
 
 type UpdateAutopilotParams struct {
-	ID                 pgtype.UUID `json:"id"`
-	Title              pgtype.Text `json:"title"`
-	Description        pgtype.Text `json:"description"`
-	AssigneeID         pgtype.UUID `json:"assignee_id"`
-	Status             pgtype.Text `json:"status"`
-	ExecutionMode      pgtype.Text `json:"execution_mode"`
-	IssueTitleTemplate pgtype.Text `json:"issue_title_template"`
+	ID                          pgtype.UUID `json:"id"`
+	Title                       pgtype.Text `json:"title"`
+	Description                 pgtype.Text `json:"description"`
+	AssigneeID                  pgtype.UUID `json:"assignee_id"`
+	Status                      pgtype.Text `json:"status"`
+	ExecutionMode               pgtype.Text `json:"execution_mode"`
+	SetConnectorDelegatedUserID bool        `json:"set_connector_delegated_user_id"`
+	ConnectorDelegatedUserID    pgtype.UUID `json:"connector_delegated_user_id"`
+	IssueTitleTemplate          pgtype.Text `json:"issue_title_template"`
 }
 
 func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams) (Autopilot, error) {
@@ -835,6 +858,8 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 		arg.AssigneeID,
 		arg.Status,
 		arg.ExecutionMode,
+		arg.SetConnectorDelegatedUserID,
+		arg.ConnectorDelegatedUserID,
 		arg.IssueTitleTemplate,
 	)
 	var i Autopilot
@@ -852,6 +877,7 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ConnectorDelegatedUserID,
 	)
 	return i, err
 }

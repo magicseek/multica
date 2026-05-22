@@ -1,0 +1,5 @@
+# Gate RingCentral through startup profile registration
+
+The RingCentral connector MVP should isolate RingCentral provider code in dedicated connector packages and register it only through startup-time Connector Profile Registration. When the RingCentral Connector Profile is enabled, the server registers RingCentral GitLab, Jira, and Wiki providers, adapters, routes, resource validators, runtime guidance, and settings UI metadata. When the profile is not enabled, those surfaces are absent from the provider registry and the frontend does not render the RingCentral Section.
+
+The rejected alternative was to introduce Go build tags, plugin binaries, or a separate RingCentral server binary in the MVP. Build-time separation is stronger, but it would add build and deployment complexity before the connector framework shape has settled. Runtime profile gating is sufficient for the first version as long as public Multica deployments do not enable the RingCentral profile and RingCentral code has no always-on registration side effects.

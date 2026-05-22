@@ -378,7 +378,19 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 	if len(triggerCommentID) > 0 {
 		commentID = triggerCommentID[0]
 	}
-	return s.enqueueIssueTask(ctx, issue, commentID, false)
+	return s.enqueueIssueTask(ctx, issue, commentID, false, pgtype.UUID{})
+}
+
+// EnqueueTaskForIssueByDelegatedUser creates an issue task while explicitly
+// snapshotting the member identity that connector calls should act on behalf
+// of. Comment-triggered tasks still prefer the comment author / inherited
+// parent task identity.
+func (s *TaskService) EnqueueTaskForIssueByDelegatedUser(ctx context.Context, issue db.Issue, delegatedUserID pgtype.UUID, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error) {
+	var commentID pgtype.UUID
+	if len(triggerCommentID) > 0 {
+		commentID = triggerCommentID[0]
+	}
+	return s.enqueueIssueTask(ctx, issue, commentID, false, delegatedUserID)
 }
 
 // enqueueIssueTask is the shared implementation behind EnqueueTaskForIssue
@@ -386,7 +398,7 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 // daemon claim handler skips the (agent_id, issue_id) resume lookup — the
 // user already judged the prior output bad, a fresh agent session is the
 // expected behavior.
-func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool, delegatedUserFallback pgtype.UUID) (db.AgentTaskQueue, error) {
 	if !issue.AssigneeID.Valid {
 		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
@@ -414,18 +426,20 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 
 	var task db.AgentTaskQueue
 	triggerSummary := s.buildCommentTriggerSummary(ctx, triggerCommentID)
+	connectorDelegatedUserID := s.resolveConnectorDelegatedUser(ctx, issue, issue.AssigneeID, triggerCommentID, delegatedUserFallback)
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		created, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-			AgentID:              issue.AssigneeID,
-			RuntimeID:            agent.RuntimeID,
-			IssueID:              issue.ID,
-			Priority:             priorityToInt(issue.Priority),
-			TriggerCommentID:     triggerCommentID,
-			TriggerSummary:       triggerSummary,
-			ForceFreshSession:    pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
-			WorkflowDefinitionID: workflowSnapshot.DefinitionID,
-			WorkflowRevisionID:   workflowSnapshot.RevisionID,
-			WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
+			AgentID:                  issue.AssigneeID,
+			RuntimeID:                agent.RuntimeID,
+			IssueID:                  issue.ID,
+			Priority:                 priorityToInt(issue.Priority),
+			TriggerCommentID:         triggerCommentID,
+			TriggerSummary:           triggerSummary,
+			ForceFreshSession:        pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
+			WorkflowDefinitionID:     workflowSnapshot.DefinitionID,
+			WorkflowRevisionID:       workflowSnapshot.RevisionID,
+			WorkflowSnapshot:         workflowSnapshot.SnapshotJSON,
+			ConnectorDelegatedUserID: connectorDelegatedUserID,
 		})
 		if err != nil {
 			return err
@@ -458,7 +472,7 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 // Unlike EnqueueTaskForIssue, this takes an explicit agent ID rather than
 // deriving it from the issue assignee.
 func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false)
+	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, pgtype.UUID{})
 }
 
 // EnqueueTaskForSquadLeader is the leader-role variant of EnqueueTaskForMention.
@@ -468,10 +482,14 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 // as a worker (do not skip). This matters for agents that are simultaneously
 // the leader and a worker of the same squad — see migration 090.
 func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true)
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, pgtype.UUID{})
 }
 
-func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool) (db.AgentTaskQueue, error) {
+func (s *TaskService) EnqueueTaskForSquadLeaderByDelegatedUser(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, triggerCommentID pgtype.UUID, delegatedUserID pgtype.UUID) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, delegatedUserID)
+}
+
+func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, delegatedUserFallback pgtype.UUID) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -494,18 +512,20 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 
 	var task db.AgentTaskQueue
 	triggerSummary := s.buildCommentTriggerSummary(ctx, triggerCommentID)
+	connectorDelegatedUserID := s.resolveConnectorDelegatedUser(ctx, issue, agentID, triggerCommentID, delegatedUserFallback)
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		created, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-			AgentID:              agentID,
-			RuntimeID:            agent.RuntimeID,
-			IssueID:              issue.ID,
-			Priority:             priorityToInt(issue.Priority),
-			TriggerCommentID:     triggerCommentID,
-			TriggerSummary:       triggerSummary,
-			IsLeaderTask:         pgtype.Bool{Bool: isLeader, Valid: isLeader},
-			WorkflowDefinitionID: workflowSnapshot.DefinitionID,
-			WorkflowRevisionID:   workflowSnapshot.RevisionID,
-			WorkflowSnapshot:     workflowSnapshot.SnapshotJSON,
+			AgentID:                  agentID,
+			RuntimeID:                agent.RuntimeID,
+			IssueID:                  issue.ID,
+			Priority:                 priorityToInt(issue.Priority),
+			TriggerCommentID:         triggerCommentID,
+			TriggerSummary:           triggerSummary,
+			IsLeaderTask:             pgtype.Bool{Bool: isLeader, Valid: isLeader},
+			WorkflowDefinitionID:     workflowSnapshot.DefinitionID,
+			WorkflowRevisionID:       workflowSnapshot.RevisionID,
+			WorkflowSnapshot:         workflowSnapshot.SnapshotJSON,
+			ConnectorDelegatedUserID: connectorDelegatedUserID,
 		})
 		if err != nil {
 			return err
@@ -522,6 +542,66 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
+}
+
+func (s *TaskService) resolveConnectorDelegatedUser(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, fallback pgtype.UUID) pgtype.UUID {
+	if triggerCommentID.Valid {
+		comment, err := s.Queries.GetComment(ctx, triggerCommentID)
+		if err != nil {
+			slog.Warn("connector delegated user: load trigger comment failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"trigger_comment_id", util.UUIDToString(triggerCommentID),
+				"error", err,
+			)
+		} else {
+			switch comment.AuthorType {
+			case "member":
+				if comment.AuthorID.Valid {
+					return comment.AuthorID
+				}
+			case "agent":
+				if comment.AuthorID.Valid {
+					if inherited := s.latestConnectorDelegatedUser(ctx, issue.ID, comment.AuthorID); inherited.Valid {
+						return inherited
+					}
+				}
+			}
+		}
+	}
+
+	if fallback.Valid {
+		return fallback
+	}
+	if issue.CreatorType == "member" && issue.CreatorID.Valid {
+		return issue.CreatorID
+	}
+	if agentID.Valid {
+		if inherited := s.latestConnectorDelegatedUser(ctx, issue.ID, agentID); inherited.Valid {
+			return inherited
+		}
+	}
+	return pgtype.UUID{}
+}
+
+func (s *TaskService) latestConnectorDelegatedUser(ctx context.Context, issueID pgtype.UUID, agentID pgtype.UUID) pgtype.UUID {
+	if !issueID.Valid || !agentID.Valid {
+		return pgtype.UUID{}
+	}
+	delegatedUserID, err := s.Queries.GetLatestConnectorDelegatedUserForIssueAndAgent(ctx, db.GetLatestConnectorDelegatedUserForIssueAndAgentParams{
+		IssueID: issueID,
+		AgentID: agentID,
+	})
+	if err == nil {
+		return delegatedUserID
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("connector delegated user: load latest task identity failed",
+			"issue_id", util.UUIDToString(issueID),
+			"agent_id", util.UUIDToString(agentID),
+			"error", err,
+		)
+	}
+	return pgtype.UUID{}
 }
 
 // QuickCreateContext is the JSON payload stored on a quick-create task's
@@ -597,10 +677,11 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	}
 
 	task, err := s.Queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
-		AgentID:   agentID,
-		RuntimeID: agent.RuntimeID,
-		Priority:  priorityToInt("high"),
-		Context:   contextJSON,
+		AgentID:                  agentID,
+		RuntimeID:                agent.RuntimeID,
+		Priority:                 priorityToInt("high"),
+		Context:                  contextJSON,
+		ConnectorDelegatedUserID: requesterID,
 	})
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create quick-create task: %w", err)
@@ -641,11 +722,12 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 	}
 
 	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
-		AgentID:              chatSession.AgentID,
-		RuntimeID:            agent.RuntimeID,
-		Priority:             2, // medium priority for chat
-		ChatSessionID:        chatSession.ID,
-		TriggerChatMessageID: triggerMessageID,
+		AgentID:                  chatSession.AgentID,
+		RuntimeID:                agent.RuntimeID,
+		Priority:                 2, // medium priority for chat
+		ChatSessionID:            chatSession.ID,
+		TriggerChatMessageID:     triggerMessageID,
+		ConnectorDelegatedUserID: chatSession.CreatorID,
 	})
 	if err != nil {
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
@@ -1485,7 +1567,8 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, trigg
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
 
-	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID)
+	delegatedUserID := s.latestConnectorDelegatedUser(ctx, issue.ID, agentID)
+	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, delegatedUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -1502,11 +1585,11 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, trigg
 // For agent-assigned issues it uses enqueueIssueTask (which reads AssigneeID);
 // for squad-assigned issues the rerun targets the squad leader and is flagged
 // as a leader task so the self-trigger guard treats it correctly.
-func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, delegatedUserID pgtype.UUID) (db.AgentTaskQueue, error) {
 	if issue.AssigneeType.String == "agent" {
-		return s.enqueueIssueTask(ctx, issue, triggerCommentID, true)
+		return s.enqueueIssueTask(ctx, issue, triggerCommentID, true, delegatedUserID)
 	}
-	return s.EnqueueTaskForSquadLeader(ctx, issue, agentID, triggerCommentID)
+	return s.EnqueueTaskForSquadLeaderByDelegatedUser(ctx, issue, agentID, triggerCommentID, delegatedUserID)
 }
 
 // HandleFailedTasks runs the post-failure side effects for a batch of

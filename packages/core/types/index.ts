@@ -182,6 +182,15 @@ export type {
   GitHubConnectResponse,
 } from "./github";
 export type {
+  ConnectorCapability,
+  ConnectorCredential,
+  ConnectorCredentialsResponse,
+  ConnectorProvider,
+  ConnectorProvidersResponse,
+  ConnectorRemoteWritePolicy,
+  SaveConnectorCredentialRequest,
+} from "./connector";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,

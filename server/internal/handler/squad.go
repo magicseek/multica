@@ -742,7 +742,8 @@ func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, tr
 		return
 	}
 
-	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, triggerCommentID); err != nil {
+	delegatedUserID := connectorDelegatedUserFromActor(authorType, authorID)
+	if _, err := h.TaskService.EnqueueTaskForSquadLeaderByDelegatedUser(ctx, issue, squad.LeaderID, triggerCommentID, delegatedUserID); err != nil {
 		slog.Warn("enqueue squad leader task failed",
 			"issue_id", uuidToString(issue.ID),
 			"squad_id", uuidToString(squad.ID),

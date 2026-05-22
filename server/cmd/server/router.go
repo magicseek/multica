@@ -16,6 +16,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/connectors"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -77,6 +78,7 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	ConnectorConfig    connectors.Config
 }
 
 func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) chi.Router {
@@ -107,6 +109,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AllowedEmailDomains:           splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
 		UseDailyRollupForRuntimeUsage: os.Getenv("USAGE_DAILY_ROLLUP_ENABLED") == "true",
 		UseDailyRollupForDashboard:    os.Getenv("USAGE_DASHBOARD_ROLLUP_ENABLED") == "true",
+		ConnectorRegistry:             connectors.NewRegistry(opts.ConnectorConfig),
+		ConnectorVault:                opts.ConnectorConfig.Vault,
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if opts.DaemonWakeup != nil {
@@ -332,6 +336,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
+
+			// Connectors
+			r.Get("/api/connectors/providers", h.ListConnectorProviders)
+			r.Get("/api/connectors/credentials", h.ListConnectorCredentials)
+			r.Put("/api/connectors/providers/{providerID}/credential", h.SaveConnectorCredential)
+			r.Delete("/api/connectors/providers/{providerID}/credential", h.DeleteConnectorCredential)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {

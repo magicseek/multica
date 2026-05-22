@@ -117,6 +117,10 @@ import type {
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
   GitHubConnectResponse,
+  ConnectorProvidersResponse,
+  ConnectorCredentialsResponse,
+  ConnectorCredential,
+  SaveConnectorCredentialRequest,
   Squad,
   SquadMember,
   WorkflowApplicability,
@@ -2343,5 +2347,31 @@ export class ApiClient {
 
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
     return this.fetch(`/api/issues/${issueId}/pull-requests`);
+  }
+
+  // Connectors
+  async listConnectorProviders(_workspaceId: string): Promise<ConnectorProvidersResponse> {
+    return this.fetch("/api/connectors/providers");
+  }
+
+  async listConnectorCredentials(_workspaceId: string): Promise<ConnectorCredentialsResponse> {
+    return this.fetch("/api/connectors/credentials");
+  }
+
+  async saveConnectorCredential(
+    _workspaceId: string,
+    providerId: string,
+    data: SaveConnectorCredentialRequest,
+  ): Promise<ConnectorCredential> {
+    return this.fetch(`/api/connectors/providers/${encodeURIComponent(providerId)}/credential`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteConnectorCredential(_workspaceId: string, providerId: string): Promise<void> {
+    await this.fetch(`/api/connectors/providers/${encodeURIComponent(providerId)}/credential`, {
+      method: "DELETE",
+    });
   }
 }

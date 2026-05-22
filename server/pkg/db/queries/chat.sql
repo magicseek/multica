@@ -305,9 +305,10 @@ INSERT INTO agent_task_queue (
     status,
     priority,
     chat_session_id,
-    trigger_chat_message_id
+    trigger_chat_message_id,
+    connector_delegated_user_id
 )
-VALUES ($1, $2, NULL, 'queued', $3, $4, $5)
+VALUES ($1, $2, NULL, 'queued', $3, $4, $5, sqlc.narg('connector_delegated_user_id'))
 RETURNING *;
 
 -- name: GetLastChatTaskSession :one

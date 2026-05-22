@@ -1,15 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpen, GitBranch, KeyRound, Loader2, Save, ShieldCheck, Ticket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
+import { Input } from "@multica/ui/components/ui/input";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { githubInstallationsOptions } from "@multica/core/github/queries";
+import { connectorCredentialsOptions, connectorKeys, connectorProvidersOptions } from "@multica/core/connectors/queries";
 import { api } from "@multica/core/api";
+import type { ConnectorCredential, ConnectorProvider } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 // lucide-react v1.x dropped brand marks (including Github). Render an inline
@@ -22,8 +27,24 @@ function GitHubMark({ className }: { className?: string }) {
   );
 }
 
+function ringCentralIcon(providerID: string) {
+  const className = "h-5 w-5 text-muted-foreground";
+  if (providerID.includes("gitlab")) return <GitBranch className={className} aria-hidden="true" />;
+  if (providerID.includes("jira")) return <Ticket className={className} aria-hidden="true" />;
+  return <BookOpen className={className} aria-hidden="true" />;
+}
+
+function compactEndpoint(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
+}
+
 export function IntegrationsTab() {
   const { t } = useT("settings");
+  const queryClient = useQueryClient();
   const wsId = useWorkspaceId();
   const user = useAuthStore((s) => s.user);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
@@ -40,6 +61,19 @@ export function IntegrationsTab() {
     enabled: !!wsId && canManage,
   });
   const configured = data?.configured ?? false;
+  const { data: connectorProviders } = useQuery({
+    ...connectorProvidersOptions(wsId),
+    enabled: !!wsId,
+  });
+  const { data: connectorCredentials } = useQuery({
+    ...connectorCredentialsOptions(wsId),
+    enabled: !!wsId,
+  });
+  const ringCentralProviders =
+    connectorProviders?.providers.filter((provider) => provider.profile === "ringcentral") ?? [];
+  const connectorCredentialsByProvider = new Map(
+    (connectorCredentials?.credentials ?? []).map((credential) => [credential.provider_id, credential]),
+  );
 
   async function handleConnect() {
     setConnecting(true);
@@ -110,6 +144,161 @@ export function IntegrationsTab() {
           </CardContent>
         </Card>
       </section>
+
+      {ringCentralProviders.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">
+              {t(($) => $.integrations.ringcentral_section_title)}
+            </h2>
+            <Badge variant="secondary" className="rounded-sm">
+              {t(($) => $.integrations.ringcentral_profile_enabled)}
+            </Badge>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            {ringCentralProviders.map((provider) => (
+              <RingCentralProviderCard
+                key={provider.id}
+                provider={provider}
+                credential={connectorCredentialsByProvider.get(provider.id) ?? null}
+                workspaceId={wsId}
+                onCredentialChanged={() =>
+                  queryClient.invalidateQueries({ queryKey: connectorKeys.credentials(wsId) })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+function RingCentralProviderCard({
+  provider,
+  credential,
+  workspaceId,
+  onCredentialChanged,
+}: {
+  provider: ConnectorProvider;
+  credential: ConnectorCredential | null;
+  workspaceId: string;
+  onCredentialChanged: () => void;
+}) {
+  const { t } = useT("settings");
+  const [secret, setSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const endpointValues = Object.values(provider.endpoints ?? {}).filter(Boolean);
+  const writeCount = provider.capabilities.filter((capability) => capability.write).length;
+  const readCount = provider.capabilities.length - writeCount;
+  const status = credential?.has_credential
+    ? t(($) => $.integrations.ringcentral_credential_saved)
+    : t(($) => $.integrations.ringcentral_credential_missing);
+
+  async function handleSave() {
+    const nextSecret = secret.trim();
+    if (!nextSecret) return;
+    setSaving(true);
+    try {
+      await api.saveConnectorCredential(workspaceId, provider.id, { secret: nextSecret });
+      setSecret("");
+      onCredentialChanged();
+      toast.success(t(($) => $.integrations.ringcentral_credential_saved_toast));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_credential_save_failed));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await api.deleteConnectorCredential(workspaceId, provider.id);
+      onCredentialChanged();
+      toast.success(t(($) => $.integrations.ringcentral_credential_removed_toast));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_credential_remove_failed));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-md border bg-muted/40">
+              {ringCentralIcon(provider.id)}
+            </div>
+            <div className="min-w-0 space-y-1">
+              <p className="truncate text-sm font-medium">{provider.display_name}</p>
+              <p className="text-xs text-muted-foreground">
+                {provider.resource_types.join(", ")}
+              </p>
+            </div>
+          </div>
+          {provider.requires_user_credential && (
+            <KeyRound className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant={credential?.has_credential ? "secondary" : "outline"} className="rounded-sm px-1.5 py-0 text-[10px]">
+            {status}
+          </Badge>
+          <Badge variant="outline" className="rounded-sm px-1.5 py-0 text-[10px]">
+            {readCount} {t(($) => $.integrations.ringcentral_read_capabilities)}
+          </Badge>
+          {writeCount > 0 && (
+            <Badge variant="secondary" className="rounded-sm px-1.5 py-0 text-[10px]">
+              {writeCount} {t(($) => $.integrations.ringcentral_write_capabilities)}
+            </Badge>
+          )}
+        </div>
+
+        {endpointValues.length > 0 && (
+          <div className="space-y-1">
+            {endpointValues.map((endpoint) => (
+              <div key={endpoint} className="truncate text-xs text-muted-foreground">
+                {compactEndpoint(endpoint)}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{t(($) => $.integrations.ringcentral_task_scoped)}</span>
+        </div>
+
+        {provider.requires_user_credential && (
+          <div className="flex flex-col gap-2">
+            <Input
+              type="password"
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              placeholder={t(($) => $.integrations.ringcentral_token_placeholder)}
+              autoComplete="off"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleSave} disabled={saving || !secret.trim()}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {t(($) => $.integrations.ringcentral_save_token)}
+              </Button>
+              {credential?.has_credential && (
+                <Button size="sm" variant="outline" onClick={handleDelete} disabled={deleting}>
+                  {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  {t(($) => $.integrations.ringcentral_remove_token)}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
