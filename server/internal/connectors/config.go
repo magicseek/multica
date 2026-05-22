@@ -28,6 +28,13 @@ const (
 	envCredentialEncryptionKey = "CONNECTOR_CREDENTIAL_ENCRYPTION_KEY"
 )
 
+const (
+	DefaultRingCentralGitLabAPIBaseURL = "https://git.ringcentral.com/api/v4"
+	DefaultRingCentralGitLabWebBaseURL = "https://git.ringcentral.com"
+	DefaultRingCentralJiraBaseURL      = "https://jira.ringcentral.com"
+	DefaultRingCentralWikiBaseURL      = "https://wiki.ringcentral.com"
+)
+
 type Config struct {
 	Profiles    []string
 	RingCentral RingCentralConfig
@@ -48,10 +55,10 @@ func LoadConfigFromEnv() (Config, error) {
 		Profiles: profiles,
 		RingCentral: RingCentralConfig{
 			Enabled:          slices.Contains(profiles, ProfileRingCentral),
-			GitLabAPIBaseURL: strings.TrimSpace(os.Getenv("RINGCENTRAL_GITLAB_API_BASE_URL")),
-			GitLabWebBaseURL: strings.TrimSpace(os.Getenv("RINGCENTRAL_GITLAB_WEB_BASE_URL")),
-			JiraBaseURL:      strings.TrimSpace(os.Getenv("RINGCENTRAL_JIRA_BASE_URL")),
-			WikiBaseURL:      strings.TrimSpace(os.Getenv("RINGCENTRAL_WIKI_BASE_URL")),
+			GitLabAPIBaseURL: envOrDefault("RINGCENTRAL_GITLAB_API_BASE_URL", DefaultRingCentralGitLabAPIBaseURL),
+			GitLabWebBaseURL: envOrDefault("RINGCENTRAL_GITLAB_WEB_BASE_URL", DefaultRingCentralGitLabWebBaseURL),
+			JiraBaseURL:      envOrDefault("RINGCENTRAL_JIRA_BASE_URL", DefaultRingCentralJiraBaseURL),
+			WikiBaseURL:      envOrDefault("RINGCENTRAL_WIKI_BASE_URL", DefaultRingCentralWikiBaseURL),
 		},
 	}
 	if !cfg.RingCentral.Enabled {
@@ -86,6 +93,13 @@ func parseProfiles(raw string) []string {
 	return profiles
 }
 
+func envOrDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
 func validateRingCentralEndpoints(cfg RingCentralConfig) error {
 	required := map[string]string{
 		"RINGCENTRAL_GITLAB_API_BASE_URL": cfg.GitLabAPIBaseURL,
@@ -97,14 +111,14 @@ func validateRingCentralEndpoints(cfg RingCentralConfig) error {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("ringcentral connector profile requires %s", name)
 		}
-		if !validHTTPBaseURL(value) {
+		if !ValidHTTPBaseURL(value) {
 			return fmt.Errorf("%s must be an http(s) URL", name)
 		}
 	}
 	return nil
 }
 
-func validHTTPBaseURL(raw string) bool {
+func ValidHTTPBaseURL(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return false

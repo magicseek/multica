@@ -44,7 +44,8 @@ Multica currently has a GitHub-specific integration and a polymorphic `project_r
 
 3. RingCentral provider adapters
    - Add RingCentral GitLab, Jira, and Wiki adapters under isolated connector packages.
-   - Read base URLs from deployment/profile endpoint configuration.
+   - Read base URLs from RingCentral profile defaults, deployment/profile
+     endpoint overrides, and admin-owned workspace endpoint overrides.
    - Validate tokens before save and store upstream identity metadata.
    - Mark credentials invalid on upstream auth failures.
 

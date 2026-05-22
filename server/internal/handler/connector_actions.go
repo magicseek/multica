@@ -261,7 +261,11 @@ func (h *Handler) dispatchConnectorAction(r *http.Request, authz connectorAction
 }
 
 func (h *Handler) dispatchGitLabConnectorAction(r *http.Request, authz connectorActionAuth, req ConnectorActionRequest) (any, error) {
-	gitlab, ok := h.cfg.ConnectorClients.GitLab()
+	client, ok := h.connectorClientForSettings(authz.provider, authz.settings)
+	if !ok {
+		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
+	}
+	gitlab, ok := client.(connectors.GitLabProvider)
 	if !ok {
 		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
 	}
@@ -366,7 +370,11 @@ func (h *Handler) dispatchGitLabConnectorAction(r *http.Request, authz connector
 }
 
 func (h *Handler) dispatchJiraConnectorAction(r *http.Request, authz connectorActionAuth, req ConnectorActionRequest) (any, error) {
-	jira, ok := h.cfg.ConnectorClients.Jira()
+	client, ok := h.connectorClientForSettings(authz.provider, authz.settings)
+	if !ok {
+		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
+	}
+	jira, ok := client.(connectors.JiraProvider)
 	if !ok {
 		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
 	}
@@ -404,7 +412,11 @@ func (h *Handler) dispatchJiraConnectorAction(r *http.Request, authz connectorAc
 }
 
 func (h *Handler) dispatchWikiConnectorAction(r *http.Request, authz connectorActionAuth, req ConnectorActionRequest) (any, error) {
-	wiki, ok := h.cfg.ConnectorClients.Wiki()
+	client, ok := h.connectorClientForSettings(authz.provider, authz.settings)
+	if !ok {
+		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
+	}
+	wiki, ok := client.(connectors.WikiProvider)
 	if !ok {
 		return nil, connectorActionError{status: http.StatusNotFound, reason: "connector provider not found"}
 	}

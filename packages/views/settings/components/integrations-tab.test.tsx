@@ -36,8 +36,8 @@ function makeProvider(overrides: Partial<ConnectorProvider> = {}): ConnectorProv
     resource_types: ["ringcentral_gitlab_repo"],
     requires_user_credential: true,
     endpoints: {
-      api_base_url: "https://gitlab.example.com/api/v4",
-      web_base_url: "https://gitlab.example.com",
+      api_base_url: "https://git.ringcentral.com/api/v4",
+      web_base_url: "https://git.ringcentral.com",
     },
     remote_write_policies: [
       { id: "disabled", display_name: "Disabled" },
@@ -131,7 +131,7 @@ describe("IntegrationsTab", () => {
         display_name: "RingCentral Jira",
         capabilities: [{ id: "issue.search", display_name: "Search issues", write: false }],
         resource_types: ["ringcentral_jira_issue", "ringcentral_jira_project"],
-        endpoints: { base_url: "https://jira.example.com" },
+        endpoints: { base_url: "https://jira.ringcentral.com" },
         remote_write_policies: undefined,
       }),
       makeProvider({
@@ -139,7 +139,7 @@ describe("IntegrationsTab", () => {
         display_name: "RingCentral Wiki",
         capabilities: [{ id: "page.read", display_name: "Read page", write: false }],
         resource_types: ["ringcentral_wiki_page", "ringcentral_wiki_space"],
-        endpoints: { base_url: "https://wiki.example.com" },
+        endpoints: { base_url: "https://wiki.ringcentral.com" },
         remote_write_policies: undefined,
       }),
     ];
@@ -172,6 +172,7 @@ describe("IntegrationsTab", () => {
     expect(screen.queryByText(/issue.search/)).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getAllByRole("switch")).toHaveLength(3);
+    expect(screen.getByText("git.ringcentral.com")).toBeTruthy();
     expect(screen.getByPlaceholderText("GitLab personal access token")).toBeTruthy();
     expect(screen.getByPlaceholderText("Jira personal access token")).toBeTruthy();
     expect(screen.getByPlaceholderText("Wiki personal access token")).toBeTruthy();
@@ -186,7 +187,8 @@ describe("IntegrationsTab", () => {
     expect(screen.getByRole("heading", { name: "GitLab" })).toBeTruthy();
     expect(screen.getByText("Information")).toBeTruthy();
     expect(screen.getByText("Agent use")).toBeTruthy();
-    expect(screen.getAllByText("gitlab.example.com")).toHaveLength(2);
+    expect(screen.getByText("Service addresses")).toBeTruthy();
+    expect(screen.getAllByText("git.ringcentral.com")).toHaveLength(2);
     expect(screen.queryByText(/ringcentral_gitlab_repo/)).toBeNull();
     expect(screen.queryByPlaceholderText("GitLab personal access token")).toBeNull();
   });
@@ -222,6 +224,55 @@ describe("IntegrationsTab", () => {
     });
     expect(invalidateQueriesMock).toHaveBeenCalledWith({
       queryKey: ["connectors", "workspace-1", "credentials"],
+    });
+  });
+
+  it("saves service address overrides from the detail settings section", async () => {
+    const user = userEvent.setup();
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getAllByRole("button", { name: /Details/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const apiInput = screen.getByDisplayValue("https://git.ringcentral.com/api/v4");
+    await user.clear(apiInput);
+    await user.type(apiInput, "https://gitlab.dev.example.com/api/v4");
+    await user.click(screen.getByRole("button", { name: "Save addresses" }));
+
+    await waitFor(() => {
+      expect(updateWorkspaceConnectorMock).toHaveBeenCalledWith("workspace-1", "ringcentral_gitlab", {
+        enabled: true,
+        settings: {
+          endpoint_overrides: {
+            api_base_url: "https://gitlab.dev.example.com/api/v4",
+          },
+        },
+      });
+    });
+  });
+
+  it("clears service address overrides back to defaults", async () => {
+    const user = userEvent.setup();
+    workspaceConnectorsRef.current = [
+      {
+        provider_id: "ringcentral_gitlab",
+        enabled: true,
+        settings: { endpoint_overrides: { api_base_url: "https://gitlab.dev.example.com/api/v4" } },
+      },
+      { provider_id: "ringcentral_jira", enabled: true, settings: {} },
+      { provider_id: "ringcentral_wiki", enabled: false, settings: {} },
+    ];
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("Custom service")).toBeTruthy();
+    await user.click(screen.getAllByRole("button", { name: /Details/ })[0]!);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Use defaults" }));
+
+    await waitFor(() => {
+      expect(updateWorkspaceConnectorMock).toHaveBeenCalledWith("workspace-1", "ringcentral_gitlab", {
+        enabled: true,
+        settings: {},
+      });
     });
   });
 });

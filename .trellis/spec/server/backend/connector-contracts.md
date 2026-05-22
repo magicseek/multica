@@ -23,8 +23,9 @@ default public Multica surface.
   - `MULTICA_CONNECTOR_PROFILES`: comma-separated profile list.
   - `CONNECTOR_CREDENTIAL_ENCRYPTION_KEY`: 32-byte base64/hex/raw key required
     by credential-bearing profiles.
-  - Provider endpoint env keys are profile-owned deployment config, not user
-    settings.
+  - Provider endpoint env keys override profile-owned defaults. Workspace admin
+    endpoint overrides live in workspace connector settings, not user
+    credentials.
 - Backend:
   - `connectors.NewRegistry(cfg)` registers providers only for enabled
     profiles.
@@ -42,7 +43,8 @@ default public Multica surface.
   - Required daemon headers on action calls: `X-Workspace-ID`, `X-Agent-ID`,
     `X-Task-ID`.
 - Database:
-  - Workspace connector state: provider enablement plus JSON settings.
+  - Workspace connector state: provider enablement plus JSON settings,
+    including admin-owned endpoint overrides when needed.
   - Connector credentials: `workspace_id`, `provider_id`, `owner_user_id`,
     encrypted secret fields, validation status, upstream identity metadata.
   - Agent task queue: `connector_delegated_user_id`.
@@ -60,6 +62,12 @@ default public Multica surface.
   - `secret`: raw user token accepted only on save/validation.
   - Raw token is never returned, logged, written to task context, written to
     `.multica/project/resources.json`, or injected into daemon environment.
+- Workspace settings:
+  - `endpoint_overrides`: optional provider endpoint-key map. Values must be
+    HTTP(S) base URLs and may only override endpoint keys declared by the
+    registered provider. Credential validation and task-scoped connector
+    actions use effective endpoints: workspace override first, profile default
+    second.
 - Credential response:
   - Status metadata only: `configured`, `status`, `upstream_identity`,
     `last_validated_at`, `updated_at`.
@@ -79,7 +87,8 @@ default public Multica surface.
 |---|---|
 | Profile disabled | Provider registry empty for that profile; settings section hidden; resource validators reject profile resource types; action handler returns not found/bad request |
 | Profile enabled without credential key | Server startup fails closed |
-| Provider endpoint env missing/invalid | Server startup fails closed for that profile |
+| Provider endpoint env invalid | Server startup fails closed for that profile |
+| Workspace endpoint override invalid | Settings update is rejected; previous effective endpoint remains active |
 | Credential save upstream validation fails | Return upstream/auth error; do not store token |
 | Credential save succeeds | Store encrypted secret, validation status, upstream identity, timestamp |
 | Action missing `X-Agent-ID` or `X-Task-ID` | Reject before upstream call |
@@ -109,7 +118,8 @@ default public Multica surface.
 
 - Config/profile tests:
   - disabled profile hides providers.
-  - enabled profile requires encryption key and endpoint env values.
+  - enabled profile requires encryption key, uses official endpoint defaults,
+    and rejects invalid endpoint env or workspace override values.
 - Credential tests:
   - save validates against fake upstream.
   - auth failure rejects without storing token.

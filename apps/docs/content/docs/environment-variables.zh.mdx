@@ -173,16 +173,16 @@ Multica 存储用户上传的附件（评论里的图片、文件等）。**优�
 
 ## Connector profiles
 
-私有或部署专属的连接器默认隐藏，必须由运维显式启用 profile。RingCentral 连接器需要这些变量：
+私有或部署专属的连接器默认隐藏，必须由运维显式启用 profile。RingCentral 连接器默认使用 RingCentral 正式服务；endpoint 变量用于部署级覆盖：
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `MULTICA_CONNECTOR_PROFILES` | 空 | 逗号分隔的 connector profile。包含 `ringcentral` 后才会注册 RingCentral GitLab、Jira、Wiki providers |
 | `CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` | 空 | 32 字节密钥，支持 base64/hex/raw 编码。启用 `ringcentral` 时必须配置；缺失时服务端 fail closed |
-| `RINGCENTRAL_GITLAB_API_BASE_URL` | 空 | GitLab API base URL，例如 `https://git.example.com/api/v4` |
-| `RINGCENTRAL_GITLAB_WEB_BASE_URL` | 空 | GitLab web base URL，用于仓库和 MR 链接 |
-| `RINGCENTRAL_JIRA_BASE_URL` | 空 | Jira base URL |
-| `RINGCENTRAL_WIKI_BASE_URL` | 空 | Wiki base URL |
+| `RINGCENTRAL_GITLAB_API_BASE_URL` | `https://git.ringcentral.com/api/v4` | GitLab API base URL |
+| `RINGCENTRAL_GITLAB_WEB_BASE_URL` | `https://git.ringcentral.com` | GitLab web base URL，用于仓库和 MR 链接 |
+| `RINGCENTRAL_JIRA_BASE_URL` | `https://jira.ringcentral.com` | Jira base URL |
+| `RINGCENTRAL_WIKI_BASE_URL` | `https://wiki.ringcentral.com` | Wiki base URL |
 
 `MULTICA_CONNECTOR_PROFILES` 未包含 `ringcentral` 时，Settings → Integrations 不会显示 RingCentral 区块，也不会暴露 RingCentral provider 元数据。
 

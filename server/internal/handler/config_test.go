@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/connectors"
@@ -122,6 +123,155 @@ func TestListConnectorProvidersWithRingCentralProfile(t *testing.T) {
 	}
 	if body.Providers[0].ID != connectors.ProviderRingCentralGitLab {
 		t.Fatalf("first provider = %q, want %q", body.Providers[0].ID, connectors.ProviderRingCentralGitLab)
+	}
+}
+
+func TestUpdateWorkspaceConnectorStoresEndpointOverrides(t *testing.T) {
+	h := *testHandler
+	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectors.Config{
+		RingCentral: connectors.RingCentralConfig{
+			Enabled:          true,
+			GitLabAPIBaseURL: connectors.DefaultRingCentralGitLabAPIBaseURL,
+			GitLabWebBaseURL: connectors.DefaultRingCentralGitLabWebBaseURL,
+			JiraBaseURL:      connectors.DefaultRingCentralJiraBaseURL,
+			WikiBaseURL:      connectors.DefaultRingCentralWikiBaseURL,
+		},
+	})
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM workspace_connector WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	req := newRequest(http.MethodPut, "/api/connectors/providers/ringcentral_jira", map[string]any{
+		"enabled": true,
+		"settings": map[string]any{
+			"endpoint_overrides": map[string]any{
+				"base_url": "https://jira.override.test/",
+			},
+		},
+	})
+	req = withURLParam(req, "providerID", connectors.ProviderRingCentralJira)
+	w := httptest.NewRecorder()
+	h.UpdateWorkspaceConnector(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateWorkspaceConnector: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body WorkspaceConnectorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode workspace connector: %v", err)
+	}
+	overrides, ok := body.Settings["endpoint_overrides"].(map[string]any)
+	if !ok {
+		t.Fatalf("endpoint_overrides = %#v, want object", body.Settings["endpoint_overrides"])
+	}
+	if overrides["base_url"] != "https://jira.override.test" {
+		t.Fatalf("base_url override = %#v", overrides["base_url"])
+	}
+}
+
+func TestUpdateWorkspaceConnectorRejectsInvalidEndpointOverrides(t *testing.T) {
+	h := *testHandler
+	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectors.Config{
+		RingCentral: connectors.RingCentralConfig{
+			Enabled:          true,
+			GitLabAPIBaseURL: connectors.DefaultRingCentralGitLabAPIBaseURL,
+			GitLabWebBaseURL: connectors.DefaultRingCentralGitLabWebBaseURL,
+			JiraBaseURL:      connectors.DefaultRingCentralJiraBaseURL,
+			WikiBaseURL:      connectors.DefaultRingCentralWikiBaseURL,
+		},
+	})
+
+	cases := []struct {
+		name      string
+		overrides map[string]any
+	}{
+		{name: "invalid url", overrides: map[string]any{"base_url": "jira.override.test"}},
+		{name: "unknown key", overrides: map[string]any{"web_base_url": "https://jira.override.test"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := newRequest(http.MethodPut, "/api/connectors/providers/ringcentral_jira", map[string]any{
+				"enabled": true,
+				"settings": map[string]any{
+					"endpoint_overrides": tc.overrides,
+				},
+			})
+			req = withURLParam(req, "providerID", connectors.ProviderRingCentralJira)
+			w := httptest.NewRecorder()
+			h.UpdateWorkspaceConnector(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("UpdateWorkspaceConnector: expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestConnectorCredentialValidationUsesWorkspaceEndpointOverride(t *testing.T) {
+	requireConnectorCredentialSchema(t)
+
+	var defaultHit atomic.Bool
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultHit.Store(true)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer defaultUpstream.Close()
+
+	var overrideHit atomic.Bool
+	overrideUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		overrideHit.Store(true)
+		if r.URL.Path != "/api/v4/user" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if r.Header.Get("PRIVATE-TOKEN") != "glpat-secret-value" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": 100, "username": "connector-user"})
+	}))
+	defer overrideUpstream.Close()
+
+	connectorConfig := connectors.Config{
+		RingCentral: connectors.RingCentralConfig{
+			Enabled:          true,
+			GitLabAPIBaseURL: defaultUpstream.URL + "/api/v4",
+			GitLabWebBaseURL: defaultUpstream.URL,
+			JiraBaseURL:      defaultUpstream.URL,
+			WikiBaseURL:      defaultUpstream.URL,
+		},
+	}
+	h := *testHandler
+	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectorConfig)
+	h.cfg.ConnectorClients = connectors.NewClientSet(connectorConfig, overrideUpstream.Client())
+	vault, err := connectors.NewCredentialVault("test:v1", bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatalf("create vault: %v", err)
+	}
+	h.cfg.ConnectorVault = vault
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM connector_credential WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(context.Background(), `DELETE FROM workspace_connector WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO workspace_connector (workspace_id, provider_id, enabled, settings, created_by)
+		VALUES ($1, $2, true, $3, $4)
+		ON CONFLICT (workspace_id, provider_id) DO UPDATE SET settings = EXCLUDED.settings
+	`, testWorkspaceID, connectors.ProviderRingCentralGitLab, []byte(`{"endpoint_overrides":{"api_base_url":"`+overrideUpstream.URL+`/api/v4"}}`), testUserID); err != nil {
+		t.Fatalf("seed workspace connector: %v", err)
+	}
+
+	req := newRequest(http.MethodPut, "/api/connectors/providers/ringcentral_gitlab/credential", map[string]any{
+		"secret": "glpat-secret-value",
+	})
+	req = withURLParam(req, "providerID", connectors.ProviderRingCentralGitLab)
+	w := httptest.NewRecorder()
+	h.SaveConnectorCredential(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SaveConnectorCredential: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !overrideHit.Load() {
+		t.Fatal("override endpoint was not used")
+	}
+	if defaultHit.Load() {
+		t.Fatal("default endpoint should not be used when workspace override exists")
 	}
 }
 

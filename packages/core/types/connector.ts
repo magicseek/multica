@@ -46,6 +46,7 @@ export interface WorkspaceConnector {
   provider_id: string;
   enabled: boolean;
   settings: {
+    endpoint_overrides?: Record<string, string>;
     remote_write_policy?: string;
     [key: string]: unknown;
   };

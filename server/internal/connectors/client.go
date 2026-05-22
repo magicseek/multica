@@ -28,7 +28,8 @@ type ValidationResult struct {
 }
 
 type ClientSet struct {
-	clients map[string]ProviderClient
+	clients    map[string]ProviderClient
+	httpClient HTTPDoer
 }
 
 type ProviderClient interface {
@@ -63,7 +64,7 @@ func NewClientSet(cfg Config, httpClient HTTPDoer) *ClientSet {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
-	set := &ClientSet{clients: make(map[string]ProviderClient)}
+	set := &ClientSet{clients: make(map[string]ProviderClient), httpClient: httpClient}
 	if cfg.RingCentral.Enabled {
 		set.clients[ProviderRingCentralGitLab] = NewGitLabClient(cfg.RingCentral.GitLabAPIBaseURL, cfg.RingCentral.GitLabWebBaseURL, httpClient)
 		set.clients[ProviderRingCentralJira] = NewJiraClient(cfg.RingCentral.JiraBaseURL, httpClient)
@@ -72,12 +73,35 @@ func NewClientSet(cfg Config, httpClient HTTPDoer) *ClientSet {
 	return set
 }
 
+func NewProviderClient(providerID string, endpoints map[string]string, httpClient HTTPDoer) (ProviderClient, bool) {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	switch providerID {
+	case ProviderRingCentralGitLab:
+		return NewGitLabClient(endpoints["api_base_url"], endpoints["web_base_url"], httpClient), true
+	case ProviderRingCentralJira:
+		return NewJiraClient(endpoints["base_url"], httpClient), true
+	case ProviderRingCentralWiki:
+		return NewWikiClient(endpoints["base_url"], httpClient), true
+	default:
+		return nil, false
+	}
+}
+
 func (s *ClientSet) Get(providerID string) (ProviderClient, bool) {
 	if s == nil {
 		return nil, false
 	}
 	client, ok := s.clients[providerID]
 	return client, ok
+}
+
+func (s *ClientSet) GetWithEndpoints(providerID string, endpoints map[string]string) (ProviderClient, bool) {
+	if s == nil {
+		return nil, false
+	}
+	return NewProviderClient(providerID, endpoints, s.httpClient)
 }
 
 func (s *ClientSet) Validate(ctx context.Context, providerID, token string) (ValidationResult, error) {

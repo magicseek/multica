@@ -21,18 +21,25 @@ Connector credentials are always user-owned. Multica stores encrypted server-sid
 
 ## Enable the profile
 
-Set the connector profile and all required deployment-level endpoint settings on the API server:
+Set the connector profile and credential encryption key on the API server:
 
 ```dotenv
 MULTICA_CONNECTOR_PROFILES=ringcentral
 CONNECTOR_CREDENTIAL_ENCRYPTION_KEY=<32-byte base64/hex/raw key>
-RINGCENTRAL_GITLAB_API_BASE_URL=https://git.example.com/api/v4
-RINGCENTRAL_GITLAB_WEB_BASE_URL=https://git.example.com
-RINGCENTRAL_JIRA_BASE_URL=https://jira.example.com
-RINGCENTRAL_WIKI_BASE_URL=https://wiki.example.com
 ```
 
 Restart the API after setting these values. If `CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` is missing or not 32 bytes, startup fails closed before credential storage is exposed.
+
+By default the profile uses the official RingCentral services:
+
+```dotenv
+RINGCENTRAL_GITLAB_API_BASE_URL=https://git.ringcentral.com/api/v4
+RINGCENTRAL_GITLAB_WEB_BASE_URL=https://git.ringcentral.com
+RINGCENTRAL_JIRA_BASE_URL=https://jira.ringcentral.com
+RINGCENTRAL_WIKI_BASE_URL=https://wiki.ringcentral.com
+```
+
+Operators may still set those environment variables for deployment-level overrides, and workspace owners/admins may override service addresses from Settings -> Integrations.
 
 When `ringcentral` is not present in `MULTICA_CONNECTOR_PROFILES`, the provider registry is empty for RingCentral, Settings does not show the RingCentral section, RingCentral project resource types are rejected, and agent runtime guidance does not mention RingCentral connector commands.
 
@@ -43,6 +50,7 @@ Open **Settings -> Integrations**.
 Workspace owners and admins can:
 
 - Enable or disable each RingCentral provider for the workspace.
+- Edit service addresses when the workspace should use a non-default endpoint.
 - Set RingCentral GitLab's remote write policy. GitLab writes require `merge_request_preparation`; read-only commands continue to work when writes are disabled.
 
 Each member configures only their own credentials:

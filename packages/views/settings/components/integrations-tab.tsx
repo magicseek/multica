@@ -8,6 +8,8 @@ import {
   ChevronRight,
   GitBranch,
   Loader2,
+  Pencil,
+  RotateCcw,
   Save,
   ShieldCheck,
   Ticket,
@@ -67,8 +69,32 @@ function compactEndpoint(value: string) {
   }
 }
 
-function primaryEndpoint(provider: ConnectorProvider) {
-  const endpoints = provider.endpoints ?? {};
+function endpointOverrides(workspaceConnector: WorkspaceConnector | null) {
+  const raw = workspaceConnector?.settings.endpoint_overrides;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(Object.entries(raw).filter(([, value]) => typeof value === "string")) as Record<
+    string,
+    string
+  >;
+}
+
+function effectiveEndpoints(provider: ConnectorProvider, workspaceConnector: WorkspaceConnector | null) {
+  return {
+    ...(provider.endpoints ?? {}),
+    ...endpointOverrides(workspaceConnector),
+  };
+}
+
+function hasEndpointOverrides(workspaceConnector: WorkspaceConnector | null) {
+  return Object.keys(endpointOverrides(workspaceConnector)).length > 0;
+}
+
+function endpointEntries(provider: ConnectorProvider, workspaceConnector: WorkspaceConnector | null) {
+  return Object.entries(effectiveEndpoints(provider, workspaceConnector)).filter(([, value]) => Boolean(value));
+}
+
+function primaryEndpoint(provider: ConnectorProvider, workspaceConnector: WorkspaceConnector | null) {
+  const endpoints = effectiveEndpoints(provider, workspaceConnector);
   const endpoint =
     endpoints.web_base_url ?? endpoints.base_url ?? endpoints.api_base_url ?? Object.values(endpoints).find(Boolean);
   return endpoint ? compactEndpoint(endpoint) : null;
@@ -149,6 +175,14 @@ const DETAILS_LABEL = "Details";
 const RINGCENTRAL_LABEL = "RingCentral";
 const SETTINGS_LABEL = "Settings";
 const REMOTE_WRITE_ACCESS_LABEL = "Remote write access";
+const SERVICE_ADDRESSES_LABEL = "Service addresses";
+const EDIT_LABEL = "Edit";
+const CANCEL_LABEL = "Cancel";
+const SAVE_ADDRESSES_LABEL = "Save addresses";
+const USE_DEFAULTS_LABEL = "Use defaults";
+const CUSTOM_SERVICE_LABEL = "Custom service";
+const DEFAULT_LABEL = "Default";
+const CUSTOM_LABEL = "Custom";
 const INFORMATION_LABEL = "Information";
 const AGENT_USE_LABEL = "Agent use";
 const STATUS_LABEL = "Status";
@@ -357,8 +391,9 @@ function RingCentralProviderRow({
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const copy = ringCentralProviderCopy(provider);
   const enabled = workspaceConnector?.enabled ?? true;
-  const endpoint = primaryEndpoint(provider);
+  const endpoint = primaryEndpoint(provider, workspaceConnector);
   const credentialLabel = credentialStatusLabel(credential);
+  const customEndpoint = hasEndpointOverrides(workspaceConnector);
 
   async function handleEnabledChange(checked: boolean) {
     setSavingWorkspace(true);
@@ -428,6 +463,11 @@ function RingCentralProviderRow({
                   {endpoint}
                 </span>
               )}
+              {customEndpoint && (
+                <Badge variant="outline" className="rounded-sm">
+                  {CUSTOM_SERVICE_LABEL}
+                </Badge>
+              )}
             </div>
             <p className="max-w-3xl text-sm text-muted-foreground">{copy.description}</p>
           </div>
@@ -493,11 +533,17 @@ function RingCentralProviderDetail({
 }) {
   const { t } = useT("settings");
   const [savingWorkspace, setSavingWorkspace] = useState(false);
+  const [editingEndpoints, setEditingEndpoints] = useState(false);
+  const [savingEndpoints, setSavingEndpoints] = useState(false);
+  const [endpointDraft, setEndpointDraft] = useState<Record<string, string>>({});
   const copy = ringCentralProviderCopy(provider);
-  const endpoints = Object.entries(provider.endpoints ?? {}).filter(([, value]) => Boolean(value));
+  const endpoints = endpointEntries(provider, workspaceConnector);
   const enabled = workspaceConnector?.enabled ?? true;
   const remoteWritePolicy = workspaceConnector?.settings?.remote_write_policy ?? "disabled";
   const credentialLabel = credentialStatusLabel(credential);
+  const providerEndpoints = provider.endpoints ?? {};
+  const customEndpoints = endpointOverrides(workspaceConnector);
+  const hasCustomEndpoints = Object.keys(customEndpoints).length > 0;
 
   async function handleEnabledChange(checked: boolean) {
     setSavingWorkspace(true);
@@ -512,6 +558,43 @@ function RingCentralProviderDetail({
       toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_workspace_save_failed));
     } finally {
       setSavingWorkspace(false);
+    }
+  }
+
+  function beginEndpointEdit() {
+    setEndpointDraft(effectiveEndpoints(provider, workspaceConnector));
+    setEditingEndpoints(true);
+  }
+
+  async function saveEndpointOverrides(useDefaults = false) {
+    const nextSettings = { ...(workspaceConnector?.settings ?? {}) };
+    const nextOverrides: Record<string, string> = {};
+    if (!useDefaults) {
+      for (const [key, defaultValue] of Object.entries(providerEndpoints)) {
+        const value = endpointDraft[key]?.trim() ?? "";
+        if (value && value !== defaultValue) {
+          nextOverrides[key] = value;
+        }
+      }
+    }
+    if (Object.keys(nextOverrides).length > 0) {
+      nextSettings.endpoint_overrides = nextOverrides;
+    } else {
+      delete nextSettings.endpoint_overrides;
+    }
+    setSavingEndpoints(true);
+    try {
+      await api.updateWorkspaceConnector(workspaceId, provider.id, {
+        enabled,
+        settings: nextSettings,
+      });
+      setEditingEndpoints(false);
+      onWorkspaceConnectorChanged();
+      toast.success(t(($) => $.integrations.ringcentral_workspace_saved_toast));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_workspace_save_failed));
+    } finally {
+      setSavingEndpoints(false);
     }
   }
 
@@ -595,6 +678,86 @@ function RingCentralProviderDetail({
                   </select>
                 </label>
               )}
+
+              <section className="space-y-3 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-medium">{SERVICE_ADDRESSES_LABEL}</h4>
+                    {hasCustomEndpoints && !editingEndpoints && (
+                      <p className="text-xs text-muted-foreground">{CUSTOM_SERVICE_LABEL}</p>
+                    )}
+                  </div>
+                  {canManage && !editingEndpoints && (
+                    <Button variant="outline" size="sm" onClick={beginEndpointEdit}>
+                      <Pencil className="h-4 w-4" />
+                      {EDIT_LABEL}
+                    </Button>
+                  )}
+                </div>
+
+                {editingEndpoints ? (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      {Object.entries(providerEndpoints).map(([key, defaultValue]) => (
+                        <label key={key} className="space-y-1.5 text-sm">
+                          <span className="text-muted-foreground">{endpointLabel(key, copy.title)}</span>
+                          <Input
+                            value={endpointDraft[key] ?? defaultValue}
+                            onChange={(event) =>
+                              setEndpointDraft((current) => ({ ...current, [key]: event.target.value }))
+                            }
+                            placeholder={defaultValue}
+                            autoComplete="off"
+                            className="h-9"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => saveEndpointOverrides()} disabled={savingEndpoints}>
+                        {savingEndpoints ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        {SAVE_ADDRESSES_LABEL}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => saveEndpointOverrides(true)}
+                        disabled={savingEndpoints}
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        {USE_DEFAULTS_LABEL}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setEditingEndpoints(false)}
+                        disabled={savingEndpoints}
+                      >
+                        {CANCEL_LABEL}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {Object.entries(providerEndpoints).map(([key, defaultValue]) => {
+                      const value = customEndpoints[key] ?? defaultValue;
+                      const custom = customEndpoints[key] != null;
+                      return (
+                        <div
+                          key={key}
+                          className="grid gap-1 text-sm sm:grid-cols-[112px_minmax(0,1fr)_max-content]"
+                        >
+                          <span className="text-muted-foreground">{endpointLabel(key, copy.title)}</span>
+                          <span className="min-w-0 break-words">{value}</span>
+                          <Badge variant={custom ? "secondary" : "outline"} className="w-fit rounded-sm">
+                            {custom ? CUSTOM_LABEL : DEFAULT_LABEL}
+                          </Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
 
               {!canManage && (
                 <p className="text-sm text-muted-foreground">{t(($) => $.integrations.manage_hint)}</p>

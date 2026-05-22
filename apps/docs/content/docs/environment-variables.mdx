@@ -173,16 +173,16 @@ The [GitHub PR ↔ issue integration](/github-integration) needs two variables. 
 
 ## Connector profiles
 
-Private or deployment-specific connectors are hidden unless an operator enables their profile explicitly. RingCentral connectors require all of these values:
+Private or deployment-specific connectors are hidden unless an operator enables their profile explicitly. RingCentral connectors use official RingCentral service defaults; endpoint variables are deployment-level overrides:
 
 | Variable | Default | Description |
 |---|---|---|
 | `MULTICA_CONNECTOR_PROFILES` | empty | Comma-separated connector profiles. Include `ringcentral` to register RingCentral GitLab, Jira, and Wiki providers |
 | `CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` | empty | 32-byte key, base64/hex/raw encoded. Required when `ringcentral` is enabled; the server fails closed without it |
-| `RINGCENTRAL_GITLAB_API_BASE_URL` | empty | GitLab API base URL, for example `https://git.example.com/api/v4` |
-| `RINGCENTRAL_GITLAB_WEB_BASE_URL` | empty | GitLab web base URL used for repository and merge request links |
-| `RINGCENTRAL_JIRA_BASE_URL` | empty | Jira base URL |
-| `RINGCENTRAL_WIKI_BASE_URL` | empty | Wiki base URL |
+| `RINGCENTRAL_GITLAB_API_BASE_URL` | `https://git.ringcentral.com/api/v4` | GitLab API base URL |
+| `RINGCENTRAL_GITLAB_WEB_BASE_URL` | `https://git.ringcentral.com` | GitLab web base URL used for repository and merge request links |
+| `RINGCENTRAL_JIRA_BASE_URL` | `https://jira.ringcentral.com` | Jira base URL |
+| `RINGCENTRAL_WIKI_BASE_URL` | `https://wiki.ringcentral.com` | Wiki base URL |
 
 When `ringcentral` is not present in `MULTICA_CONNECTOR_PROFILES`, Settings → Integrations does not render the RingCentral section and no RingCentral provider metadata is exposed.
 

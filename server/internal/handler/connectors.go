@@ -51,6 +51,8 @@ type UpdateWorkspaceConnectorRequest struct {
 	Settings map[string]any `json:"settings"`
 }
 
+const workspaceConnectorEndpointOverridesKey = "endpoint_overrides"
+
 func (h *Handler) ListConnectorProviders(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.ConnectorRegistry == nil {
 		writeJSON(w, http.StatusOK, ConnectorProvidersResponse{Providers: []connectors.ProviderDefinition{}})
@@ -191,7 +193,8 @@ func (h *Handler) SaveConnectorCredential(w http.ResponseWriter, r *http.Request
 		return
 	}
 	providerID := chi.URLParam(r, "providerID")
-	if !h.connectorProviderEnabled(providerID) {
+	provider, ok := h.connectorProvider(providerID)
+	if !ok {
 		writeError(w, http.StatusNotFound, "connector provider not found")
 		return
 	}
@@ -213,7 +216,16 @@ func (h *Handler) SaveConnectorCredential(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "connector provider client is not configured")
 		return
 	}
-	validation, err := h.cfg.ConnectorClients.Validate(r.Context(), providerID, req.Secret)
+	settings, ok := h.workspaceConnectorSettings(r, workspaceID, provider, w)
+	if !ok {
+		return
+	}
+	client, ok := h.connectorClientForSettings(provider, settings)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "connector provider client is not configured")
+		return
+	}
+	validation, err := client.Validate(r.Context(), req.Secret)
 	if err != nil {
 		switch {
 		case connectors.IsAuthError(err):
@@ -232,14 +244,14 @@ func (h *Handler) SaveConnectorCredential(w http.ResponseWriter, r *http.Request
 	}
 
 	ownerUserID := parseUUID(userID)
-	encrypted, err := h.cfg.ConnectorVault.Encrypt(req.Secret, connectorCredentialAssociatedData(workspaceID, providerID, ownerUserID))
+	encrypted, err := h.cfg.ConnectorVault.Encrypt(req.Secret, connectorCredentialAssociatedData(workspaceID, provider.ID, ownerUserID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encrypt connector credential")
 		return
 	}
 	credential, err := h.Queries.UpsertConnectorCredential(r.Context(), db.UpsertConnectorCredentialParams{
 		WorkspaceID:      workspaceID,
-		ProviderID:       providerID,
+		ProviderID:       provider.ID,
 		OwnerUserID:      ownerUserID,
 		EncryptedSecret:  encrypted.Ciphertext,
 		SecretNonce:      encrypted.Nonce,
@@ -333,7 +345,86 @@ func normalizeWorkspaceConnectorSettings(provider connectors.ProviderDefinition,
 		}
 		settings["remote_write_policy"] = policy
 	}
+	overrides, err := normalizeEndpointOverrides(provider, raw[workspaceConnectorEndpointOverridesKey])
+	if err != nil {
+		return nil, err
+	}
+	if len(overrides) > 0 {
+		settings[workspaceConnectorEndpointOverridesKey] = overrides
+	}
 	return settings, nil
+}
+
+func normalizeEndpointOverrides(provider connectors.ProviderDefinition, raw any) (map[string]string, error) {
+	overrides := map[string]string{}
+	if raw == nil {
+		return overrides, nil
+	}
+	rawMap, ok := raw.(map[string]any)
+	if !ok {
+		if typed, ok := raw.(map[string]string); ok {
+			rawMap = make(map[string]any, len(typed))
+			for key, value := range typed {
+				rawMap[key] = value
+			}
+		}
+	}
+	if rawMap == nil {
+		return nil, errors.New("endpoint_overrides must be an object")
+	}
+	for key, rawValue := range rawMap {
+		if _, ok := provider.Endpoints[key]; !ok {
+			return nil, errors.New("invalid endpoint override")
+		}
+		value := strings.TrimSpace(asString(rawValue))
+		if value == "" {
+			continue
+		}
+		if !connectors.ValidHTTPBaseURL(value) {
+			return nil, errors.New("endpoint override must be an http(s) URL")
+		}
+		overrides[key] = strings.TrimRight(value, "/")
+	}
+	return overrides, nil
+}
+
+func effectiveConnectorEndpoints(provider connectors.ProviderDefinition, settings map[string]any) map[string]string {
+	endpoints := make(map[string]string, len(provider.Endpoints))
+	for key, value := range provider.Endpoints {
+		endpoints[key] = value
+	}
+	if settings == nil {
+		return endpoints
+	}
+	raw, ok := settings[workspaceConnectorEndpointOverridesKey]
+	if !ok {
+		return endpoints
+	}
+	switch typed := raw.(type) {
+	case map[string]string:
+		for key, value := range typed {
+			if _, ok := endpoints[key]; ok && strings.TrimSpace(value) != "" {
+				endpoints[key] = strings.TrimRight(strings.TrimSpace(value), "/")
+			}
+		}
+	case map[string]any:
+		for key, rawValue := range typed {
+			if _, ok := endpoints[key]; ok {
+				value := strings.TrimSpace(asString(rawValue))
+				if value != "" {
+					endpoints[key] = strings.TrimRight(value, "/")
+				}
+			}
+		}
+	}
+	return endpoints
+}
+
+func (h *Handler) connectorClientForSettings(provider connectors.ProviderDefinition, settings map[string]any) (connectors.ProviderClient, bool) {
+	if h.cfg.ConnectorClients == nil {
+		return nil, false
+	}
+	return h.cfg.ConnectorClients.GetWithEndpoints(provider.ID, effectiveConnectorEndpoints(provider, settings))
 }
 
 func asString(v any) string {

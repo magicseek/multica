@@ -38,17 +38,40 @@ func TestLoadConfigFromEnvRequiresCredentialKeyForRingCentral(t *testing.T) {
 	}
 }
 
-func TestLoadConfigFromEnvRequiresEndpointsForRingCentral(t *testing.T) {
+func TestLoadConfigFromEnvUsesOfficialRingCentralEndpointDefaults(t *testing.T) {
 	t.Setenv(envConnectorProfiles, "ringcentral")
 	t.Setenv(envCredentialEncryptionKey, base64.StdEncoding.EncodeToString(make([]byte, credentialKeySize)))
 	t.Setenv("RINGCENTRAL_GITLAB_API_BASE_URL", "")
-	t.Setenv("RINGCENTRAL_GITLAB_WEB_BASE_URL", "https://git.example.test")
-	t.Setenv("RINGCENTRAL_JIRA_BASE_URL", "https://jira.example.test")
-	t.Setenv("RINGCENTRAL_WIKI_BASE_URL", "https://wiki.example.test")
+	t.Setenv("RINGCENTRAL_GITLAB_WEB_BASE_URL", "")
+	t.Setenv("RINGCENTRAL_JIRA_BASE_URL", "")
+	t.Setenv("RINGCENTRAL_WIKI_BASE_URL", "")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("LoadConfigFromEnv: %v", err)
+	}
+	if cfg.RingCentral.GitLabAPIBaseURL != DefaultRingCentralGitLabAPIBaseURL {
+		t.Fatalf("gitlab api default = %q", cfg.RingCentral.GitLabAPIBaseURL)
+	}
+	if cfg.RingCentral.GitLabWebBaseURL != DefaultRingCentralGitLabWebBaseURL {
+		t.Fatalf("gitlab web default = %q", cfg.RingCentral.GitLabWebBaseURL)
+	}
+	if cfg.RingCentral.JiraBaseURL != DefaultRingCentralJiraBaseURL {
+		t.Fatalf("jira default = %q", cfg.RingCentral.JiraBaseURL)
+	}
+	if cfg.RingCentral.WikiBaseURL != DefaultRingCentralWikiBaseURL {
+		t.Fatalf("wiki default = %q", cfg.RingCentral.WikiBaseURL)
+	}
+}
+
+func TestLoadConfigFromEnvRejectsInvalidEndpointOverride(t *testing.T) {
+	t.Setenv(envConnectorProfiles, "ringcentral")
+	t.Setenv(envCredentialEncryptionKey, base64.StdEncoding.EncodeToString(make([]byte, credentialKeySize)))
+	t.Setenv("RINGCENTRAL_GITLAB_API_BASE_URL", "git.example.test/api/v4")
 
 	_, err := LoadConfigFromEnv()
 	if err == nil {
-		t.Fatalf("LoadConfigFromEnv should fail without GitLab API endpoint")
+		t.Fatalf("LoadConfigFromEnv should fail with invalid GitLab API endpoint")
 	}
 	if !strings.Contains(err.Error(), "RINGCENTRAL_GITLAB_API_BASE_URL") {
 		t.Fatalf("error %q should mention RINGCENTRAL_GITLAB_API_BASE_URL", err.Error())

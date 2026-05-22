@@ -21,18 +21,25 @@ RingCentral 连接器是私有部署功能。默认 Multica 部署不会显示�
 
 ## 启用 profile
 
-在 API server 上设置 connector profile 和所有部署级 endpoint：
+在 API server 上设置 connector profile 和凭证加密密钥：
 
 ```dotenv
 MULTICA_CONNECTOR_PROFILES=ringcentral
 CONNECTOR_CREDENTIAL_ENCRYPTION_KEY=<32-byte base64/hex/raw key>
-RINGCENTRAL_GITLAB_API_BASE_URL=https://git.example.com/api/v4
-RINGCENTRAL_GITLAB_WEB_BASE_URL=https://git.example.com
-RINGCENTRAL_JIRA_BASE_URL=https://jira.example.com
-RINGCENTRAL_WIKI_BASE_URL=https://wiki.example.com
 ```
 
 设置后重启 API。`CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` 缺失或不是 32 字节时，服务端会 fail closed，不会暴露凭证存储能力。
+
+默认情况下，该 profile 使用 RingCentral 正式服务：
+
+```dotenv
+RINGCENTRAL_GITLAB_API_BASE_URL=https://git.ringcentral.com/api/v4
+RINGCENTRAL_GITLAB_WEB_BASE_URL=https://git.ringcentral.com
+RINGCENTRAL_JIRA_BASE_URL=https://jira.ringcentral.com
+RINGCENTRAL_WIKI_BASE_URL=https://wiki.ringcentral.com
+```
+
+运维仍可通过这些环境变量做部署级覆盖，workspace owner/admin 也可以在 Settings -> Integrations 中覆盖服务地址。
 
 `MULTICA_CONNECTOR_PROFILES` 未包含 `ringcentral` 时，RingCentral provider registry 为空，Settings 不显示 RingCentral 区块，RingCentral project resource 类型会被拒绝，agent runtime guidance 也不会提到 RingCentral connector 命令。
 
@@ -43,6 +50,7 @@ RINGCENTRAL_WIKI_BASE_URL=https://wiki.example.com
 Workspace owner/admin 可以：
 
 - 启用或禁用 workspace 内的各个 RingCentral provider。
+- 当 workspace 需要使用非默认 endpoint 时，编辑服务地址。
 - 设置 RingCentral GitLab 的 remote write policy。GitLab 写操作需要 `merge_request_preparation`；写操作关闭时，读命令仍可使用。
 
 每个成员只能配置自己的凭证：
