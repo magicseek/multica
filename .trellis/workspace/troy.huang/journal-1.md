@@ -247,3 +247,36 @@ Created Trellis task 05-23-chat-plan-runs from grill-with-docs design; added PRD
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Chat Plan Runs implementation
+
+**Date**: 2026-05-23
+**Task**: Chat Plan Runs implementation
+**Branch**: `feat/chat-plan-runs`
+
+### Summary
+
+Implemented stateful Chat Plan Runs with server-owned plan engines, daemon plan prompt context, bounded squad consultations, plan summaries, linked proposal issues, approval completion, frontend Plan mode controls, realtime invalidation, tests, and server chat contract specs. Verification passed for make sqlc, git diff --check, pnpm typecheck, pnpm test, focused Plan Run handler tests, and service/daemon suites; broad handler suite remains blocked by local workflow_run.agent_task_queue_id schema drift.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a6200288` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
