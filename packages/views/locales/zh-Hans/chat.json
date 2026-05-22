@@ -137,7 +137,8 @@
         "pending": "待确认",
         "accepted": "已确认",
         "dismissed": "已忽略",
-        "partially_accepted": "部分确认"
+        "partially_accepted": "部分确认",
+        "superseded": "已替换"
       },
       "item_status": {
         "pending": "待确认",

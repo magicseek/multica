@@ -11,16 +11,29 @@ import (
 
 const maxTaskOutputManifestBytes int64 = 512 * 1024
 
-func clearStaleStructuredTaskOutputManifests(workDir string, taskLog *slog.Logger) {
-	if workDir == "" {
+func prepareStructuredTaskOutputDir(rootDir string, scoped bool, taskLog *slog.Logger) {
+	if rootDir == "" {
+		return
+	}
+	dir := filepath.Join(rootDir, ".multica")
+	if scoped {
+		dir = rootDir
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil && taskLog != nil {
+		taskLog.Warn("structured output directory prepare failed", "dir", dir, "error", err)
+	}
+}
+
+func clearStaleStructuredTaskOutputManifests(rootDir string, scoped bool, taskLog *slog.Logger) {
+	if rootDir == "" {
 		return
 	}
 	for _, relativePath := range []string{
-		TaskChatSummaryManifestRelativePath,
-		TaskIssueProposalsManifestRelativePath,
-		TaskOutputManifestRelativePath,
+		structuredManifestRelativePath(scoped, TaskChatSummaryManifestFileName),
+		structuredManifestRelativePath(scoped, TaskIssueProposalsManifestFileName),
+		structuredManifestRelativePath(scoped, TaskOutputManifestFileName),
 	} {
-		if err := os.Remove(filepath.Join(workDir, relativePath)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(rootDir, relativePath)); err != nil && !os.IsNotExist(err) {
 			if taskLog != nil {
 				taskLog.Warn("stale structured output manifest cleanup failed", "path", relativePath, "error", err)
 			}
@@ -28,17 +41,17 @@ func clearStaleStructuredTaskOutputManifests(workDir string, taskLog *slog.Logge
 	}
 }
 
-func loadTaskOutputManifest(workDir string) (*TaskOutputManifest, error) {
+func loadTaskOutputManifest(rootDir string, scoped bool) (*TaskOutputManifest, error) {
 	var manifest TaskOutputManifest
-	ok, err := loadTaskManifestFile(workDir, TaskOutputManifestRelativePath, "output manifest", &manifest)
+	ok, err := loadTaskManifestFile(rootDir, structuredManifestRelativePath(scoped, TaskOutputManifestFileName), "output manifest", &manifest)
 	if err != nil || !ok {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func loadStructuredTaskOutputs(workDir string, taskLog *slog.Logger) *StructuredTaskOutputs {
-	if workDir == "" {
+func loadStructuredTaskOutputs(rootDir string, scoped bool, taskLog *slog.Logger) *StructuredTaskOutputs {
+	if rootDir == "" {
 		return nil
 	}
 
@@ -46,19 +59,19 @@ func loadStructuredTaskOutputs(workDir string, taskLog *slog.Logger) *Structured
 	loaded := false
 
 	var summary ChatSummaryManifest
-	if ok := loadStructuredManifest(workDir, TaskChatSummaryManifestRelativePath, "chat summary manifest", &summary, taskLog); ok {
+	if ok := loadStructuredManifest(rootDir, structuredManifestRelativePath(scoped, TaskChatSummaryManifestFileName), "chat summary manifest", &summary, taskLog); ok {
 		structured.ChatSummary = &summary
 		loaded = true
 	}
 
 	var proposals IssueProposalsManifest
-	if ok := loadStructuredManifest(workDir, TaskIssueProposalsManifestRelativePath, "issue proposals manifest", &proposals, taskLog); ok {
+	if ok := loadStructuredManifest(rootDir, structuredManifestRelativePath(scoped, TaskIssueProposalsManifestFileName), "issue proposals manifest", &proposals, taskLog); ok {
 		structured.IssueProposals = &proposals
 		loaded = true
 	}
 
 	var outputs TaskOutputManifest
-	if ok := loadStructuredManifest(workDir, TaskOutputManifestRelativePath, "output manifest", &outputs, taskLog); ok {
+	if ok := loadStructuredManifest(rootDir, structuredManifestRelativePath(scoped, TaskOutputManifestFileName), "output manifest", &outputs, taskLog); ok {
 		structured.Outputs = &outputs
 		loaded = true
 	}
@@ -69,8 +82,31 @@ func loadStructuredTaskOutputs(workDir string, taskLog *slog.Logger) *Structured
 	return &structured
 }
 
-func loadStructuredManifest(workDir, relativePath, label string, target any, taskLog *slog.Logger) bool {
-	ok, err := loadTaskManifestFile(workDir, relativePath, label, target)
+func structuredManifestRelativePath(scoped bool, fileName string) string {
+	if scoped {
+		return fileName
+	}
+	switch fileName {
+	case TaskChatSummaryManifestFileName:
+		return TaskChatSummaryManifestRelativePath
+	case TaskIssueProposalsManifestFileName:
+		return TaskIssueProposalsManifestRelativePath
+	case TaskOutputManifestFileName:
+		return TaskOutputManifestRelativePath
+	default:
+		return filepath.Join(".multica", fileName)
+	}
+}
+
+func structuredOutputRoot(result TaskResult) (string, bool) {
+	if result.StructuredOutputDir != "" {
+		return result.StructuredOutputDir, result.StructuredOutputDir != result.WorkDir
+	}
+	return result.WorkDir, false
+}
+
+func loadStructuredManifest(rootDir, relativePath, label string, target any, taskLog *slog.Logger) bool {
+	ok, err := loadTaskManifestFile(rootDir, relativePath, label, target)
 	if err != nil {
 		if taskLog != nil {
 			taskLog.Warn(label+" ignored", "error", err)
@@ -80,11 +116,11 @@ func loadStructuredManifest(workDir, relativePath, label string, target any, tas
 	return ok
 }
 
-func loadTaskManifestFile(workDir, relativePath, label string, target any) (bool, error) {
-	if workDir == "" {
+func loadTaskManifestFile(rootDir, relativePath, label string, target any) (bool, error) {
+	if rootDir == "" {
 		return false, nil
 	}
-	manifestPath := filepath.Join(workDir, relativePath)
+	manifestPath := filepath.Join(rootDir, relativePath)
 	info, err := os.Stat(manifestPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -108,8 +144,8 @@ func loadTaskManifestFile(workDir, relativePath, label string, target any) (bool
 	return true, nil
 }
 
-func (d *Daemon) reportTaskOutputMetadata(ctx context.Context, taskID, workDir string, taskLog *slog.Logger) {
-	manifest, err := loadTaskOutputManifest(workDir)
+func (d *Daemon) reportTaskOutputMetadata(ctx context.Context, taskID, rootDir string, scoped bool, taskLog *slog.Logger) {
+	manifest, err := loadTaskOutputManifest(rootDir, scoped)
 	if err != nil {
 		taskLog.Warn("task output manifest ignored", "error", err)
 		return

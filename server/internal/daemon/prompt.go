@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -157,7 +158,8 @@ func buildChatPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
 	b.WriteString("A user is chatting with you directly. Respond to their message.\n\n")
-	b.WriteString("Issue/task creation requests in chat are proposal-first. If the user asks you to create, split, plan, or generate issues/tasks, write reviewable proposal cards to `.multica/issue-proposals.json` and mention that they can approve them in the chat UI. Do not run `multica issue create` from chat unless the user explicitly asks to create immediately without approval.\n\n")
+	proposalPath := filepath.ToSlash(filepath.Join(execenv.ChatStructuredOutputRelativeDir(task.ChatSessionID), TaskIssueProposalsManifestFileName))
+	fmt.Fprintf(&b, "Issue/task creation requests in chat are proposal-first. If the user asks you to create, split, plan, or generate issues/tasks, write reviewable proposal cards to `$%s/%s` (relative path `%s`) and mention that they can approve them in the chat UI. Do not run `multica issue create` from chat unless the user explicitly asks to create immediately without approval.\n\n", execenv.StructuredOutputDirEnv, TaskIssueProposalsManifestFileName, proposalPath)
 	fmt.Fprintf(&b, "User message:\n%s\n", task.ChatMessage)
 	// List attachments by id + filename so the agent can fetch them via
 	// the CLI. We deliberately do NOT inline the URL: chat attachments

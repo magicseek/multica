@@ -177,10 +177,15 @@ completion.
 - Separate durable workspace state from single-run handoff files.
 - Durable project context can persist across runs, for example
   `.multica/project/*`.
-- Structured task outputs such as `.multica/chat-summary.json`,
-  `.multica/issue-proposals.json`, and `.multica/outputs.json` are
-  single-run handoff files. They must be removed before each task agent starts
-  in a reused workdir.
+- Structured task outputs are single-run handoff files. Non-chat tasks use
+  legacy paths such as `.multica/chat-summary.json`,
+  `.multica/issue-proposals.json`, and `.multica/outputs.json`.
+- Chat tasks that share a source workdir must isolate handoff files under
+  `.multica/chats/<chat_session_id>/` and expose that directory to the agent
+  as `MULTICA_STRUCTURED_OUTPUT_DIR`.
+- Pre-run cleanup must target only the current handoff location. It must not
+  remove durable `.multica/project/*` files, legacy shared manifests when the
+  current task is chat-scoped, or sibling chat-session handoff directories.
 - If a task agent does not write a fresh handoff file, the server should receive
   no data for that handoff type. It must not infer freshness from file presence
   alone in a reused directory.
@@ -188,7 +193,10 @@ completion.
 ### Checklist: Before Adding Agent-Written Files
 
 - [ ] Decide whether the file is durable context or a single-run handoff.
-- [ ] If it is a handoff, add pre-run cleanup in the daemon before agent spawn.
+- [ ] If it is a handoff, decide whether its ownership key is task, chat
+  session, issue, project, or repository before choosing a filesystem path.
+- [ ] If it is a handoff, add pre-run cleanup in the daemon before agent spawn,
+  scoped to that ownership key.
 - [ ] Add a regression that reuses a workdir containing stale handoff files and
   proves stale data is not uploaded.
 - [ ] Verify cleanup preserves durable `.multica/project/*` context.

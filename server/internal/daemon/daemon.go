@@ -2057,10 +2057,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 // the next chat turn to resume there rather than start over and "forget"
 // the conversation.
 func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result TaskResult, taskLog *slog.Logger) {
+	structuredOutputDir, structuredOutputScoped := structuredOutputRoot(result)
 	switch result.Status {
 	case "completed":
 		taskLog.Info("task completed", "status", result.Status)
-		structuredOutputs := loadStructuredTaskOutputs(result.WorkDir, taskLog)
+		structuredOutputs := loadStructuredTaskOutputs(structuredOutputDir, structuredOutputScoped, taskLog)
 		if err := d.client.CompleteTask(ctx, taskID, result.Comment, result.BranchName, result.SessionID, result.WorkDir, structuredOutputs); err != nil {
 			taskLog.Error("complete task failed, falling back to fail", "error", err)
 			if failErr := d.client.FailTask(ctx, taskID, fmt.Sprintf("complete task failed: %s", err.Error()), result.SessionID, result.WorkDir, "agent_error"); failErr != nil {
@@ -2069,7 +2070,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			return
 		}
 		if structuredOutputs == nil || structuredOutputs.Outputs == nil {
-			d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
+			d.reportTaskOutputMetadata(ctx, taskID, structuredOutputDir, structuredOutputScoped, taskLog)
 		}
 	default:
 		failureReason := result.FailureReason
@@ -2085,7 +2086,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			taskLog.Error("report failed task failed", "error", err)
 			return
 		}
-		d.reportTaskOutputMetadata(ctx, taskID, result.WorkDir, taskLog)
+		d.reportTaskOutputMetadata(ctx, taskID, structuredOutputDir, structuredOutputScoped, taskLog)
 	}
 }
 
@@ -2285,7 +2286,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
 
-	clearStaleStructuredTaskOutputManifests(env.WorkDir, taskLog)
+	structuredOutputDir := env.WorkDir
+	structuredOutputScoped := false
+	if task.ChatSessionID != "" {
+		structuredOutputDir = execenv.ChatStructuredOutputDir(env.WorkDir, task.ChatSessionID)
+		structuredOutputScoped = true
+	}
+	prepareStructuredTaskOutputDir(structuredOutputDir, structuredOutputScoped, taskLog)
+	clearStaleStructuredTaskOutputManifests(structuredOutputDir, structuredOutputScoped, taskLog)
 	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
 	execEnvMs := time.Since(execEnvStart).Milliseconds()
 
@@ -2343,6 +2351,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if task.ChatSessionID != "" {
 		agentEnv["MULTICA_CHAT_SESSION_ID"] = task.ChatSessionID
+		if structuredOutputDir != "" {
+			agentEnv[execenv.StructuredOutputDirEnv] = structuredOutputDir
+		}
 		if task.ProjectID != "" {
 			agentEnv["MULTICA_CHAT_PROJECT_ID"] = task.ProjectID
 		}
@@ -2569,12 +2580,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// a normal completion so the task is not incorrectly marked as
 			// blocked.
 			return TaskResult{
-				Status:    "completed",
-				Comment:   "",
-				SessionID: result.SessionID,
-				WorkDir:   env.WorkDir,
-				EnvRoot:   env.RootDir,
-				Usage:     usageEntries,
+				Status:              "completed",
+				Comment:             "",
+				SessionID:           result.SessionID,
+				WorkDir:             env.WorkDir,
+				EnvRoot:             env.RootDir,
+				StructuredOutputDir: structuredOutputDir,
+				Usage:               usageEntries,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -2589,22 +2601,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				"failure_reason", reason,
 			)
 			return TaskResult{
-				Status:        "blocked",
-				Comment:       result.Output,
-				SessionID:     result.SessionID,
-				WorkDir:       env.WorkDir,
-				EnvRoot:       env.RootDir,
-				Usage:         usageEntries,
-				FailureReason: reason,
+				Status:              "blocked",
+				Comment:             result.Output,
+				SessionID:           result.SessionID,
+				WorkDir:             env.WorkDir,
+				EnvRoot:             env.RootDir,
+				StructuredOutputDir: structuredOutputDir,
+				Usage:               usageEntries,
+				FailureReason:       reason,
 			}, nil
 		}
 		return TaskResult{
-			Status:    "completed",
-			Comment:   result.Output,
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:              "completed",
+			Comment:             result.Output,
+			SessionID:           result.SessionID,
+			WorkDir:             env.WorkDir,
+			EnvRoot:             env.RootDir,
+			StructuredOutputDir: structuredOutputDir,
+			Usage:               usageEntries,
 		}, nil
 	case "timeout":
 		// Surface session_id/work_dir so the chat resume pointer is kept
@@ -2616,13 +2630,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			comment = fmt.Sprintf("%s timed out after %s", provider, d.cfg.AgentTimeout)
 		}
 		return TaskResult{
-			Status:        "blocked",
-			Comment:       comment,
-			SessionID:     result.SessionID,
-			WorkDir:       env.WorkDir,
-			EnvRoot:       env.RootDir,
-			FailureReason: "timeout",
-			Usage:         usageEntries,
+			Status:              "blocked",
+			Comment:             comment,
+			SessionID:           result.SessionID,
+			WorkDir:             env.WorkDir,
+			EnvRoot:             env.RootDir,
+			StructuredOutputDir: structuredOutputDir,
+			FailureReason:       "timeout",
+			Usage:               usageEntries,
 		}, nil
 	case "idle_watchdog":
 		// The idle watchdog force-stopped the run because the backend
@@ -2635,13 +2650,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			comment = idleWatchdogReason(d.cfg.AgentIdleWatchdog)
 		}
 		return TaskResult{
-			Status:        "blocked",
-			Comment:       comment,
-			SessionID:     result.SessionID,
-			WorkDir:       env.WorkDir,
-			EnvRoot:       env.RootDir,
-			FailureReason: "idle_watchdog",
-			Usage:         usageEntries,
+			Status:              "blocked",
+			Comment:             comment,
+			SessionID:           result.SessionID,
+			WorkDir:             env.WorkDir,
+			EnvRoot:             env.RootDir,
+			StructuredOutputDir: structuredOutputDir,
+			FailureReason:       "idle_watchdog",
+			Usage:               usageEntries,
 		}, nil
 	case "cancelled":
 		// Server cancelled the task (e.g. issue reassignment, user cancel).
@@ -2650,12 +2666,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// status string for the "agent finished" log line so operators can
 		// distinguish "task cancelled by server" from a real timeout.
 		return TaskResult{
-			Status:    "cancelled",
-			Comment:   "task cancelled by server",
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:              "cancelled",
+			Comment:             "task cancelled by server",
+			SessionID:           result.SessionID,
+			WorkDir:             env.WorkDir,
+			EnvRoot:             env.RootDir,
+			StructuredOutputDir: structuredOutputDir,
+			Usage:               usageEntries,
 		}, nil
 	default:
 		errMsg := result.Error
@@ -2681,13 +2698,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			)
 		}
 		return TaskResult{
-			Status:        "blocked",
-			Comment:       errMsg,
-			SessionID:     result.SessionID,
-			WorkDir:       env.WorkDir,
-			EnvRoot:       env.RootDir,
-			Usage:         usageEntries,
-			FailureReason: failureReason,
+			Status:              "blocked",
+			Comment:             errMsg,
+			SessionID:           result.SessionID,
+			WorkDir:             env.WorkDir,
+			EnvRoot:             env.RootDir,
+			StructuredOutputDir: structuredOutputDir,
+			Usage:               usageEntries,
+			FailureReason:       failureReason,
 		}, nil
 	}
 }
@@ -3402,6 +3420,7 @@ var dynamicAgentEnvKeys = []string{
 	"MULTICA_QUICK_CREATE_TASK_ID",
 	"MULTICA_CHAT_SESSION_ID",
 	"MULTICA_CHAT_PROJECT_ID",
+	execenv.StructuredOutputDirEnv,
 }
 
 func shouldUseCodexChatRunner(provider string, task Task, env *execenv.Environment) bool {

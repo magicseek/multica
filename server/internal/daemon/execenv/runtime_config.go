@@ -364,7 +364,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- You have full access to the `multica` CLI to look up issues, workspace info, members, agents, etc.\n")
 		b.WriteString("- If asked about issues, use `multica issue list --output json` or `multica issue get <id> --output json`\n")
 		b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
-		b.WriteString("- If asked to create, split, plan, or generate issues/tasks, write proposal cards to `.multica/issue-proposals.json` for user approval. Do not run `multica issue create` unless the user explicitly asks to create immediately without approval.\n")
+		proposalPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "issue-proposals.json"))
+		fmt.Fprintf(&b, "- If asked to create, split, plan, or generate issues/tasks, write proposal cards to `$%s/issue-proposals.json` (relative path `%s`) for user approval. Do not run `multica issue create` unless the user explicitly asks to create immediately without approval.\n", StructuredOutputDirEnv, proposalPath)
 		b.WriteString("- For non-creation actions such as status updates on existing issues, use the appropriate CLI commands.\n")
 		b.WriteString("- If the task requires code changes, use the Repositories section to identify the code target. For repositories with a current local path, use that directory directly; for repositories with a checkout command, run it first; for local-only repositories without a current local path or `remote_url`, local binding execution is not available in this slice\n")
 		b.WriteString("- Keep responses concise and direct\n\n")
@@ -500,7 +501,12 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("After downloading, you can read the file directly (e.g. view an image, read a document).\n\n")
 
 	b.WriteString("## Output Metadata Manifest\n\n")
-	b.WriteString("If you create local files the user should be able to discover from the Multica UI, write an explicit manifest at `.multica/outputs.json`. ")
+	if ctx.ChatSessionID != "" {
+		outputPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "outputs.json"))
+		fmt.Fprintf(&b, "If you create local files the user should be able to discover from the Multica UI, write an explicit manifest at `$%s/outputs.json` (relative path `%s`). ", StructuredOutputDirEnv, outputPath)
+	} else {
+		b.WriteString("If you create local files the user should be able to discover from the Multica UI, write an explicit manifest at `.multica/outputs.json`. ")
+	}
 	b.WriteString("The daemon uploads metadata only from this file; it does not scan the worktree. ")
 	b.WriteString("Use repository-relative paths only. Do not include file contents, diffs, logs, screenshots, stack traces, absolute paths, or secrets.\n\n")
 	b.WriteString("```json\n")
@@ -508,11 +514,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("```\n\n")
 
 	if ctx.ChatSessionID != "" {
+		chatOutputDir := filepath.ToSlash(ChatStructuredOutputRelativeDir(ctx.ChatSessionID))
+		summaryPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "chat-summary.json"))
+		proposalsPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "issue-proposals.json"))
 		b.WriteString("## Chat Structured Output Manifests\n\n")
-		b.WriteString("For chat tasks, the backend can ingest optional structured handoff files from `.multica/` when your run completes. ")
+		fmt.Fprintf(&b, "For chat tasks, the backend can ingest optional structured handoff files only from `$%s` (relative directory `%s`) when your run completes. ", StructuredOutputDirEnv, chatOutputDir)
 		b.WriteString("Use these files only for metadata and proposals; do not create issues directly unless the user explicitly asks through the normal issue workflow.\n\n")
-		b.WriteString("- `.multica/chat-summary.json` updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n")
-		b.WriteString("- `.multica/issue-proposals.json` proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n")
+		fmt.Fprintf(&b, "- `$%s/chat-summary.json` (relative path `%s`) updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n", StructuredOutputDirEnv, summaryPath)
+		fmt.Fprintf(&b, "- `$%s/issue-proposals.json` (relative path `%s`) proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n", StructuredOutputDirEnv, proposalsPath)
 		b.WriteString("```json\n")
 		b.WriteString("{\"version\":1,\"proposals\":[{\"title\":\"Implementation follow-ups\",\"summary\":\"Suggested issues from this chat.\",\"items\":[{\"title\":\"Add chat issue proposal review flow\",\"description\":\"Let users edit and accept proposed issues.\",\"priority\":\"medium\",\"labels\":[\"chat\"]}]}]}\n")
 		b.WriteString("```\n\n")

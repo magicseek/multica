@@ -1987,6 +1987,43 @@ func (q *Queries) SkipPendingChatIssueProposalItems(ctx context.Context, proposa
 	return err
 }
 
+const supersedePendingChatIssueProposalsForSession = `-- name: SupersedePendingChatIssueProposalsForSession :exec
+WITH candidates AS (
+    SELECT cip.id
+    FROM chat_issue_proposal cip
+    WHERE cip.chat_session_id = $1
+      AND cip.status = 'pending'
+      AND cip.source_task_id IS DISTINCT FROM $2
+      AND NOT EXISTS (
+          SELECT 1
+          FROM chat_issue_proposal_item cipi
+          WHERE cipi.proposal_id = cip.id
+            AND cipi.status <> 'pending'
+      )
+), skipped_items AS (
+    UPDATE chat_issue_proposal_item
+    SET status = 'skipped',
+        updated_at = now()
+    WHERE proposal_id IN (SELECT id FROM candidates)
+      AND status = 'pending'
+    RETURNING proposal_id
+)
+UPDATE chat_issue_proposal
+SET status = 'superseded',
+    updated_at = now()
+WHERE id IN (SELECT id FROM candidates)
+`
+
+type SupersedePendingChatIssueProposalsForSessionParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	SourceTaskID  pgtype.UUID `json:"source_task_id"`
+}
+
+func (q *Queries) SupersedePendingChatIssueProposalsForSession(ctx context.Context, arg SupersedePendingChatIssueProposalsForSessionParams) error {
+	_, err := q.db.Exec(ctx, supersedePendingChatIssueProposalsForSession, arg.ChatSessionID, arg.SourceTaskID)
+	return err
+}
+
 const touchChatSession = `-- name: TouchChatSession :exec
 UPDATE chat_session SET updated_at = now()
 WHERE id = $1

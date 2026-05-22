@@ -1,0 +1,33 @@
+{
+  "id": "chat-structured-output-isolation",
+  "name": "chat-structured-output-isolation",
+  "title": "Isolate chat structured output handoffs",
+  "description": "Isolate chat structured output manifests by chat/session ownership while preserving shared local source workdirs.",
+  "status": "in_progress",
+  "dev_type": "bugfix",
+  "scope": "daemon-chat-structured-outputs",
+  "package": "server",
+  "priority": "P2",
+  "creator": "troy",
+  "assignee": "troy",
+  "createdAt": "2026-05-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "trellis/ai-desk-flows-to-multica-workflows",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "05-19-ai-desk-flows-to-multica-workflows",
+  "relatedFiles": [
+    "server/internal/daemon/daemon.go",
+    "server/internal/daemon/task_output_manifest.go",
+    "server/internal/daemon/prompt.go",
+    "server/internal/daemon/execenv/runtime_config.go",
+    "server/internal/handler/chat_structured_outputs.go",
+    "server/pkg/db/queries/chat.sql"
+  ],
+  "notes": "",
+  "meta": {}
+}

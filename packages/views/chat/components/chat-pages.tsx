@@ -426,9 +426,11 @@ function ChatIssuesPanel({ sessionId }: { sessionId: string }) {
   const pendingProposalItems = useMemo(
     () =>
       proposals.flatMap((proposal) =>
-        proposal.items
-          .filter((item) => item.status === "pending")
-          .map((item) => ({ proposal, item })),
+        proposal.status === "pending"
+          ? proposal.items
+              .filter((item) => item.status === "pending")
+              .map((item) => ({ proposal, item }))
+          : [],
       ),
     [proposals],
   );
@@ -1045,7 +1047,9 @@ function ProposalStatusBadge({ status }: { status: ChatIssueProposal["status"] }
         ? t(($) => $.pages.session.proposal_status.dismissed)
         : status === "partially_accepted"
           ? t(($) => $.pages.session.proposal_status.partially_accepted)
-          : t(($) => $.pages.session.proposal_status.pending);
+          : status === "superseded"
+            ? t(($) => $.pages.session.proposal_status.superseded)
+            : t(($) => $.pages.session.proposal_status.pending);
   return (
     <Badge variant="outline" className="text-muted-foreground">
       {label}

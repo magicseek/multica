@@ -140,7 +140,8 @@
         "pending": "Pending",
         "accepted": "Accepted",
         "dismissed": "Dismissed",
-        "partially_accepted": "Partial"
+        "partially_accepted": "Partial",
+        "superseded": "Replaced"
       },
       "item_status": {
         "pending": "Pending",

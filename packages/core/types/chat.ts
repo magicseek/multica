@@ -63,7 +63,7 @@ export interface ChatSidebarRecentsResponse {
   has_more: boolean;
 }
 
-export type ChatIssueProposalStatus = "pending" | "accepted" | "partially_accepted" | "dismissed";
+export type ChatIssueProposalStatus = "pending" | "accepted" | "partially_accepted" | "dismissed" | "superseded";
 export type ChatIssueProposalItemStatus = "pending" | "created" | "skipped";
 
 export interface ChatIssueProposalItem {

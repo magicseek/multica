@@ -9,7 +9,7 @@ import (
 
 func TestLoadTaskOutputManifestReadsExplicitFileOnly(t *testing.T) {
 	workDir := t.TempDir()
-	manifest, err := loadTaskOutputManifest(workDir)
+	manifest, err := loadTaskOutputManifest(workDir, false)
 	if err != nil {
 		t.Fatalf("missing manifest returned error: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestLoadTaskOutputManifestReadsExplicitFileOnly(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	manifest, err = loadTaskOutputManifest(workDir)
+	manifest, err = loadTaskOutputManifest(workDir, false)
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestLoadTaskOutputManifestRejectsLargeManifest(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	if _, err := loadTaskOutputManifest(workDir); err == nil {
+	if _, err := loadTaskOutputManifest(workDir, false); err == nil {
 		t.Fatal("expected oversized manifest error")
 	}
 }
@@ -78,7 +78,7 @@ func TestLoadStructuredTaskOutputsReadsAllManifests(t *testing.T) {
 		}
 	}
 
-	structured := loadStructuredTaskOutputs(workDir, nil)
+	structured := loadStructuredTaskOutputs(workDir, false, nil)
 	if structured == nil {
 		t.Fatal("structured outputs = nil")
 	}
@@ -114,7 +114,7 @@ func TestClearStaleStructuredTaskOutputManifestsRemovesOnlyTaskOutputs(t *testin
 		}
 	}
 
-	clearStaleStructuredTaskOutputManifests(workDir, nil)
+	clearStaleStructuredTaskOutputManifests(workDir, false, nil)
 
 	for _, relativePath := range []string{
 		TaskChatSummaryManifestRelativePath,
@@ -133,8 +133,51 @@ func TestClearStaleStructuredTaskOutputManifestsRemovesOnlyTaskOutputs(t *testin
 			t.Fatalf("%s should be preserved: %v", relativePath, err)
 		}
 	}
-	if structured := loadStructuredTaskOutputs(workDir, nil); structured != nil {
+	if structured := loadStructuredTaskOutputs(workDir, false, nil); structured != nil {
 		t.Fatalf("structured outputs after cleanup = %+v, want nil", structured)
+	}
+}
+
+func TestChatScopedStructuredTaskOutputsIgnoreOtherChatsAndLegacyFiles(t *testing.T) {
+	workDir := t.TempDir()
+	legacyDir := filepath.Join(workDir, ".multica")
+	chatOneDir := filepath.Join(workDir, ".multica", "chats", "chat-one")
+	chatTwoDir := filepath.Join(workDir, ".multica", "chats", "chat-two")
+	for _, dir := range []string{legacyDir, chatOneDir, chatTwoDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create manifest dir %s: %v", dir, err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(legacyDir, TaskIssueProposalsManifestFileName):  `{"version":1,"proposals":[{"title":"Legacy stale","items":[{"title":"Wrong","description":"Wrong chat"}]}]}`,
+		filepath.Join(chatOneDir, TaskIssueProposalsManifestFileName): `{"version":1,"proposals":[{"title":"Chat one","items":[{"title":"Other","description":"Other chat"}]}]}`,
+		filepath.Join(chatTwoDir, TaskIssueProposalsManifestFileName): `{"version":1,"proposals":[{"title":"Chat two","items":[{"title":"Expected","description":"Current chat","labels":["current"]}]}]}`,
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	structured := loadStructuredTaskOutputs(chatTwoDir, true, nil)
+	if structured == nil || structured.IssueProposals == nil || len(structured.IssueProposals.Proposals) != 1 {
+		t.Fatalf("issue proposals = %+v", structured)
+	}
+	if got := structured.IssueProposals.Proposals[0].Title; got != "Chat two" {
+		t.Fatalf("loaded proposal title = %q, want Chat two", got)
+	}
+
+	clearStaleStructuredTaskOutputManifests(chatTwoDir, true, nil)
+	if _, err := os.Stat(filepath.Join(chatTwoDir, TaskIssueProposalsManifestFileName)); !os.IsNotExist(err) {
+		t.Fatalf("chat two manifest still exists or stat failed with unexpected error: %v", err)
+	}
+	for _, preserved := range []string{
+		filepath.Join(legacyDir, TaskIssueProposalsManifestFileName),
+		filepath.Join(chatOneDir, TaskIssueProposalsManifestFileName),
+	} {
+		if _, err := os.Stat(preserved); err != nil {
+			t.Fatalf("%s should be preserved: %v", preserved, err)
+		}
 	}
 }
 
@@ -158,7 +201,7 @@ func TestLoadStructuredTaskOutputsIgnoresInvalidManifestIndividually(t *testing.
 		t.Fatalf("write invalid proposals manifest: %v", err)
 	}
 
-	structured := loadStructuredTaskOutputs(workDir, nil)
+	structured := loadStructuredTaskOutputs(workDir, false, nil)
 	if structured == nil {
 		t.Fatal("structured outputs = nil")
 	}

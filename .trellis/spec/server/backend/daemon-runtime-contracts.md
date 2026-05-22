@@ -65,9 +65,12 @@ Quick-create CLI version gate:
 - A canceled folder picker is not an error and must not create a repository or binding.
 - Local bridge CORS is limited to localhost origins, production Multica origins, and explicit environment allowlists; include `Access-Control-Allow-Private-Network` for browser private-network preflights.
 - Reusable daemon workdirs may preserve source files, checkouts, and project context, but task-scoped structured output manifests are single-run handoff files.
-- Before spawning each task agent, the daemon must remove stale `.multica/chat-summary.json`, `.multica/issue-proposals.json`, and `.multica/outputs.json` from the selected workdir.
+- Non-chat tasks keep the legacy structured handoff path under the selected workdir: `.multica/chat-summary.json`, `.multica/issue-proposals.json`, and `.multica/outputs.json`.
+- Chat tasks must isolate structured handoff files under `.multica/chats/<chat_session_id>/` while continuing to run with the selected source workdir as cwd. The daemon exports `MULTICA_STRUCTURED_OUTPUT_DIR=<workdir>/.multica/chats/<chat_session_id>` and reads chat summaries, issue proposals, and output metadata only from that directory.
+- Before spawning a chat task agent, the daemon must create and clean only the current chat's `MULTICA_STRUCTURED_OUTPUT_DIR` files: `chat-summary.json`, `issue-proposals.json`, and `outputs.json`. It must not delete shared `.multica/issue-proposals.json` or sibling `.multica/chats/<other_session_id>/*` files.
 - Structured output manifest cleanup must not remove durable project context such as `.multica/project/resources.json` or other `.multica/project/*` files.
 - A task that does not write a fresh structured output manifest must complete with no structured outputs, rather than re-uploading a previous chat or task's proposals.
+- When a same-chat task writes a new valid issue proposal manifest, pending proposals from earlier tasks in the same `chat_session_id` may be marked `superseded` and their pending items marked `skipped`. Superseding must never cross chat sessions and must not alter proposals/items that a user already accepted, partially accepted, dismissed, created, or skipped.
 
 ### 4. Validation & Error Matrix
 
@@ -94,6 +97,8 @@ Quick-create CLI version gate:
 - Bad: server bypasses `CheckMinCLIVersion` based on request origin, desktop app presence, or local environment variables.
 - Bad: `/folder/select` opens the native picker before checking `daemon_id`.
 - Bad: a reused local workdir still contains `.multica/issue-proposals.json` from a prior chat and the daemon uploads it as the current chat's proposal set.
+- Bad: chat A and chat B share one local repository binding and chat A's pre-run cleanup deletes chat B's `.multica/chats/<chat_b>/issue-proposals.json`.
+- Bad: a new chat task in chat A supersedes pending proposals in chat B because both sessions share one source workdir.
 
 ### 6. Tests Required
 
@@ -111,7 +116,9 @@ Quick-create CLI version gate:
   - daemon id mismatch returns `409` and does not invoke the picker
   - cancel returns success with `canceled=true`
 - View tests verify a browser-only handle path is not submitted and a daemon/native path is submitted as an inline local binding.
-- Daemon structured output tests verify stale task manifests are removed before reuse while `.multica/project/*` context is preserved.
+- Daemon structured output tests verify legacy non-chat stale task manifests are removed before reuse while `.multica/project/*` context is preserved.
+- Daemon structured output tests verify chat-scoped loading ignores legacy `.multica/issue-proposals.json` and sibling chat manifests, and chat-scoped cleanup removes only files inside the current `MULTICA_STRUCTURED_OUTPUT_DIR`.
+- Handler tests verify same-chat fresh proposal manifests supersede only earlier pending proposals in the same chat and preserve user-acted proposals/items.
 
 ### 7. Wrong vs Correct
 

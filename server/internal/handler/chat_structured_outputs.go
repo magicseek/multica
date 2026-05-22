@@ -176,6 +176,13 @@ func (h *Handler) processIssueProposalsManifest(r *http.Request, task db.AgentTa
 		slog.Warn("issue proposals replace failed", "task_id", uuidToString(task.ID), "error", err)
 		return
 	}
+	if err := qtx.SupersedePendingChatIssueProposalsForSession(r.Context(), db.SupersedePendingChatIssueProposalsForSessionParams{
+		ChatSessionID: task.ChatSessionID,
+		SourceTaskID:  task.ID,
+	}); err != nil {
+		slog.Warn("issue proposals supersede failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
 
 	itemCount := 0
 	for _, proposal := range prepared {

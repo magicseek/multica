@@ -164,7 +164,8 @@ func TestBuildChatPromptRoutesIssueCreationToProposals(t *testing.T) {
 	})
 
 	mustContain := []string{
-		".multica/issue-proposals.json",
+		"MULTICA_STRUCTURED_OUTPUT_DIR",
+		".multica/chats/chat-1/issue-proposals.json",
 		"proposal cards",
 		"Do not run `multica issue create`",
 		"explicitly asks to create immediately",

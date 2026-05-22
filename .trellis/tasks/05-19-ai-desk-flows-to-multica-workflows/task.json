@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "05-22-project-chat-analytics-tabs"
+    "05-22-project-chat-analytics-tabs",
+    "05-22-chat-structured-output-isolation"
   ],
   "parent": null,
   "relatedFiles": [],

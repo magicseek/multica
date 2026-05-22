@@ -4,15 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
+
+var chatStructuredOutputAgentSeq atomic.Int64
 
 func createChatStructuredOutputTestTask(t *testing.T, titleSource string) (agentID, sessionID, taskID string) {
 	t.Helper()
 
-	agentID = createHandlerTestAgent(t, "ChatStructuredOutputAgent", []byte("[]"))
+	agentID = createHandlerTestAgent(t, fmt.Sprintf("ChatStructuredOutputAgent-%d", chatStructuredOutputAgentSeq.Add(1)), []byte("[]"))
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO chat_session (
 			workspace_id, agent_id, creator_id, title, status, title_source
@@ -40,6 +44,25 @@ func createChatStructuredOutputTestTask(t *testing.T, titleSource string) (agent
 	})
 
 	return agentID, sessionID, taskID
+}
+
+func createChatStructuredOutputTestTaskForSession(t *testing.T, agentID, sessionID string) string {
+	t.Helper()
+
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, chat_session_id, status, priority, started_at
+		)
+		VALUES ($1, $2, $3, 'running', 0, now())
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t), sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("create chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+	return taskID
 }
 
 func completeChatStructuredOutputTask(t *testing.T, taskID string, structured map[string]any) *httptest.ResponseRecorder {
@@ -251,6 +274,113 @@ func TestCompleteTask_ChatStructuredOutputsPersistSummaryProposalAndOutputs(t *t
 	}
 	if outputCount != 1 {
 		t.Fatalf("output metadata count after compatibility upload = %d, want 1", outputCount)
+	}
+}
+
+func TestCompleteTask_ChatIssueProposalsSupersedeOnlyWithinSameChat(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, sessionID, firstTaskID := createChatStructuredOutputTestTask(t, "legacy")
+	_, otherSessionID, otherTaskID := createChatStructuredOutputTestTask(t, "legacy")
+
+	firstPayload := map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "First chat proposal",
+					"items": []map[string]any{
+						{"title": "Old pending item", "description": "This should be replaced by the next same-chat task."},
+					},
+				},
+			},
+		},
+	}
+	otherPayload := map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "Other chat proposal",
+					"items": []map[string]any{
+						{"title": "Other pending item", "description": "This belongs to a different chat."},
+					},
+				},
+			},
+		},
+	}
+	for taskID, payload := range map[string]map[string]any{
+		firstTaskID: firstPayload,
+		otherTaskID: otherPayload,
+	} {
+		w := completeChatStructuredOutputTask(t, taskID, payload)
+		if w.Code != http.StatusOK {
+			t.Fatalf("CompleteTask(%s): expected 200, got %d: %s", taskID, w.Code, w.Body.String())
+		}
+	}
+
+	secondTaskID := createChatStructuredOutputTestTaskForSession(t, agentID, sessionID)
+	secondPayload := map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "Second chat proposal",
+					"items": []map[string]any{
+						{"title": "New pending item", "description": "This is the current same-chat proposal."},
+					},
+				},
+			},
+		},
+	}
+	w := completeChatStructuredOutputTask(t, secondTaskID, secondPayload)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask second: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	rows, err := testPool.Query(ctx, `
+		SELECT p.title, p.status, i.status
+		FROM chat_issue_proposal p
+		JOIN chat_issue_proposal_item i ON i.proposal_id = p.id
+		WHERE p.chat_session_id = $1
+		ORDER BY p.title ASC
+	`, sessionID)
+	if err != nil {
+		t.Fatalf("query same-chat proposals: %v", err)
+	}
+	defer rows.Close()
+	got := map[string][2]string{}
+	for rows.Next() {
+		var title, proposalStatus, itemStatus string
+		if err := rows.Scan(&title, &proposalStatus, &itemStatus); err != nil {
+			t.Fatalf("scan same-chat proposal: %v", err)
+		}
+		got[title] = [2]string{proposalStatus, itemStatus}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate same-chat proposals: %v", err)
+	}
+	if got["First chat proposal"] != [2]string{"superseded", "skipped"} {
+		t.Fatalf("first proposal state = %v, want superseded/skipped", got["First chat proposal"])
+	}
+	if got["Second chat proposal"] != [2]string{"pending", "pending"} {
+		t.Fatalf("second proposal state = %v, want pending/pending", got["Second chat proposal"])
+	}
+
+	var otherProposalStatus, otherItemStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT p.status, i.status
+		FROM chat_issue_proposal p
+		JOIN chat_issue_proposal_item i ON i.proposal_id = p.id
+		WHERE p.chat_session_id = $1
+	`, otherSessionID).Scan(&otherProposalStatus, &otherItemStatus); err != nil {
+		t.Fatalf("query other-chat proposal: %v", err)
+	}
+	if otherProposalStatus != "pending" || otherItemStatus != "pending" {
+		t.Fatalf("other chat proposal = %s/%s, want pending/pending", otherProposalStatus, otherItemStatus)
 	}
 }
 

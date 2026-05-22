@@ -1028,7 +1028,8 @@ func TestBuildInlineRuntimeBriefOmitsCommandCatalogAndKeepsChatContext(t *testin
 		"Chat Agent",
 		"Prefer concise replies.",
 		"**You are in chat mode.**",
-		".multica/issue-proposals.json",
+		"MULTICA_STRUCTURED_OUTPUT_DIR",
+		".multica/chats/chat-one/issue-proposals.json",
 		"Game",
 		"grill-with-docs",
 		"Use `--output json` for structured data",
@@ -1049,6 +1050,16 @@ func TestBuildRuntimeBriefOnlyRendersChatManifestsForChatTasks(t *testing.T) {
 	chat := BuildRuntimeBrief("codex", TaskContextForEnv{ChatSessionID: "chat-one"}).Full
 	if !strings.Contains(chat, "## Chat Structured Output Manifests") {
 		t.Fatal("chat runtime brief should include structured output manifest instructions")
+	}
+	for _, want := range []string{
+		"MULTICA_STRUCTURED_OUTPUT_DIR",
+		".multica/chats/chat-one/chat-summary.json",
+		".multica/chats/chat-one/issue-proposals.json",
+		".multica/chats/chat-one/outputs.json",
+	} {
+		if !strings.Contains(chat, want) {
+			t.Fatalf("chat runtime brief missing %q", want)
+		}
 	}
 }
 

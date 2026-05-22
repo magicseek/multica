@@ -14,6 +14,12 @@ import (
 	"time"
 )
 
+const (
+	// StructuredOutputDirEnv points chat agents at the only directory the
+	// daemon will inspect for chat-scoped structured handoff manifests.
+	StructuredOutputDirEnv = "MULTICA_STRUCTURED_OUTPUT_DIR"
+)
+
 // RepoContextForEnv describes a workspace repo available for checkout.
 type RepoContextForEnv struct {
 	URL string // remote URL
@@ -168,6 +174,48 @@ func PredictRootDir(workspacesRoot, workspaceID, taskID string) string {
 		return ""
 	}
 	return filepath.Join(workspacesRoot, workspaceID, shortID(taskID))
+}
+
+// ChatStructuredOutputRelativeDir returns the per-chat manifest handoff
+// directory under a shared workdir. The source workdir can remain shared while
+// transient structured files are isolated by chat session.
+func ChatStructuredOutputRelativeDir(chatSessionID string) string {
+	segment := safeStructuredOutputPathSegment(chatSessionID)
+	if segment == "" {
+		segment = "unknown-chat-session"
+	}
+	return filepath.Join(".multica", "chats", segment)
+}
+
+// ChatStructuredOutputDir returns the absolute per-chat structured handoff dir.
+func ChatStructuredOutputDir(workDir, chatSessionID string) string {
+	if workDir == "" {
+		return ""
+	}
+	return filepath.Join(workDir, ChatStructuredOutputRelativeDir(chatSessionID))
+}
+
+func safeStructuredOutputPathSegment(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), ".")
 }
 
 // LocalBindingWorkDir returns the current ready local-dir binding path that
