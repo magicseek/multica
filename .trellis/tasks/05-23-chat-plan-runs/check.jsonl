@@ -1,0 +1,13 @@
+{"file":"CONTEXT.md","reason":"Verify implementation matches resolved Plan Run terminology and does not introduce conflicting domain concepts."}
+{"file":"docs/adr/0004-chat-plan-runs-and-squad-consensus.md","reason":"Check that implementation follows the accepted stateful Plan Run, server-owned preset, and lead-led squad consensus decisions."}
+{"file":"docs/chat-plan-runs-plan.md","reason":"Use as detailed review checklist for schema, APIs, prompt injection, squad consultation, frontend UX, and verification."}
+{"file":"docs/project-associated-chat-sessions-plan.md","reason":"Verify Chat Issue Proposal approval and existing Chat Session privacy/provenance behavior remain intact."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review cross-layer contract propagation across DB, sqlc, services, handlers, daemon, core types, and views."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review whether existing chat, proposal, squad, daemon, API, React Query, and UI patterns were reused before adding abstractions."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Verify backend tests, migrations, sqlc, and API contracts follow project guidelines."}
+{"file":".trellis/spec/server/backend/chat-contracts.md","reason":"Verify chat message/session/proposal behavior remains compatible and privacy boundaries hold."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Verify plan prompt injection and task claim changes do not regress agent execution protocol handling."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Verify daemon runtime claim payloads and local/cloud runtime boundaries remain compatible."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Verify core package boundaries, API response parsing, shared types, and hooks."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Verify shared Chat UI follows Multica component, state, accessibility, and design patterns."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Verify any app-specific routing/wiring stays outside shared views/core."}

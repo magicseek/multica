@@ -1,0 +1,33 @@
+{
+  "id": "chat-plan-runs",
+  "name": "chat-plan-runs",
+  "title": "Chat Plan Runs",
+  "description": "Add stateful Chat Plan Runs with server-owned plan engine presets, plan summaries, and bounded squad consultation before proposal approval.",
+  "status": "planning",
+  "dev_type": "feature",
+  "scope": "chat plan mode, plan engine presets, squad plan consultations, plan summaries, proposal approval",
+  "package": null,
+  "priority": "P1",
+  "creator": "troy.huang",
+  "assignee": "troy.huang",
+  "createdAt": "2026-05-23",
+  "completedAt": null,
+  "branch": "feat/chat-plan-runs",
+  "base_branch": "feat/ringcentral-connectors",
+  "worktree_path": "/Users/troy.huang/workspace/AI/multica-chat-plan-runs",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "CONTEXT.md",
+    "docs/adr/0004-chat-plan-runs-and-squad-consensus.md",
+    "docs/chat-plan-runs-plan.md"
+  ],
+  "notes": "Generated from grill-with-docs design handoff. Implementation should start only after Trellis planning context is accepted.",
+  "meta": {
+    "base_worktree": "/Users/troy.huang/workspace/AI/multica-ringcentral-integrations",
+    "base_branch": "feat/ringcentral-connectors"
+  }
+}

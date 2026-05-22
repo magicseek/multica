@@ -1,0 +1,14 @@
+{"file":"CONTEXT.md","reason":"Canonical glossary and resolved domain decisions for Chat Plan Runs, Plan Engines, Plan Summary, Chat Plan Consultations, and Squad Plan Consensus."}
+{"file":"docs/adr/0004-chat-plan-runs-and-squad-consensus.md","reason":"Decision record for modeling Plan mode as stateful Chat Plan Runs with server-owned presets and lead-led squad consensus."}
+{"file":"docs/chat-plan-runs-plan.md","reason":"Detailed architecture and phased implementation plan produced from the design discussion."}
+{"file":"docs/project-associated-chat-sessions-plan.md","reason":"Existing Chat Session, structured output, Chat Issue Proposal, proposal approval, and tab architecture to extend rather than replace."}
+{"file":"docs/ai-desk-flows-to-multica-workflows-plan.md","reason":"Existing workflow-planning decisions around reviewable artifacts and future planning flows; useful to avoid scope drift into workflow artifacts."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"This task spans DB migrations, sqlc, backend services, daemon prompt contracts, core API schemas, React Query hooks, and shared views."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Implementation must reuse existing chat/proposal/squad/daemon patterns before adding new abstractions."}
+{"file":".trellis/spec/server/backend/index.md","reason":"Backend guideline entrypoint for DB, API, daemon claim data, and service changes."}
+{"file":".trellis/spec/server/backend/chat-contracts.md","reason":"Chat session creation, messages, title provenance, project-associated chat, and realtime visibility contracts to preserve."}
+{"file":".trellis/spec/server/backend/agent-execution-protocol.md","reason":"Plan prompt and daemon claim changes must not regress task-agent execution protocol behavior."}
+{"file":".trellis/spec/server/backend/daemon-runtime-contracts.md","reason":"Daemon claim payload, runtime boundaries, and local/cloud daemon behavior must stay compatible."}
+{"file":".trellis/spec/core/frontend/index.md","reason":"Shared Plan Run types, API client methods, schemas, and hooks belong in core with strict package boundaries."}
+{"file":".trellis/spec/views/frontend/index.md","reason":"Chat Plan mode UI, transcript rendering, and proposal/summary presentation belong in shared views and must use Multica UI patterns."}
+{"file":".trellis/spec/web/frontend/index.md","reason":"Any web route wiring must stay in app layer while shared chat UI remains in packages/views."}

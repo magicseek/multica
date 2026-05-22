@@ -43,6 +43,26 @@ _Avoid_: Draft issue
 A structured output from a chat agent that records a **Chat Issue Proposal** separately from prose.
 _Avoid_: Markdown issue list
 
+**Chat Plan Run**:
+A stateful planning exchange inside a **Chat Session** that turns an idea into reviewable **Chat Issue Proposals** before execution.
+_Avoid_: Plan-mode chat session, per-message plan toggle
+
+**Plan Engine**:
+A server-owned planning preset that defines how a **Chat Plan Run** gathers context, challenges assumptions, and decides when to propose issues.
+_Avoid_: Workspace Skill, local runtime skill
+
+**Plan Summary**:
+A concise record of the confirmed requirements, rejected options, consensus notes, and remaining questions from a **Chat Plan Run**.
+_Avoid_: Full workflow artifact, markdown-only recap
+
+**Chat Plan Consultation**:
+A bounded agent-to-agent consultation inside a squad-backed **Chat Plan Run**.
+_Avoid_: Roundtable chat, sidecar agent, background helper
+
+**Squad Plan Consensus**:
+The lead agent's synthesized planning result after considering bounded **Chat Plan Consultations** from squad members.
+_Avoid_: unanimous vote, infinite debate
+
 **Lead Agent**:
 The agent selected to bootstrap, coordinate, or own work when a repository starts without an existing Git remote or user-selected local directory.
 
@@ -256,6 +276,20 @@ _Avoid_: Happy-path demo, manual-only test, unchecked token handling
 - A **Chat Session** title may be updated after the first agent execution using an agent-provided summary title
 - A user-edited **Chat Session** title is not overwritten by an agent-provided summary title
 - Archiving or deleting a **Chat Session** does not delete its **Chat-Originated Issues** or **Output Metadata**
+- A **Chat Session** may contain zero or more **Chat Plan Runs**
+- A **Chat Plan Run** belongs to exactly one **Chat Session**
+- A **Chat Plan Run** uses exactly one **Plan Engine**
+- A **Plan Engine** is selected from Multica-provided presets unless a later product decision opens user-defined engines
+- A **Chat Plan Run** is stateful across multiple user replies, so a user does not reselect plan mode for every answer
+- A **Chat Plan Run** may produce zero or more **Chat Issue Proposals**
+- A **Chat Plan Run** may store one **Plan Summary**
+- A **Plan Summary** explains the proposal context but does not create issues by itself
+- A member still approves **Chat Issue Proposal Items** before any **Chat-Originated Issues** are created
+- A squad-backed **Chat Plan Run** is led by the selected squad's lead agent
+- A squad-backed **Chat Plan Run** may contain zero or more **Chat Plan Consultations**
+- A **Chat Plan Consultation** is addressed to a squad member through chat mention syntax and returns to the lead agent through a lead mention
+- A **Chat Plan Consultation** only targets agents in the selected squad roster
+- A **Squad Plan Consensus** is lead-synthesized, not a requirement that every consulted squad member agrees
 - The workspace sidebar shows only active **Chat Sessions** updated in the last five days as a quick-access tree
 - The workspace sidebar may label loose **Chat Session** quick access as **Recents** while the full product concept remains **Chats**
 - The **Recents** sidebar section lists loose **Chat Sessions** only, not **Project-Associated Chat Sessions**
@@ -426,6 +460,11 @@ _Avoid_: Happy-path demo, manual-only test, unchecked token handling
 - **Proposed** is a review lane for pending **Chat Issue Proposal Items** inside a **Chat Session** Issues view, not an **Issue** status.
 - A Markdown checklist in a chat reply is not a **Chat Issue Proposal** unless it is backed by a **Proposal Artifact**.
 - A **Proposal Artifact** does not let the proposing agent choose issue status. Created issues use backlog status from backend rules.
+- **Plan mode** is a UI affordance for starting or continuing a **Chat Plan Run**, not a separate **Chat Session** type.
+- A **Chat Plan Run** is not an **Issue**, and it is not the approval boundary for creating issues.
+- A **Plan Engine** is not the same as a workspace **Skill**. The server may project engine instructions into local runtime context, but the cloud preset remains authoritative.
+- A **Chat Plan Consultation** is not an ordinary issue comment mention. It routes through the **Chat Plan Run** and remains scoped to that chat's planning transcript.
+- **Squad Plan Consensus** can complete with missing or failed consultation replies if the lead agent records the gap in the **Plan Summary**.
 - **Chat Issue Proposal Item** Project assignment is derived from the source **Chat Session** context. Project reassignment happens later through normal issue editing, not inside proposal approval.
 - Inline proposal controls in the chat transcript and proposal controls in the **Chat Session** Issues view operate on the same persisted **Chat Issue Proposal**, not duplicated draft state.
 - Pending **Chat Issue Proposals** are presented inside the **Chat Session** `Issues` tab without increasing the created issue count.
