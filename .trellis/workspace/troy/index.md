@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-05-21
+- **Total Sessions**: 6
+- **Last Active**: 2026-05-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~186 | Active |
+| `journal-1.md` | ~233 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-05-22 | Optimize chat turn speed and verify AFK demo | `774760cb`, `1b3cfc71`, `1792ae44`, `d23773de`, `876a3d7b`, `9119a2a9`, `11bf6126` | `trellis/ai-desk-flows-to-multica-workflows` |
 | 5 | 2026-05-21 | Workflow input requests and reviewable artifacts | - | `trellis/ai-desk-flows-to-multica-workflows` |
 | 4 | 2026-05-19 | Migrate ai-desk flows into Multica workflow runtime | `14b65f7c` | `trellis/ai-desk-flows-to-multica-workflows` |
 | 3 | 2026-05-19 | Project-associated Chat Sessions | `c016fdbf`, `35153fe6`, `e5e3896e`, `652b7400`, `25702b56`, `43d3e845`, `d5fbdce2` | `trellis/project-associated-chat-sessions` |

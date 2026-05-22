@@ -192,3 +192,42 @@ Completed desktop-backed E2E validation in workspace `Workflow E2E Lab`: chat-ge
 ### Next Steps
 
 - Commit work changes per Lore protocol, then archive the Trellis task.
+
+
+## Session 6: Optimize chat turn speed and verify AFK demo
+
+**Date**: 2026-05-22
+**Task**: Optimize chat turn speed and verify AFK demo
+**Branch**: `trellis/ai-desk-flows-to-multica-workflows`
+
+### Summary
+
+Implemented seven chat-turn speed and prompt-cache optimizations, committed each with verification, then ran an end-to-end Multica AFK demo that created a tank-game project, converted proposals into five issues, let agents build each slice, and independently verified the final playable browser game.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `774760cb` | (see git log) |
+| `1b3cfc71` | (see git log) |
+| `1792ae44` | (see git log) |
+| `d23773de` | (see git log) |
+| `876a3d7b` | (see git log) |
+| `9119a2a9` | (see git log) |
+| `11bf6126` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
