@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { ChatSessionListParams } from "../types";
+import type { ChatPlanRun, ChatSessionListParams } from "../types";
 
 export interface ChatSidebarRecentsParams {
   limit?: number;
@@ -27,6 +27,8 @@ export const chatKeys = {
       ? [...chatKeys.all(wsId), "sidebar-recents", normalizeChatSidebarRecentsParams(params)] as const
       : [...chatKeys.all(wsId), "sidebar-recents"] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
+  planEngines: (wsId: string) => [...chatKeys.all(wsId), "plan-engines"] as const,
+  planRuns: (sessionId: string) => ["chat", "plan-runs", sessionId] as const,
   messages: (sessionId: string) => ["chat", "messages", sessionId] as const,
   issueProposals: (sessionId: string) => ["chat", "issue-proposals", sessionId] as const,
   issues: (sessionId: string) => ["chat", "issues", sessionId] as const,
@@ -88,6 +90,28 @@ export function chatSessionOptions(wsId: string, id: string) {
     enabled: !!id,
     staleTime: Infinity,
   });
+}
+
+export function chatPlanEnginesOptions(wsId: string) {
+  return queryOptions({
+    queryKey: chatKeys.planEngines(wsId),
+    queryFn: () => api.listPlanEngines(),
+    enabled: !!wsId,
+    staleTime: Infinity,
+  });
+}
+
+export function chatPlanRunsOptions(sessionId: string) {
+  return queryOptions({
+    queryKey: chatKeys.planRuns(sessionId),
+    queryFn: () => api.listChatPlanRuns(sessionId),
+    enabled: !!sessionId,
+    staleTime: Infinity,
+  });
+}
+
+export function isActiveChatPlanRun(run: ChatPlanRun | null | undefined): run is ChatPlanRun {
+  return !!run && run.status !== "completed" && run.status !== "cancelled" && run.status !== "failed";
 }
 
 export function chatMessagesOptions(sessionId: string) {

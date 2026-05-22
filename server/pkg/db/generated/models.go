@@ -102,6 +102,9 @@ type AgentTaskQueue struct {
 	WorkflowSnapshot         []byte             `json:"workflow_snapshot"`
 	TriggerChatMessageID     pgtype.UUID        `json:"trigger_chat_message_id"`
 	ConnectorDelegatedUserID pgtype.UUID        `json:"connector_delegated_user_id"`
+	ChatPlanRunID            pgtype.UUID        `json:"chat_plan_run_id"`
+	ChatPlanConsultationID   pgtype.UUID        `json:"chat_plan_consultation_id"`
+	ChatTaskKind             string             `json:"chat_task_kind"`
 }
 
 type Attachment struct {
@@ -180,6 +183,7 @@ type ChatIssueProposal struct {
 	Status              string             `json:"status"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SourcePlanRunID     pgtype.UUID        `json:"source_plan_run_id"`
 }
 
 type ChatIssueProposalItem struct {
@@ -200,14 +204,55 @@ type ChatIssueProposalItem struct {
 }
 
 type ChatMessage struct {
-	ID            pgtype.UUID        `json:"id"`
-	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
-	Role          string             `json:"role"`
-	Content       string             `json:"content"`
-	TaskID        pgtype.UUID        `json:"task_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	FailureReason pgtype.Text        `json:"failure_reason"`
-	ElapsedMs     pgtype.Int8        `json:"elapsed_ms"`
+	ID               pgtype.UUID        `json:"id"`
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	Role             string             `json:"role"`
+	Content          string             `json:"content"`
+	TaskID           pgtype.UUID        `json:"task_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	FailureReason    pgtype.Text        `json:"failure_reason"`
+	ElapsedMs        pgtype.Int8        `json:"elapsed_ms"`
+	AuthorType       string             `json:"author_type"`
+	AuthorAgentID    pgtype.UUID        `json:"author_agent_id"`
+	PlanRunID        pgtype.UUID        `json:"plan_run_id"`
+	ConsultationID   pgtype.UUID        `json:"consultation_id"`
+	ReplyToMessageID pgtype.UUID        `json:"reply_to_message_id"`
+}
+
+type ChatPlanConsultation struct {
+	ID                pgtype.UUID        `json:"id"`
+	PlanRunID         pgtype.UUID        `json:"plan_run_id"`
+	RequesterAgentID  pgtype.UUID        `json:"requester_agent_id"`
+	TargetAgentID     pgtype.UUID        `json:"target_agent_id"`
+	RequestMessageID  pgtype.UUID        `json:"request_message_id"`
+	ResponseMessageID pgtype.UUID        `json:"response_message_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	RespondedAt       pgtype.Timestamptz `json:"responded_at"`
+	FailedAt          pgtype.Timestamptz `json:"failed_at"`
+}
+
+type ChatPlanRun struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
+	CreatorUserID    pgtype.UUID        `json:"creator_user_id"`
+	ActorType        string             `json:"actor_type"`
+	ActorID          pgtype.UUID        `json:"actor_id"`
+	LeadAgentID      pgtype.UUID        `json:"lead_agent_id"`
+	PlanEngine       string             `json:"plan_engine"`
+	EngineVersion    string             `json:"engine_version"`
+	Status           string             `json:"status"`
+	InitialMessageID pgtype.UUID        `json:"initial_message_id"`
+	LatestMessageID  pgtype.UUID        `json:"latest_message_id"`
+	Summary          []byte             `json:"summary"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt      pgtype.Timestamptz `json:"cancelled_at"`
+	FailedAt         pgtype.Timestamptz `json:"failed_at"`
 }
 
 type ChatSession struct {

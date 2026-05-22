@@ -8,6 +8,9 @@ import type {
   ApproveChatIssueProposalResponse,
   ChatIssueProposal,
   ChatIssueProposalItem,
+  ChatMessage,
+  ChatPlanConsultation,
+  ChatPlanRun,
   ChatSessionIssuesResponse,
   ChatSession,
   ChatSidebarRecentsResponse,
@@ -38,7 +41,10 @@ import type {
   WorkflowRevision,
   WorkflowRun,
   WorkflowStepRun,
+  PlanEngineListResponse,
+  SendChatMessageResponse,
 } from "../types";
+import { DEFAULT_CHAT_PLAN_ENGINE_ID } from "../types/chat";
 
 // ---------------------------------------------------------------------------
 // Schemas for the highest-risk API endpoints — those whose responses drive
@@ -1301,6 +1307,145 @@ export const EMPTY_CHAT_SIDEBAR_RECENTS_RESPONSE: ChatSidebarRecentsResponse = {
   has_more: false,
 };
 
+const PlanEngineSchema = z.object({
+  id: z.string(),
+  label: z.string().optional(),
+  display_label: z.string().optional(),
+  description: z.string().default(""),
+  version: z.string().default(""),
+  is_default: z.boolean().optional(),
+}).loose().transform((engine) => ({
+  ...engine,
+  label: engine.label ?? engine.display_label ?? engine.id,
+  description: engine.description ?? "",
+  version: engine.version ?? "",
+}));
+
+const PlanEngineEnvelopeSchema = z.object({
+  engines: z.array(PlanEngineSchema).default([]),
+  default_engine: z.string().nullable().optional(),
+}).loose().transform((response) => ({
+  engines: response.engines,
+  default_engine:
+    response.default_engine ??
+    response.engines.find((engine) => engine.is_default === true)?.id ??
+    DEFAULT_CHAT_PLAN_ENGINE_ID,
+}));
+
+export const PlanEngineListResponseSchema = z.union([
+  z.array(PlanEngineSchema).transform((engines) => ({
+    engines,
+    default_engine: engines.find((engine) => engine.is_default === true)?.id ?? DEFAULT_CHAT_PLAN_ENGINE_ID,
+  })),
+  PlanEngineEnvelopeSchema,
+]);
+
+export const EMPTY_PLAN_ENGINE_LIST_RESPONSE: PlanEngineListResponse = {
+  engines: [],
+  default_engine: DEFAULT_CHAT_PLAN_ENGINE_ID,
+};
+
+export const PlanSummarySchema = z.object({
+  confirmed_requirements: z.array(z.string()).default([]),
+  rejected_options: z.array(z.string()).default([]),
+  consensus_notes: z.array(z.string()).default([]),
+  open_questions: z.array(z.string()).default([]),
+}).loose();
+
+export const EMPTY_PLAN_SUMMARY = {
+  confirmed_requirements: [],
+  rejected_options: [],
+  consensus_notes: [],
+  open_questions: [],
+};
+
+export const ChatPlanRunSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  chat_session_id: z.string().default(""),
+  creator_user_id: z.string().default(""),
+  actor_type: z.string().default("agent"),
+  actor_id: z.string().default(""),
+  lead_agent_id: z.string().default(""),
+  plan_engine: z.string().default(DEFAULT_CHAT_PLAN_ENGINE_ID),
+  engine_version: z.string().default(""),
+  status: z.string().default("brainstorming"),
+  initial_message_id: z.string().nullable().default(null),
+  latest_message_id: z.string().nullable().default(null),
+  summary: PlanSummarySchema.nullable().default(null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  completed_at: z.string().nullable().optional(),
+  cancelled_at: z.string().nullable().optional(),
+  failed_at: z.string().nullable().optional(),
+}).loose();
+
+const ChatPlanRunListResponseSchema = z.object({
+  plan_runs: z.array(ChatPlanRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ChatPlanRunListSchema = z.union([
+  z.array(ChatPlanRunSchema),
+  ChatPlanRunListResponseSchema.transform((response) => response.plan_runs),
+]);
+
+export const EMPTY_CHAT_PLAN_RUN: ChatPlanRun = {
+  id: "",
+  workspace_id: "",
+  chat_session_id: "",
+  creator_user_id: "",
+  actor_type: "agent",
+  actor_id: "",
+  lead_agent_id: "",
+  plan_engine: DEFAULT_CHAT_PLAN_ENGINE_ID,
+  engine_version: "",
+  status: "cancelled",
+  initial_message_id: null,
+  latest_message_id: null,
+  summary: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_CHAT_PLAN_RUNS: ChatPlanRun[] = [];
+
+export const ChatPlanConsultationSchema = z.object({
+  id: z.string(),
+  plan_run_id: z.string().default(""),
+  requester_agent_id: z.string().default(""),
+  target_agent_id: z.string().default(""),
+  request_message_id: z.string().nullable().default(null),
+  response_message_id: z.string().nullable().default(null),
+  task_id: z.string().nullable().default(null),
+  status: z.string().default("pending"),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ChatPlanConsultationListSchema = z.array(ChatPlanConsultationSchema);
+export const EMPTY_CHAT_PLAN_CONSULTATIONS: ChatPlanConsultation[] = [];
+
+export const ChatMessageSchema = z.object({
+  id: z.string(),
+  chat_session_id: z.string().default(""),
+  role: z.string().default("assistant"),
+  content: z.string().default(""),
+  task_id: z.string().nullable().default(null),
+  author_type: z.string().nullable().optional(),
+  author_agent_id: z.string().nullable().optional(),
+  plan_run_id: z.string().nullable().optional(),
+  consultation_id: z.string().nullable().optional(),
+  reply_to_message_id: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+  attachments: z.array(AttachmentSchema).optional(),
+  failure_reason: z.string().nullable().optional(),
+  elapsed_ms: z.number().nullable().optional(),
+}).loose();
+
+export const ChatMessageListSchema = z.array(ChatMessageSchema);
+export const EMPTY_CHAT_MESSAGES: ChatMessage[] = [];
+
 export const ChatIssueProposalItemSchema = z.object({
   id: z.string(),
   proposal_id: z.string(),
@@ -1342,6 +1487,7 @@ export const ChatIssueProposalSchema = z.object({
   source_chat_message_id: z.string().nullable().default(null),
   source_task_id: z.string().nullable().default(null),
   proposer_agent_id: z.string().nullable().default(null),
+  source_plan_run_id: z.string().nullable().default(null),
   title: z.string().default(""),
   summary: z.string().nullable().default(null),
   status: z.string().default("pending"),
@@ -1376,6 +1522,7 @@ export const EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE: ApproveChatIssuePropos
     source_chat_message_id: null,
     source_task_id: null,
     proposer_agent_id: null,
+    source_plan_run_id: null,
     title: "",
     summary: null,
     status: "pending",
@@ -1393,4 +1540,18 @@ export const ChatSessionIssuesResponseSchema = z.object({
 export const EMPTY_CHAT_SESSION_ISSUES_RESPONSE: ChatSessionIssuesResponse = {
   issues: [],
   total: 0,
+};
+
+export const SendChatMessageResponseSchema = z.object({
+  message_id: z.string().default(""),
+  task_id: z.string().default(""),
+  plan_run_id: z.string().nullable().optional(),
+  created_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_SEND_CHAT_MESSAGE_RESPONSE: SendChatMessageResponse = {
+  message_id: "",
+  task_id: "",
+  plan_run_id: null,
+  created_at: "",
 };

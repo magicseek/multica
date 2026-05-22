@@ -63,6 +63,7 @@
       "select_agent": "选择智能体",
       "no_agents": "暂无智能体",
       "no_agent_error": "开始对话前需要选择智能体。",
+      "no_actor_error": "开始规划前需要选择执行者。",
       "start_failed": "创建对话失败",
       "submit": "发送"
     },
@@ -158,6 +159,32 @@
       "new_chat": "新对话",
       "empty_title": "暂无项目对话",
       "empty_description": "从项目中创建对话，会自动保留项目上下文。"
+    }
+  },
+  "plan": {
+    "mode": "规划",
+    "engine_fallback": "规划方式",
+    "active_title": "规划中",
+    "cancel": "取消",
+    "status": {
+      "active": "进行中",
+      "brainstorming": "头脑风暴中",
+      "consulting": "咨询中",
+      "ready_for_approval": "待确认",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "failed": "失败"
+    },
+    "summary": {
+      "title": "规划摘要",
+      "confirmed": "已确认",
+      "rejected": "已排除",
+      "consensus": "共识",
+      "open": "待确认"
+    },
+    "consultation": {
+      "from_helper": "{{name}} 的咨询回复",
+      "helper_fallback": "协作智能体"
     }
   },
   "window": {

@@ -21,6 +21,8 @@ const (
 	chatStructuredProposalSummaryMaxLen     = 1000
 	chatStructuredProposalItemTitleMaxLen   = 200
 	chatStructuredProposalDescriptionMaxLen = 12000
+	chatPlanSummaryEntryMaxLen              = 1000
+	chatPlanSummaryEntryMaxCount            = 40
 )
 
 var validChatProposalPriorities = map[string]bool{
@@ -33,6 +35,7 @@ var validChatProposalPriorities = map[string]bool{
 
 type TaskStructuredOutputsRequest struct {
 	ChatSummary    *ChatSummaryManifestRequest        `json:"chat_summary"`
+	PlanSummary    *PlanSummaryManifestRequest        `json:"plan_summary"`
 	IssueProposals *IssueProposalsManifestRequest     `json:"issue_proposals"`
 	Outputs        *TaskOutputMetadataManifestRequest `json:"outputs"`
 }
@@ -40,6 +43,14 @@ type TaskStructuredOutputsRequest struct {
 type ChatSummaryManifestRequest struct {
 	Version int    `json:"version"`
 	Title   string `json:"title"`
+}
+
+type PlanSummaryManifestRequest struct {
+	Version               int      `json:"version"`
+	ConfirmedRequirements []string `json:"confirmed_requirements"`
+	RejectedOptions       []string `json:"rejected_options"`
+	ConsensusNotes        []string `json:"consensus_notes"`
+	OpenQuestions         []string `json:"open_questions"`
 }
 
 type IssueProposalsManifestRequest struct {
@@ -75,12 +86,70 @@ func (h *Handler) processTaskStructuredOutputs(r *http.Request, task db.AgentTas
 	if structured.ChatSummary != nil {
 		h.processChatSummaryManifest(r, task, *structured.ChatSummary)
 	}
+	if structured.PlanSummary != nil {
+		h.processPlanSummaryManifest(r, task, *structured.PlanSummary)
+	}
 	if structured.IssueProposals != nil {
 		h.processIssueProposalsManifest(r, task, *structured.IssueProposals)
 	}
 	if structured.Outputs != nil {
 		h.processStructuredTaskOutputs(r, task, structured.Outputs)
 	}
+}
+
+func (h *Handler) processPlanSummaryManifest(r *http.Request, task db.AgentTaskQueue, manifest PlanSummaryManifestRequest) {
+	if !task.ChatPlanRunID.Valid {
+		return
+	}
+	if manifest.Version != 1 {
+		slog.Warn("plan summary manifest ignored: unsupported version", "task_id", uuidToString(task.ID), "version", manifest.Version)
+		return
+	}
+	summary := map[string][]string{
+		"confirmed_requirements": sanitizePlanSummaryEntries(manifest.ConfirmedRequirements),
+		"rejected_options":       sanitizePlanSummaryEntries(manifest.RejectedOptions),
+		"consensus_notes":        sanitizePlanSummaryEntries(manifest.ConsensusNotes),
+		"open_questions":         sanitizePlanSummaryEntries(manifest.OpenQuestions),
+	}
+	data, err := json.Marshal(summary)
+	if err != nil {
+		slog.Warn("plan summary marshal failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	updated, err := h.Queries.UpdateChatPlanRunSummary(r.Context(), db.UpdateChatPlanRunSummaryParams{
+		ID:      task.ChatPlanRunID,
+		Summary: data,
+	})
+	if err != nil {
+		slog.Warn("plan summary persist failed", "task_id", uuidToString(task.ID), "plan_run_id", uuidToString(task.ChatPlanRunID), "error", err)
+		return
+	}
+	sessionID := uuidToString(updated.ChatSessionID)
+	workspaceID := uuidToString(updated.WorkspaceID)
+	h.publishChatPlanRunUpdate(workspaceID, updated.ChatSessionID, updated.ID, "daemon", "")
+	h.publishChat(protocol.EventChatIssueProposalsUpdated, workspaceID, "daemon", "", sessionID, map[string]any{
+		"chat_session_id": sessionID,
+		"plan_run_id":     uuidToString(updated.ID),
+		"summary_updated": true,
+	})
+}
+
+func sanitizePlanSummaryEntries(entries []string) []string {
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		value := strings.TrimSpace(entry)
+		if value == "" {
+			continue
+		}
+		out = append(out, truncateRunes(value, chatPlanSummaryEntryMaxLen))
+		if len(out) >= chatPlanSummaryEntryMaxCount {
+			break
+		}
+	}
+	if out == nil {
+		return []string{}
+	}
+	return out
 }
 
 func (h *Handler) processChatSummaryManifest(r *http.Request, task db.AgentTaskQueue, manifest ChatSummaryManifestRequest) {
@@ -213,6 +282,7 @@ func (h *Handler) processIssueProposalsManifest(r *http.Request, task db.AgentTa
 			Title:               proposal.Title,
 			SourceChatMessageID: assistantMessageID,
 			SourceTaskID:        task.ID,
+			SourcePlanRunID:     task.ChatPlanRunID,
 			ProposerAgentID:     task.AgentID,
 			Summary:             ptrToText(proposal.Summary),
 		})
@@ -241,11 +311,23 @@ func (h *Handler) processIssueProposalsManifest(r *http.Request, task db.AgentTa
 		slog.Warn("issue proposals persist failed: commit", "task_id", uuidToString(task.ID), "error", err)
 		return
 	}
+	if task.ChatPlanRunID.Valid {
+		updated, err := h.Queries.UpdateChatPlanRunStatus(r.Context(), db.UpdateChatPlanRunStatusParams{
+			ID:     task.ChatPlanRunID,
+			Status: "ready_for_approval",
+		})
+		if err != nil {
+			slog.Warn("plan run ready status update failed", "task_id", uuidToString(task.ID), "plan_run_id", uuidToString(task.ChatPlanRunID), "error", err)
+		} else {
+			h.publishChatPlanRunUpdate(workspaceID, updated.ChatSessionID, updated.ID, "daemon", "")
+		}
+	}
 
 	sessionID := uuidToString(task.ChatSessionID)
 	h.publishChat(protocol.EventChatIssueProposalsUpdated, workspaceID, "daemon", "", sessionID, map[string]any{
 		"chat_session_id": sessionID,
 		"task_id":         uuidToString(task.ID),
+		"plan_run_id":     uuidToString(task.ChatPlanRunID),
 		"count":           len(prepared),
 		"item_count":      itemCount,
 	})

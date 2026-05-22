@@ -1298,6 +1298,9 @@ func (h *Handler) claimChatMessageForTask(ctx context.Context, task db.AgentTask
 			return db.ChatMessage{}, false
 		}
 	}
+	if task.ChatPlanRunID.Valid {
+		return db.ChatMessage{}, false
+	}
 
 	// Legacy queued tasks predate trigger_chat_message_id. Fall back to the old
 	// transcript scan for those rows and for rare races where the FK was cleared
@@ -1605,6 +1608,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			h.populateClaimChatMessageContext(r.Context(), &resp, *task, cs)
+			h.populatePlanClaimContext(r.Context(), &resp, *task, cs)
 		}
 	}
 

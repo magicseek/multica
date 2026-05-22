@@ -30,6 +30,7 @@ func clearStaleStructuredTaskOutputManifests(rootDir string, scoped bool, taskLo
 	}
 	for _, relativePath := range []string{
 		structuredManifestRelativePath(scoped, TaskChatSummaryManifestFileName),
+		structuredManifestRelativePath(scoped, TaskPlanSummaryManifestFileName),
 		structuredManifestRelativePath(scoped, TaskIssueProposalsManifestFileName),
 		structuredManifestRelativePath(scoped, TaskOutputManifestFileName),
 	} {
@@ -64,6 +65,12 @@ func loadStructuredTaskOutputs(rootDir string, scoped bool, taskLog *slog.Logger
 		loaded = true
 	}
 
+	var planSummary PlanSummaryManifest
+	if ok := loadStructuredManifest(rootDir, structuredManifestRelativePath(scoped, TaskPlanSummaryManifestFileName), "plan summary manifest", &planSummary, taskLog); ok {
+		structured.PlanSummary = &planSummary
+		loaded = true
+	}
+
 	var proposals IssueProposalsManifest
 	if ok := loadStructuredManifest(rootDir, structuredManifestRelativePath(scoped, TaskIssueProposalsManifestFileName), "issue proposals manifest", &proposals, taskLog); ok {
 		structured.IssueProposals = &proposals
@@ -89,6 +96,8 @@ func structuredManifestRelativePath(scoped bool, fileName string) string {
 	switch fileName {
 	case TaskChatSummaryManifestFileName:
 		return TaskChatSummaryManifestRelativePath
+	case TaskPlanSummaryManifestFileName:
+		return TaskPlanSummaryManifestRelativePath
 	case TaskIssueProposalsManifestFileName:
 		return TaskIssueProposalsManifestRelativePath
 	case TaskOutputManifestFileName:

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useRef, type ReactNode } from "react";
+import { Fragment, useMemo, useState, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -16,7 +16,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
-import { ChevronRight, ChevronDown, Brain, AlertCircle, AlertTriangle, Copy } from "lucide-react";
+import { ChevronRight, ChevronDown, Brain, AlertCircle, AlertTriangle, Copy, Bot } from "lucide-react";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { useAutoScroll } from "@multica/ui/hooks/use-auto-scroll";
 import { taskMessagesOptions } from "@multica/core/chat/queries";
@@ -24,7 +24,7 @@ import { Markdown } from "@multica/views/common/markdown";
 import { copyMarkdown } from "../../editor";
 import { WorkflowRunViewer } from "../../workflows";
 import type { AgentAvailability } from "@multica/core/agents";
-import type { ChatMessage, ChatPendingTask, TaskMessagePayload, TaskFailureReason } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatPendingTask, TaskMessagePayload, TaskFailureReason } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { TaskStatusPill } from "./task-status-pill";
@@ -43,6 +43,7 @@ interface ChatMessageListProps {
   pendingTask: ChatPendingTask | null | undefined;
   /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
   availability: AgentAvailability | undefined;
+  agents?: Pick<Agent, "id" | "name">[];
   /** Optional per-message extension point for session-level artifacts such as issue proposals. */
   renderAfterMessage?: (message: ChatMessage) => ReactNode;
 }
@@ -51,11 +52,16 @@ export function ChatMessageList({
   messages,
   pendingTask,
   availability,
+  agents,
   renderAfterMessage,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
   useAutoScroll(scrollRef);
+  const agentNameById = useMemo(
+    () => new Map((agents ?? []).map((agent) => [agent.id, agent.name])),
+    [agents],
+  );
 
   const pendingTaskId = pendingTask?.task_id ?? null;
 
@@ -90,6 +96,7 @@ export function ChatMessageList({
             <MessageBubble
               message={msg}
               isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
+              helperAgentName={msg.author_agent_id ? agentNameById.get(msg.author_agent_id) : undefined}
             />
             {renderAfterMessage?.(msg)}
           </Fragment>
@@ -151,7 +158,15 @@ function toTimelineItem(m: TaskMessagePayload): ChatTimelineItem {
 
 // ─── Message bubbles ─────────────────────────────────────────────────────
 
-function MessageBubble({ message, isPending }: { message: ChatMessage; isPending: boolean }) {
+function MessageBubble({
+  message,
+  isPending,
+  helperAgentName,
+}: {
+  message: ChatMessage;
+  isPending: boolean;
+  helperAgentName?: string;
+}) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
@@ -168,17 +183,21 @@ function MessageBubble({ message, isPending }: { message: ChatMessage; isPending
     );
   }
 
-  return <AssistantMessage message={message} isPending={isPending} />;
+  return <AssistantMessage message={message} isPending={isPending} helperAgentName={helperAgentName} />;
 }
 
 function AssistantMessage({
   message,
   isPending,
+  helperAgentName,
 }: {
   message: ChatMessage;
   isPending: boolean;
+  helperAgentName?: string;
 }) {
+  const { t } = useT("chat");
   const taskId = message.task_id;
+  const isConsultation = !!message.consultation_id && !!message.author_agent_id;
 
   // Use the shared taskMessagesOptions so this cache entry is the same one
   // seeded by useRealtimeSync during task execution — zero refetch when the
@@ -206,7 +225,18 @@ function AssistantMessage({
   }
 
   return (
-    <div className="w-full space-y-1.5">
+    <div className={cn(
+      "w-full space-y-1.5",
+      isConsultation && "rounded-lg border-l-2 border-brand/30 bg-muted/20 py-2 pl-3 pr-2",
+    )}>
+      {isConsultation && (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Bot className="size-3.5" />
+          {t(($) => $.plan.consultation.from_helper, {
+            name: helperAgentName ?? t(($) => $.plan.consultation.helper_fallback),
+          })}
+        </div>
+      )}
       {timeline.length > 0 ? (
         <TimelineView items={timeline} />
       ) : (

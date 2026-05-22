@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -173,6 +174,106 @@ func TestBuildChatPromptRoutesIssueCreationToProposals(t *testing.T) {
 	for _, s := range mustContain {
 		if !strings.Contains(out, s) {
 			t.Errorf("buildChatPrompt must route chat task creation through proposals, missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+}
+
+func TestBuildPlanChatPromptIncludesEngineSummaryAndSquadRules(t *testing.T) {
+	out := buildChatPrompt(Task{
+		ChatSessionID: "chat-plan-1",
+		ChatMessage:   "Plan a launch",
+		Plan: &ChatPlanTaskData{
+			RunID:       "plan-1",
+			ActorType:   "squad",
+			ActorID:     "squad-1",
+			LeadAgentID: "lead-1",
+			Status:      "brainstorming",
+			TaskKind:    "plan_lead",
+			PlanEngine: ChatPlanEngineTaskData{
+				ID:          "office_hours",
+				Label:       "Office hours",
+				Description: "Challenge assumptions",
+				Version:     "abcd1234abcd1234",
+				Protocol:    "Ask one sharp question before planning.",
+			},
+			Summary: json.RawMessage(`{"confirmed_requirements":["proposal first"]}`),
+			Transcript: []ChatPlanTranscriptMessage{
+				{Role: "user", AuthorType: "member", Content: "Plan a launch"},
+			},
+			Squad: &ChatPlanSquadTaskData{
+				Name:        "Planning Squad",
+				LeadMention: "[@Lead](mention://agent/lead-1)",
+				Helpers: []ChatPlanSquadHelperData{
+					{Name: "Researcher", Role: "research", Mention: "[@Researcher](mention://agent/helper-1)"},
+				},
+			},
+			ProposalPath:    ".multica/chats/chat-plan-1/issue-proposals.json",
+			PlanSummaryPath: ".multica/chats/chat-plan-1/plan-summary.json",
+		},
+	})
+
+	mustContain := []string{
+		"Plan mode assistant",
+		"Engine: Office hours (`office_hours`)",
+		"Engine version: abcd1234abcd1234",
+		"Ask one sharp question before planning.",
+		`"confirmed_requirements"`,
+		".multica/chats/chat-plan-1/plan-summary.json",
+		".multica/chats/chat-plan-1/issue-proposals.json",
+		"Do not run `multica issue create`",
+		"Plan Transcript",
+		"Plan a launch",
+		"Eligible helper agents",
+		"[@Researcher](mention://agent/helper-1)",
+		"Mentions of agents outside this roster are ignored",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("buildPlanChatPrompt missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+}
+
+func TestBuildPlanChatPromptConsultationTaskFocusesHelper(t *testing.T) {
+	out := buildChatPrompt(Task{
+		ChatSessionID: "chat-plan-2",
+		Plan: &ChatPlanTaskData{
+			RunID:       "plan-2",
+			ActorType:   "squad",
+			ActorID:     "squad-2",
+			LeadAgentID: "lead-2",
+			Status:      "consulting",
+			TaskKind:    "plan_consultation",
+			PlanEngine: ChatPlanEngineTaskData{
+				ID:       "grill_with_docs",
+				Label:    "Grill with docs",
+				Version:  "abcd1234abcd1234",
+				Protocol: "Challenge vague requirements.",
+			},
+			Consultation: &ChatPlanConsultationTaskData{
+				ID:                 "consult-1",
+				RequesterAgentID:   "lead-2",
+				TargetAgentID:      "helper-2",
+				RequestMessageID:   "message-1",
+				RequestContent:     "What launch risk am I missing?",
+				LeadMention:        "[@Lead](mention://agent/lead-2)",
+				TargetAgentMention: "[@Helper](mention://agent/helper-2)",
+			},
+		},
+	})
+
+	mustContain := []string{
+		"You are a squad helper",
+		"do not take over the final synthesis",
+		"[@Helper](mention://agent/helper-2)",
+		"include this exact lead mention",
+		"[@Lead](mention://agent/lead-2)",
+		"What launch risk am I missing?",
+		"Return one concise helper opinion",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("consultation plan prompt missing %q\n--- output ---\n%s", s, out)
 		}
 	}
 }

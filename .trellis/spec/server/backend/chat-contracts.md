@@ -60,6 +60,93 @@ treat uploaded proposal manifests as untrusted handoff data.
   reused local workdirs. Do not remove it solely because the daemon now writes
   chat-scoped manifests.
 
+## Chat Plan Runs
+
+Chat Plan Runs are server-owned state inside an ordinary Chat Session. Plan
+state must survive across user replies, daemon claims, structured output
+processing, and realtime cache invalidation.
+
+### 1. Scope / Trigger
+
+- Trigger: Plan mode adds cross-layer API fields, DB tables, daemon claim
+  payloads, structured-output manifests, and realtime cache contracts.
+- Scope: ordinary Chat Sessions only; do not create a separate Plan Session
+  type.
+
+### 2. Signatures
+
+- `POST /api/chat/sessions/{sessionId}/messages` accepts
+  `mode`, `plan_engine`, `plan_run_id`, `plan_actor_type`, and
+  `plan_actor_id`; response may include `plan_run_id`.
+- `GET /api/chat/plan-engines` returns cloud-owned engine metadata with
+  `default_engine`.
+- `GET /api/chat/sessions/{sessionId}/plan-runs` returns durable plan runs for
+  the session.
+- `POST /api/chat/plan-runs/{planRunId}/cancel` marks an active run cancelled.
+- DB source of truth: `chat_plan_run`, `chat_plan_consultation`,
+  `chat_message.plan_run_id`, `chat_message.author_agent_id`,
+  `chat_issue_proposal.source_plan_run_id`, and
+  `agent_task_queue.chat_plan_run_id`.
+
+### 3. Contracts
+
+- Plan Run state changes must publish `chat:plan_runs_updated` with
+  `chat_session_id` and `plan_run_id`. Do not rely on proposal or message
+  events to refresh active-plan composer state.
+- Human approval of a Chat Issue Proposal linked by `source_plan_run_id` is the
+  approval boundary that completes that Plan Run. Mark the run `completed` in
+  the successful approval transaction, then publish `chat:plan_runs_updated`
+  after commit so the composer exits active Plan Run state.
+- Plan Engine prompt context must include the stored `engine_version` from
+  `chat_plan_run`, not a newly computed version that may drift after the run
+  starts.
+- A lead continuation after squad consultations is a plan task without a
+  current user message. The daemon claim response must leave `chat_message`
+  empty in that case and rely on `plan.transcript`, `plan.summary`, and
+  consultation status instead.
+
+### 4. Validation & Error Matrix
+
+- Unknown `plan_engine` -> `400 unknown plan_engine`.
+- `plan_run_id` not in the current session/workspace -> `404 plan run not
+  found`.
+- Terminal `plan_run_id` (`completed`, `cancelled`, `failed`) -> `400 plan run
+  is not active`.
+- `plan_actor_type=squad` without `plan_actor_id` -> `400 plan_actor_id is
+  required for squad plan actor`.
+- `plan_actor_type=agent` with an agent other than the chat session agent ->
+  `400 agent plan actor must match the chat session agent`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: user starts Plan mode, continues with only `plan_run_id`, agent writes
+  plan summary and proposals, user approves proposals, Plan Run becomes
+  `completed`.
+- Base: normal chat omits all plan fields and still enqueues a normal chat task.
+- Bad: a plan-scoped lead continuation falls back to the latest user message;
+  this replays stale user intent as a fresh turn and can duplicate proposals.
+
+### 6. Tests Required
+
+- Handler tests cover plan creation, continuation, cancellation, proposal
+  linking, plan approval completion, and `chat:plan_runs_updated` broadcasts.
+- Daemon claim tests cover plan engine/version prompt injection and no latest
+  user fallback for plan lead continuations.
+- Service tests cover helper mention parsing, selected-squad gating, helper
+  response lead-mention requirement, and lead resume when helper tasks close.
+- Frontend/core tests cover Plan mode send variables, active Plan Run
+  continuation, realtime invalidation, Plan Summary rendering, and consultation
+  message attribution.
+
+### 7. Wrong vs Correct
+
+Wrong: compute the Plan Engine version at daemon claim time and infer active
+plan state from `chat:issue_proposals_updated`.
+
+Correct: snapshot `chat_plan_run.engine_version` at run creation, include that
+snapshot in every plan claim, and publish `chat:plan_runs_updated` for every
+Plan Run status or summary transition.
+
 ## Realtime Visibility
 
 Every title update that should be visible without a refresh must publish
@@ -80,6 +167,10 @@ Clients must patch:
   overwritten by structured summaries.
 - [ ] Handler tests prove Project chat proposal ingestion skips duplicates from
   existing Project issues and sibling Project chat proposals.
+- [ ] Handler tests prove plan lead continuations do not reuse the latest user
+  message when the queued task has no trigger message.
+- [ ] Handler/service tests prove plan run status and summary updates publish
+  `chat:plan_runs_updated`.
 - [ ] Realtime cache tests cover filtered sessions lists and single session
   details.
 - [ ] Data repair migrations do not rewrite `title_source = 'user'`.

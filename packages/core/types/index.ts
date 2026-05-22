@@ -82,6 +82,12 @@ export type { Attachment } from "./attachment";
 export type {
   ChatIssueProposal,
   ChatIssueProposalItem,
+  ChatPlanActorType,
+  ChatPlanConsultation,
+  ChatPlanConsultationStatus,
+  ChatPlanEngineId,
+  ChatPlanRun,
+  ChatPlanRunStatus,
   ChatPendingTask,
   ChatProjectContextKind,
   ChatSession,
@@ -98,10 +104,16 @@ export type {
   ApproveChatIssueProposalResponse,
   PendingChatTaskItem,
   PendingChatTasksResponse,
+  PlanEngine,
+  PlanEngineListResponse,
+  PlanSummary,
   ProjectContextSnapshot,
+  SendChatMessageMode,
+  SendChatMessageRequest,
   SendChatMessageResponse,
   UpdateChatIssueProposalItemRequest,
 } from "./chat";
+export { DEFAULT_CHAT_PLAN_ENGINE_ID } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type {
   Repository,

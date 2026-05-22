@@ -12,41 +12,27 @@ import (
 func createChatIssueProposalApprovalFixture(t *testing.T) (sessionID, proposalID string, itemIDs []string) {
 	t.Helper()
 
-	_, sessionID, taskID := createChatStructuredOutputTestTask(t, "legacy")
-	w := completeChatStructuredOutputTask(t, taskID, map[string]any{
-		"issue_proposals": map[string]any{
-			"version": 1,
-			"proposals": []map[string]any{
-				{
-					"title":   "Approval fixture",
-					"summary": "Create selected follow-ups",
-					"items": []map[string]any{
-						{
-							"title":       "First approved issue",
-							"description": "First issue description",
-							"priority":    "high",
-							"labels":      []string{"chat"},
-						},
-						{
-							"title":       "Second approved issue",
-							"description": "Second issue description",
-							"priority":    "low",
-						},
-					},
-				},
-			},
-		},
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("CompleteTask fixture: expected 200, got %d: %s", w.Code, w.Body.String())
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "Approval Fixture Agent", []byte("[]"))
+	sessionID = createHandlerTestChatSession(t, agentID)
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_issue_proposal (workspace_id, chat_session_id, proposer_agent_id, title, summary)
+		VALUES ($1, $2, $3, 'Approval fixture', 'Create selected follow-ups')
+		RETURNING id
+	`, testWorkspaceID, sessionID, agentID).Scan(&proposalID); err != nil {
+		t.Fatalf("create proposal: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_issue_proposal_item (proposal_id, position, title, description, priority, labels)
+		VALUES
+			($1, 0, 'First approved issue', 'First issue description', 'high', '["chat"]'::jsonb),
+			($1, 1, 'Second approved issue', 'Second issue description', 'low', '[]'::jsonb)
+	`, proposalID); err != nil {
+		t.Fatalf("create proposal items: %v", err)
 	}
 
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT id FROM chat_issue_proposal WHERE chat_session_id = $1
-	`, sessionID).Scan(&proposalID); err != nil {
-		t.Fatalf("query proposal: %v", err)
-	}
-	rows, err := testPool.Query(context.Background(), `
+	rows, err := testPool.Query(ctx, `
 		SELECT id FROM chat_issue_proposal_item
 		WHERE proposal_id = $1
 		ORDER BY position ASC

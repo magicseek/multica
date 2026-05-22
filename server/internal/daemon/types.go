@@ -4,9 +4,11 @@ import "encoding/json"
 
 const (
 	TaskChatSummaryManifestRelativePath    = ".multica/chat-summary.json"
+	TaskPlanSummaryManifestRelativePath    = ".multica/plan-summary.json"
 	TaskIssueProposalsManifestRelativePath = ".multica/issue-proposals.json"
 	TaskOutputManifestRelativePath         = ".multica/outputs.json"
 	TaskChatSummaryManifestFileName        = "chat-summary.json"
+	TaskPlanSummaryManifestFileName        = "plan-summary.json"
 	TaskIssueProposalsManifestFileName     = "issue-proposals.json"
 	TaskOutputManifestFileName             = "outputs.json"
 )
@@ -113,18 +115,22 @@ type Task struct {
 	Agent                   *AgentData            `json:"agent,omitempty"`
 	Repos                   []RepoData            `json:"repos,omitempty"`
 	Repositories            []TaskRepositoryData  `json:"repositories,omitempty"`
-	ProjectID               string                `json:"project_id,omitempty"`                // issue's project, when present
-	ProjectTitle            string                `json:"project_title,omitempty"`             // human-readable project title for context injection
-	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"`         // project-scoped resources to expose to the agent
-	PriorSessionID          string                `json:"prior_session_id,omitempty"`          // Claude session ID from a previous task on this issue
-	PriorWorkDir            string                `json:"prior_work_dir,omitempty"`            // work_dir from a previous task on this issue
-	TriggerCommentID        string                `json:"trigger_comment_id,omitempty"`        // comment that triggered this task
-	TriggerCommentContent   string                `json:"trigger_comment_content,omitempty"`   // content of the triggering comment
-	TriggerAuthorType       string                `json:"trigger_author_type,omitempty"`       // "agent" or "member" — author kind for the triggering comment
-	TriggerAuthorName       string                `json:"trigger_author_name,omitempty"`       // display name of the triggering comment author
-	ChatSessionID           string                `json:"chat_session_id,omitempty"`           // non-empty for chat tasks
-	ChatMessage             string                `json:"chat_message,omitempty"`              // user message content for chat tasks
-	ChatMessageAttachments  []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"`  // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
+	ProjectID               string                `json:"project_id,omitempty"`               // issue's project, when present
+	ProjectTitle            string                `json:"project_title,omitempty"`            // human-readable project title for context injection
+	ProjectResources        []ProjectResourceData `json:"project_resources,omitempty"`        // project-scoped resources to expose to the agent
+	PriorSessionID          string                `json:"prior_session_id,omitempty"`         // Claude session ID from a previous task on this issue
+	PriorWorkDir            string                `json:"prior_work_dir,omitempty"`           // work_dir from a previous task on this issue
+	TriggerCommentID        string                `json:"trigger_comment_id,omitempty"`       // comment that triggered this task
+	TriggerCommentContent   string                `json:"trigger_comment_content,omitempty"`  // content of the triggering comment
+	TriggerAuthorType       string                `json:"trigger_author_type,omitempty"`      // "agent" or "member" — author kind for the triggering comment
+	TriggerAuthorName       string                `json:"trigger_author_name,omitempty"`      // display name of the triggering comment author
+	ChatSessionID           string                `json:"chat_session_id,omitempty"`          // non-empty for chat tasks
+	ChatMessage             string                `json:"chat_message,omitempty"`             // user message content for chat tasks
+	ChatMessageAttachments  []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"` // attachments linked to the chat message; agent uses these to `multica attachment download <id>`
+	ChatPlanRunID           string                `json:"chat_plan_run_id,omitempty"`
+	ChatPlanConsultationID  string                `json:"chat_plan_consultation_id,omitempty"`
+	ChatTaskKind            string                `json:"chat_task_kind,omitempty"`
+	Plan                    *ChatPlanTaskData     `json:"plan,omitempty"`
 	AutopilotRunID          string                `json:"autopilot_run_id,omitempty"`          // non-empty for autopilot run_only tasks
 	AutopilotID             string                `json:"autopilot_id,omitempty"`              // autopilot that spawned this run
 	AutopilotTitle          string                `json:"autopilot_title,omitempty"`           // autopilot title used as task context
@@ -215,6 +221,78 @@ type ChatAttachmentMeta struct {
 	ContentType string `json:"content_type,omitempty"`
 }
 
+type ChatPlanTaskData struct {
+	RunID           string                         `json:"run_id"`
+	ActorType       string                         `json:"actor_type"`
+	ActorID         string                         `json:"actor_id"`
+	LeadAgentID     string                         `json:"lead_agent_id"`
+	Status          string                         `json:"status"`
+	TaskKind        string                         `json:"task_kind"`
+	PlanEngine      ChatPlanEngineTaskData         `json:"plan_engine"`
+	Summary         json.RawMessage                `json:"summary"`
+	Transcript      []ChatPlanTranscriptMessage    `json:"transcript"`
+	Consultations   []ChatPlanConsultationResponse `json:"consultations,omitempty"`
+	Squad           *ChatPlanSquadTaskData         `json:"squad,omitempty"`
+	Consultation    *ChatPlanConsultationTaskData  `json:"consultation,omitempty"`
+	ProposalPath    string                         `json:"proposal_path"`
+	PlanSummaryPath string                         `json:"plan_summary_path"`
+}
+
+type ChatPlanEngineTaskData struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Protocol    string `json:"protocol"`
+}
+
+type ChatPlanTranscriptMessage struct {
+	ID             string  `json:"id"`
+	Role           string  `json:"role"`
+	Content        string  `json:"content"`
+	AuthorType     string  `json:"author_type"`
+	AuthorAgentID  *string `json:"author_agent_id,omitempty"`
+	ConsultationID *string `json:"consultation_id,omitempty"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+type ChatPlanConsultationResponse struct {
+	ID                string  `json:"id"`
+	PlanRunID         string  `json:"plan_run_id"`
+	RequesterAgentID  string  `json:"requester_agent_id"`
+	TargetAgentID     string  `json:"target_agent_id"`
+	RequestMessageID  *string `json:"request_message_id"`
+	ResponseMessageID *string `json:"response_message_id"`
+	TaskID            *string `json:"task_id"`
+	Status            string  `json:"status"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+}
+
+type ChatPlanSquadTaskData struct {
+	ID          string                    `json:"id"`
+	Name        string                    `json:"name"`
+	LeadMention string                    `json:"lead_mention"`
+	Helpers     []ChatPlanSquadHelperData `json:"helpers"`
+}
+
+type ChatPlanSquadHelperData struct {
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
+	Role    string `json:"role,omitempty"`
+	Mention string `json:"mention"`
+}
+
+type ChatPlanConsultationTaskData struct {
+	ID                 string `json:"id"`
+	RequesterAgentID   string `json:"requester_agent_id"`
+	TargetAgentID      string `json:"target_agent_id"`
+	RequestMessageID   string `json:"request_message_id"`
+	RequestContent     string `json:"request_content"`
+	LeadMention        string `json:"lead_mention"`
+	TargetAgentMention string `json:"target_agent_mention"`
+}
+
 // AgentData holds agent details returned by the claim endpoint.
 type AgentData struct {
 	ID                       string            `json:"id"`
@@ -259,6 +337,7 @@ type TaskOutputManifest struct {
 
 type StructuredTaskOutputs struct {
 	ChatSummary    *ChatSummaryManifest    `json:"chat_summary,omitempty"`
+	PlanSummary    *PlanSummaryManifest    `json:"plan_summary,omitempty"`
 	IssueProposals *IssueProposalsManifest `json:"issue_proposals,omitempty"`
 	Outputs        *TaskOutputManifest     `json:"outputs,omitempty"`
 }
@@ -266,6 +345,14 @@ type StructuredTaskOutputs struct {
 type ChatSummaryManifest struct {
 	Version int    `json:"version"`
 	Title   string `json:"title"`
+}
+
+type PlanSummaryManifest struct {
+	Version               int      `json:"version"`
+	ConfirmedRequirements []string `json:"confirmed_requirements"`
+	RejectedOptions       []string `json:"rejected_options"`
+	ConsensusNotes        []string `json:"consensus_notes"`
+	OpenQuestions         []string `json:"open_questions"`
 }
 
 type IssueProposalsManifest struct {

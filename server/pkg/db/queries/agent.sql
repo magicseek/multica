@@ -124,6 +124,7 @@ WHERE id = $1 AND issue_id IS NULL;
 -- recognise it as a leader task.
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, chat_session_id, trigger_chat_message_id, autopilot_run_id,
+    chat_plan_run_id, chat_plan_consultation_id, chat_task_kind,
     status, priority, trigger_comment_id, trigger_summary, context,
     session_id, work_dir,
     attempt, max_attempts, parent_task_id, is_leader_task,
@@ -132,6 +133,7 @@ INSERT INTO agent_task_queue (
 )
 SELECT
     p.agent_id, p.runtime_id, p.issue_id, p.chat_session_id, p.trigger_chat_message_id, p.autopilot_run_id,
+    p.chat_plan_run_id, p.chat_plan_consultation_id, p.chat_task_kind,
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     p.session_id, p.work_dir,
     p.attempt + 1, p.max_attempts, p.id, p.is_leader_task,

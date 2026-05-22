@@ -212,6 +212,10 @@ type AgentTaskResponse struct {
 	ChatSessionID            string                `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
 	ChatMessage              string                `json:"chat_message,omitempty"`                // user message for chat tasks
 	ChatMessageAttachments   []ChatAttachmentMeta  `json:"chat_message_attachments,omitempty"`    // attachments on the user message — agent calls `multica attachment download <id>` per entry
+	ChatPlanRunID            string                `json:"chat_plan_run_id,omitempty"`            // non-empty for plan-mode chat tasks
+	ChatPlanConsultationID   string                `json:"chat_plan_consultation_id,omitempty"`   // non-empty for squad helper consultation tasks
+	ChatTaskKind             string                `json:"chat_task_kind,omitempty"`              // normal | plan_lead | plan_consultation
+	Plan                     *ChatPlanTaskData     `json:"plan,omitempty"`                        // plan-mode prompt context for daemon runtimes
 	AutopilotRunID           string                `json:"autopilot_run_id,omitempty"`            // non-empty for autopilot-spawned tasks
 	AutopilotID              string                `json:"autopilot_id,omitempty"`                // autopilot that spawned this task
 	AutopilotTitle           string                `json:"autopilot_title,omitempty"`             // autopilot title used as task context
@@ -291,9 +295,12 @@ func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
 		// Surface task source so the UI can distinguish issue-linked tasks
 		// from chat-spawned or autopilot-spawned ones; all three may arrive
 		// with issue_id = "" once a task has no linked issue.
-		ChatSessionID:  uuidToString(t.ChatSessionID),
-		AutopilotRunID: uuidToString(t.AutopilotRunID),
-		Kind:           computeTaskKind(t),
+		ChatSessionID:          uuidToString(t.ChatSessionID),
+		ChatPlanRunID:          uuidToString(t.ChatPlanRunID),
+		ChatPlanConsultationID: uuidToString(t.ChatPlanConsultationID),
+		ChatTaskKind:           t.ChatTaskKind,
+		AutopilotRunID:         uuidToString(t.AutopilotRunID),
+		Kind:                   computeTaskKind(t),
 	}
 }
 

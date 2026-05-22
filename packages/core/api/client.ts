@@ -61,6 +61,7 @@ import type {
   ApproveChatIssueProposalResponse,
   ChatIssueProposal,
   ChatIssueProposalItem,
+  ChatPlanRun,
   ChatSession,
   ChatSessionIssuesResponse,
   ChatSessionListParams,
@@ -70,6 +71,8 @@ import type {
   ChatMessage,
   ChatPendingTask,
   PendingChatTasksResponse,
+  PlanEngineListResponse,
+  SendChatMessageRequest,
   SendChatMessageResponse,
   UpdateChatIssueProposalItemRequest,
   Project,
@@ -161,6 +164,9 @@ import {
   ChatIssueProposalItemSchema,
   ChatIssueProposalListSchema,
   ChatIssueProposalSchema,
+  ChatMessageListSchema,
+  ChatPlanRunSchema,
+  ChatPlanRunListSchema,
   ChatSessionIssuesResponseSchema,
   ChatSessionListSchema,
   ChatSessionSchema,
@@ -180,6 +186,9 @@ import {
   EMPTY_CHAT_ISSUE_PROPOSAL_APPROVAL_RESPONSE,
   EMPTY_CHAT_ISSUE_PROPOSAL_ITEM,
   EMPTY_CHAT_ISSUE_PROPOSALS,
+  EMPTY_CHAT_MESSAGES,
+  EMPTY_CHAT_PLAN_RUN,
+  EMPTY_CHAT_PLAN_RUNS,
   EMPTY_CHAT_SESSION,
   EMPTY_CHAT_SESSION_ISSUES_RESPONSE,
   EMPTY_CHAT_SIDEBAR_RECENTS_RESPONSE,
@@ -191,6 +200,8 @@ import {
   EMPTY_LIST_REPOSITORY_BINDINGS_RESPONSE,
   EMPTY_LIST_REPOSITORY_OPERATIONS_RESPONSE,
   EMPTY_LIST_TASK_OUTPUT_METADATA_RESPONSE,
+  EMPTY_PLAN_ENGINE_LIST_RESPONSE,
+  EMPTY_SEND_CHAT_MESSAGE_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_EXPORT_WORKFLOW_RESPONSE,
   EMPTY_IMPORT_WORKFLOW_RESPONSE,
@@ -217,6 +228,7 @@ import {
   ListRepositoryBindingsResponseSchema,
   ListRepositoryOperationsResponseSchema,
   ListTaskOutputMetadataResponseSchema,
+  PlanEngineListResponseSchema,
   RepositoryBindingSchema,
   RepositoryOperationSchema,
   RepositorySchema,
@@ -234,6 +246,7 @@ import {
   WorkflowRunListSchema,
   WorkflowRunSchema,
   WorkflowStepRunSchema,
+  SendChatMessageResponseSchema,
 } from "./schemas";
 
 /** Identifies the calling client to the server.
@@ -1815,21 +1828,56 @@ export class ApiClient {
   }
 
   async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`);
+    return parseWithFallback(raw, ChatMessageListSchema, EMPTY_CHAT_MESSAGES, {
+      endpoint: "GET /api/chat/sessions/{id}/messages",
+    });
   }
 
   async sendChatMessage(
     sessionId: string,
     content: string,
     attachmentIds?: string[],
+    options?: Omit<SendChatMessageRequest, "content" | "attachment_ids">,
   ): Promise<SendChatMessageResponse> {
-    const body: { content: string; attachment_ids?: string[] } = { content };
+    const body: SendChatMessageRequest = { content };
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+    if (options?.mode) body.mode = options.mode;
+    if (options?.plan_engine) body.plan_engine = options.plan_engine;
+    if (options?.plan_run_id) body.plan_run_id = options.plan_run_id;
+    if (options?.plan_actor_type) body.plan_actor_type = options.plan_actor_type;
+    if (options?.plan_actor_id) body.plan_actor_id = options.plan_actor_id;
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+    return parseWithFallback(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {
+      endpoint: "POST /api/chat/sessions/{id}/messages",
+    });
+  }
+
+  async listPlanEngines(): Promise<PlanEngineListResponse> {
+    const raw = await this.fetch<unknown>("/api/chat/plan-engines");
+    return parseWithFallback(raw, PlanEngineListResponseSchema, EMPTY_PLAN_ENGINE_LIST_RESPONSE, {
+      endpoint: "GET /api/chat/plan-engines",
+    });
+  }
+
+  async listChatPlanRuns(sessionId: string): Promise<ChatPlanRun[]> {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/plan-runs`);
+    return parseWithFallback(raw, ChatPlanRunListSchema, EMPTY_CHAT_PLAN_RUNS, {
+      endpoint: "GET /api/chat/sessions/{id}/plan-runs",
+    });
+  }
+
+  async cancelChatPlanRun(planRunId: string): Promise<ChatPlanRun> {
+    const raw = await this.fetch<unknown>(`/api/chat/plan-runs/${planRunId}/cancel`, {
+      method: "POST",
+    });
+    return parseWithFallback(raw, ChatPlanRunSchema, EMPTY_CHAT_PLAN_RUN, {
+      endpoint: "POST /api/chat/plan-runs/{id}/cancel",
     });
   }
 

@@ -3,7 +3,7 @@
   "name": "chat-plan-runs",
   "title": "Chat Plan Runs",
   "description": "Add stateful Chat Plan Runs with server-owned plan engine presets, plan summaries, and bounded squad consultation before proposal approval.",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": "feature",
   "scope": "chat plan mode, plan engine presets, squad plan consultations, plan summaries, proposal approval",
   "package": null,

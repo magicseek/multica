@@ -66,12 +66,17 @@ type RuntimeInfo struct {
 
 // ChatMessagePayload is broadcast when a new chat message is created.
 type ChatMessagePayload struct {
-	ChatSessionID string `json:"chat_session_id"`
-	MessageID     string `json:"message_id"`
-	Role          string `json:"role"`
-	Content       string `json:"content"`
-	TaskID        string `json:"task_id,omitempty"`
-	CreatedAt     string `json:"created_at"`
+	ChatSessionID    string `json:"chat_session_id"`
+	MessageID        string `json:"message_id"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	TaskID           string `json:"task_id,omitempty"`
+	AuthorType       string `json:"author_type,omitempty"`
+	AuthorAgentID    string `json:"author_agent_id,omitempty"`
+	PlanRunID        string `json:"plan_run_id,omitempty"`
+	ConsultationID   string `json:"consultation_id,omitempty"`
+	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+	CreatedAt        string `json:"created_at"`
 }
 
 // ChatDonePayload is broadcast when an agent finishes responding to a chat
@@ -80,12 +85,22 @@ type ChatMessagePayload struct {
 // during the live-timeline → AssistantMessage handoff that previously caused
 // a visible flicker (#2123).
 type ChatDonePayload struct {
+	ChatSessionID    string `json:"chat_session_id"`
+	TaskID           string `json:"task_id"`
+	MessageID        string `json:"message_id,omitempty"`
+	Content          string `json:"content,omitempty"`
+	AuthorType       string `json:"author_type,omitempty"`
+	AuthorAgentID    string `json:"author_agent_id,omitempty"`
+	PlanRunID        string `json:"plan_run_id,omitempty"`
+	ConsultationID   string `json:"consultation_id,omitempty"`
+	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
+	ElapsedMs        int64  `json:"elapsed_ms,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
+}
+
+type ChatPlanRunsUpdatedPayload struct {
 	ChatSessionID string `json:"chat_session_id"`
-	TaskID        string `json:"task_id"`
-	MessageID     string `json:"message_id,omitempty"`
-	Content       string `json:"content,omitempty"`
-	ElapsedMs     int64  `json:"elapsed_ms,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	PlanRunID     string `json:"plan_run_id,omitempty"`
 }
 
 // ChatSessionReadPayload is broadcast when the creator marks a session as read.

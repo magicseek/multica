@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,12 @@ type TaskWakeupNotifier interface {
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
 const triggerSummaryMaxLen = 200
+
+const (
+	ChatTaskKindNormal           = "normal"
+	ChatTaskKindPlanLead         = "plan_lead"
+	ChatTaskKindPlanConsultation = "plan_consultation"
+)
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
 // `…` when truncated. Operates on runes (not bytes) so multibyte characters
@@ -709,7 +716,19 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 // the exact user message that created this turn so daemon claim does not need
 // to scan the whole transcript and guess "latest user message".
 func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, triggerMessageID pgtype.UUID) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
+	return s.EnqueueChatTaskForAgent(ctx, chatSession, chatSession.AgentID, triggerMessageID, pgtype.UUID{}, pgtype.UUID{}, ChatTaskKindNormal)
+}
+
+func (s *TaskService) EnqueuePlanLeadTask(ctx context.Context, chatSession db.ChatSession, planRun db.ChatPlanRun, triggerMessageID pgtype.UUID) (db.AgentTaskQueue, error) {
+	return s.EnqueueChatTaskForAgent(ctx, chatSession, planRun.LeadAgentID, triggerMessageID, planRun.ID, pgtype.UUID{}, ChatTaskKindPlanLead)
+}
+
+func (s *TaskService) EnqueuePlanConsultationTask(ctx context.Context, chatSession db.ChatSession, planRun db.ChatPlanRun, consultation db.ChatPlanConsultation) (db.AgentTaskQueue, error) {
+	return s.EnqueueChatTaskForAgent(ctx, chatSession, consultation.TargetAgentID, consultation.RequestMessageID, planRun.ID, consultation.ID, ChatTaskKindPlanConsultation)
+}
+
+func (s *TaskService) EnqueueChatTaskForAgent(ctx context.Context, chatSession db.ChatSession, agentID pgtype.UUID, triggerMessageID, planRunID, consultationID pgtype.UUID, chatTaskKind string) (db.AgentTaskQueue, error) {
+	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
@@ -720,13 +739,19 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 	if !agent.RuntimeID.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
+	if strings.TrimSpace(chatTaskKind) == "" {
+		chatTaskKind = ChatTaskKindNormal
+	}
 
 	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
-		AgentID:                  chatSession.AgentID,
+		AgentID:                  agentID,
 		RuntimeID:                agent.RuntimeID,
 		Priority:                 2, // medium priority for chat
 		ChatSessionID:            chatSession.ID,
 		TriggerChatMessageID:     triggerMessageID,
+		ChatPlanRunID:            planRunID,
+		ChatPlanConsultationID:   consultationID,
+		ChatTaskKind:             chatTaskKind,
 		ConnectorDelegatedUserID: chatSession.CreatorID,
 	})
 	if err != nil {
@@ -734,7 +759,7 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
 	}
 
-	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "trigger_chat_message_id", util.UUIDToString(triggerMessageID), "agent_id", util.UUIDToString(chatSession.AgentID))
+	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "trigger_chat_message_id", util.UUIDToString(triggerMessageID), "agent_id", util.UUIDToString(agentID), "chat_task_kind", chatTaskKind)
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
@@ -1241,11 +1266,15 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			// paragraph breaks instead of one wall of prose.
 			body := util.UnescapeBackslashEscapes(payload.Output)
 			row, err := s.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
-				ChatSessionID: task.ChatSessionID,
-				Role:          "assistant",
-				Content:       redact.Text(body),
-				TaskID:        task.ID,
-				ElapsedMs:     computeChatElapsedMs(task),
+				ChatSessionID:  task.ChatSessionID,
+				Role:           "assistant",
+				Content:        redact.Text(body),
+				TaskID:         task.ID,
+				ElapsedMs:      computeChatElapsedMs(task),
+				AuthorType:     "agent",
+				AuthorAgentID:  task.AgentID,
+				PlanRunID:      task.ChatPlanRunID,
+				ConsultationID: task.ChatPlanConsultationID,
 			})
 			if err != nil {
 				slog.Error("failed to save assistant chat message", "task_id", util.UUIDToString(task.ID), "error", err)
@@ -1257,6 +1286,14 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				// auto-mark-read effect will clear this within a tick.
 				if err := s.Queries.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
 					slog.Warn("failed to set unread_since", "chat_session_id", util.UUIDToString(task.ChatSessionID), "error", err)
+				}
+				if err := s.handleChatPlanTaskCompleted(ctx, task, row, body); err != nil {
+					slog.Warn("chat plan completion handling failed",
+						"task_id", util.UUIDToString(task.ID),
+						"chat_plan_run_id", util.UUIDToString(task.ChatPlanRunID),
+						"chat_plan_consultation_id", util.UUIDToString(task.ChatPlanConsultationID),
+						"error", err,
+					)
 				}
 			}
 		}
@@ -1373,12 +1410,16 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// the issue path above.
 	if task.ChatSessionID.Valid && retried == nil {
 		if _, err := s.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ChatSessionID: task.ChatSessionID,
-			Role:          "assistant",
-			Content:       redact.Text(errMsg),
-			TaskID:        pgtype.UUID{Bytes: task.ID.Bytes, Valid: true},
-			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
-			ElapsedMs:     computeChatElapsedMs(task),
+			ChatSessionID:  task.ChatSessionID,
+			Role:           "assistant",
+			Content:        redact.Text(errMsg),
+			TaskID:         pgtype.UUID{Bytes: task.ID.Bytes, Valid: true},
+			FailureReason:  pgtype.Text{String: failureReason, Valid: failureReason != ""},
+			ElapsedMs:      computeChatElapsedMs(task),
+			AuthorType:     "agent",
+			AuthorAgentID:  task.AgentID,
+			PlanRunID:      task.ChatPlanRunID,
+			ConsultationID: task.ChatPlanConsultationID,
 		}); err != nil {
 			slog.Error("failed to save failure chat message",
 				"task_id", util.UUIDToString(task.ID),
@@ -1388,6 +1429,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			slog.Warn("failed to set unread_since on failure",
 				"chat_session_id", util.UUIDToString(task.ChatSessionID),
 				"error", err)
+		}
+		if task.ChatPlanConsultationID.Valid {
+			s.handleChatPlanConsultationFailed(ctx, task)
 		}
 	}
 
@@ -1482,6 +1526,11 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	}
 	if parent.AutopilotRunID.Valid {
 		// Autopilot has its own retry semantics; do not double-trigger.
+		return nil, nil
+	}
+	if parent.ChatPlanConsultationID.Valid || parent.ChatTaskKind == ChatTaskKindPlanConsultation {
+		// Consultations are bounded by design. A missing helper reply should
+		// resume the lead with the gap recorded instead of retrying forever.
 		return nil, nil
 	}
 	if !parent.IssueID.Valid && !parent.ChatSessionID.Valid {
@@ -1637,6 +1686,9 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				retriedIssues[util.UUIDToString(t.IssueID)] = true
 			}
 		}
+		if t.ChatPlanConsultationID.Valid {
+			s.handleChatPlanConsultationFailed(ctx, t)
+		}
 
 		failureReason := "agent_error"
 		if t.FailureReason.Valid && t.FailureReason.String != "" {
@@ -1703,6 +1755,285 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		s.ReconcileAgentStatus(ctx, agentID)
 	}
 	return retried
+}
+
+var chatPlanAgentMentionRe = regexp.MustCompile(`mention://agent/([0-9a-fA-F-]{36})`)
+
+func (s *TaskService) handleChatPlanTaskCompleted(ctx context.Context, task db.AgentTaskQueue, assistantMsg db.ChatMessage, output string) error {
+	if !task.ChatPlanRunID.Valid {
+		return nil
+	}
+	if task.ChatPlanConsultationID.Valid || task.ChatTaskKind == ChatTaskKindPlanConsultation {
+		if !task.ChatPlanConsultationID.Valid {
+			return nil
+		}
+		run, err := s.Queries.GetChatPlanRun(ctx, task.ChatPlanRunID)
+		if err != nil {
+			return err
+		}
+		if agentMentioned(output, run.LeadAgentID) {
+			if _, err := s.Queries.MarkChatPlanConsultationResponded(ctx, db.MarkChatPlanConsultationRespondedParams{
+				ID:                task.ChatPlanConsultationID,
+				ResponseMessageID: assistantMsg.ID,
+			}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("mark consultation responded: %w", err)
+			}
+		} else if _, err := s.Queries.MarkChatPlanConsultationFailed(ctx, db.MarkChatPlanConsultationFailedParams{
+			ID:     task.ChatPlanConsultationID,
+			Status: "failed",
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("mark consultation missing lead mention: %w", err)
+		}
+		s.broadcastChatPlanRunsUpdated(ctx, run)
+		return s.resumePlanLeadIfConsultationsClosed(ctx, task.ChatPlanRunID, pgtype.UUID{})
+	}
+	if task.ChatTaskKind != ChatTaskKindPlanLead {
+		return nil
+	}
+	return s.enqueueConsultationsFromLeadMessage(ctx, task, assistantMsg, output)
+}
+
+func (s *TaskService) enqueueConsultationsFromLeadMessage(ctx context.Context, task db.AgentTaskQueue, assistantMsg db.ChatMessage, output string) error {
+	run, err := s.Queries.GetChatPlanRun(ctx, task.ChatPlanRunID)
+	if err != nil {
+		return err
+	}
+	if run.ActorType != "squad" || !run.ActorID.Valid {
+		return nil
+	}
+	if util.UUIDToString(run.LeadAgentID) != util.UUIDToString(task.AgentID) {
+		return nil
+	}
+
+	session, err := s.Queries.GetChatSession(ctx, run.ChatSessionID)
+	if err != nil {
+		return err
+	}
+	eligible, err := s.planConsultationHelperSet(ctx, run)
+	if err != nil {
+		return err
+	}
+	if len(eligible) == 0 {
+		return nil
+	}
+	existing, err := s.Queries.ListChatPlanConsultationsByRun(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+
+	mentioned := parseAgentMentions(output)
+	createdAny := false
+	closedAny := false
+	for _, agentID := range mentioned {
+		key := util.UUIDToString(agentID)
+		if _, ok := eligible[key]; !ok {
+			continue
+		}
+		consultation, err := s.Queries.CreateChatPlanConsultation(ctx, db.CreateChatPlanConsultationParams{
+			PlanRunID:        run.ID,
+			RequesterAgentID: run.LeadAgentID,
+			TargetAgentID:    agentID,
+			RequestMessageID: assistantMsg.ID,
+		})
+		if err != nil {
+			slog.Warn("chat plan consultation create failed",
+				"plan_run_id", util.UUIDToString(run.ID),
+				"target_agent_id", key,
+				"error", err,
+			)
+			continue
+		}
+		if consultation.TaskID.Valid || consultation.Status == "responded" || consultation.Status == "failed" || consultation.Status == "timed_out" || consultation.Status == "skipped" {
+			continue
+		}
+		helperTask, err := s.EnqueuePlanConsultationTask(ctx, session, run, consultation)
+		if err != nil {
+			slog.Warn("chat plan consultation enqueue failed",
+				"plan_run_id", util.UUIDToString(run.ID),
+				"consultation_id", util.UUIDToString(consultation.ID),
+				"target_agent_id", key,
+				"error", err,
+			)
+			if _, markErr := s.Queries.MarkChatPlanConsultationFailed(ctx, db.MarkChatPlanConsultationFailedParams{
+				ID:     consultation.ID,
+				Status: "failed",
+			}); markErr != nil && !errors.Is(markErr, pgx.ErrNoRows) {
+				slog.Warn("chat plan consultation mark failed after enqueue error failed",
+					"consultation_id", util.UUIDToString(consultation.ID),
+					"error", markErr,
+				)
+			}
+			closedAny = true
+			continue
+		}
+		if _, err := s.Queries.SetChatPlanConsultationTask(ctx, db.SetChatPlanConsultationTaskParams{
+			ID:     consultation.ID,
+			TaskID: helperTask.ID,
+		}); err != nil {
+			slog.Warn("chat plan consultation task link failed",
+				"plan_run_id", util.UUIDToString(run.ID),
+				"consultation_id", util.UUIDToString(consultation.ID),
+				"task_id", util.UUIDToString(helperTask.ID),
+				"error", err,
+			)
+		}
+		createdAny = true
+	}
+	if createdAny {
+		updated, err := s.Queries.UpdateChatPlanRunStatus(ctx, db.UpdateChatPlanRunStatusParams{
+			ID:     run.ID,
+			Status: "consulting",
+		})
+		if err != nil {
+			return fmt.Errorf("mark plan consulting: %w", err)
+		}
+		s.broadcastChatPlanRunsUpdated(ctx, updated)
+	} else if closedAny {
+		return s.resumePlanLeadIfConsultationsClosed(ctx, run.ID, pgtype.UUID{})
+	}
+	return nil
+}
+
+func (s *TaskService) planConsultationHelperSet(ctx context.Context, run db.ChatPlanRun) (map[string]pgtype.UUID, error) {
+	members, err := s.Queries.ListSquadMembers(ctx, run.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	eligible := make(map[string]pgtype.UUID)
+	leadID := util.UUIDToString(run.LeadAgentID)
+	for _, member := range members {
+		if member.MemberType != "agent" {
+			continue
+		}
+		memberID := util.UUIDToString(member.MemberID)
+		if memberID == "" || memberID == leadID {
+			continue
+		}
+		agent, err := s.Queries.GetAgent(ctx, member.MemberID)
+		if err != nil || agent.ArchivedAt.Valid {
+			continue
+		}
+		eligible[memberID] = member.MemberID
+	}
+	return eligible, nil
+}
+
+func parseAgentMentions(content string) []pgtype.UUID {
+	matches := chatPlanAgentMentionRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]pgtype.UUID, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		id, err := util.ParseUUID(match[1])
+		if err != nil {
+			continue
+		}
+		key := util.UUIDToString(id)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func agentMentioned(content string, agentID pgtype.UUID) bool {
+	if !agentID.Valid {
+		return false
+	}
+	target := util.UUIDToString(agentID)
+	for _, mentioned := range parseAgentMentions(content) {
+		if util.UUIDToString(mentioned) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *TaskService) handleChatPlanConsultationFailed(ctx context.Context, task db.AgentTaskQueue) {
+	reason := "failed"
+	if task.FailureReason.Valid && task.FailureReason.String == "timeout" {
+		reason = "timeout"
+	}
+	if _, err := s.Queries.MarkChatPlanConsultationFailedByTask(ctx, db.MarkChatPlanConsultationFailedByTaskParams{
+		TaskID:        task.ID,
+		FailureReason: reason,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("chat plan consultation failure mark failed",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_plan_consultation_id", util.UUIDToString(task.ChatPlanConsultationID),
+			"error", err,
+		)
+	}
+	if task.ChatPlanRunID.Valid {
+		if err := s.resumePlanLeadIfConsultationsClosed(ctx, task.ChatPlanRunID, pgtype.UUID{}); err != nil {
+			slog.Warn("chat plan lead resume after consultation failure failed",
+				"task_id", util.UUIDToString(task.ID),
+				"chat_plan_run_id", util.UUIDToString(task.ChatPlanRunID),
+				"error", err,
+			)
+		}
+	}
+}
+
+func (s *TaskService) resumePlanLeadIfConsultationsClosed(ctx context.Context, planRunID, triggerMessageID pgtype.UUID) error {
+	open, err := s.Queries.CountOpenChatPlanConsultations(ctx, planRunID)
+	if err != nil {
+		return err
+	}
+	if open > 0 {
+		return nil
+	}
+	run, err := s.Queries.GetChatPlanRun(ctx, planRunID)
+	if err != nil {
+		return err
+	}
+	switch run.Status {
+	case "cancelled", "failed", "completed":
+		return nil
+	}
+	session, err := s.Queries.GetChatSession(ctx, run.ChatSessionID)
+	if err != nil {
+		return err
+	}
+	updated, err := s.Queries.UpdateChatPlanRunStatus(ctx, db.UpdateChatPlanRunStatusParams{
+		ID:     run.ID,
+		Status: "brainstorming",
+	})
+	if err != nil {
+		return err
+	}
+	s.broadcastChatPlanRunsUpdated(ctx, updated)
+	_, err = s.EnqueuePlanLeadTask(ctx, session, updated, triggerMessageID)
+	return err
+}
+
+func (s *TaskService) broadcastChatPlanRunsUpdated(ctx context.Context, run db.ChatPlanRun) {
+	workspaceID := util.UUIDToString(run.WorkspaceID)
+	sessionID := util.UUIDToString(run.ChatSessionID)
+	if workspaceID == "" || sessionID == "" || s.Bus == nil {
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:          protocol.EventChatPlanRunsUpdated,
+		WorkspaceID:   workspaceID,
+		ActorType:     "system",
+		ActorID:       "",
+		ChatSessionID: sessionID,
+		Payload: protocol.ChatPlanRunsUpdatedPayload{
+			ChatSessionID: sessionID,
+			PlanRunID:     util.UUIDToString(run.ID),
+		},
+	})
 }
 
 // runInTx executes fn inside a single DB transaction. If TxStarter is nil
@@ -1970,6 +2301,11 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 	if msg != nil {
 		payload.MessageID = util.UUIDToString(msg.ID)
 		payload.Content = msg.Content
+		payload.AuthorType = msg.AuthorType
+		payload.AuthorAgentID = util.UUIDToString(msg.AuthorAgentID)
+		payload.PlanRunID = util.UUIDToString(msg.PlanRunID)
+		payload.ConsultationID = util.UUIDToString(msg.ConsultationID)
+		payload.ReplyToMessageID = util.UUIDToString(msg.ReplyToMessageID)
 		if msg.CreatedAt.Valid {
 			payload.CreatedAt = msg.CreatedAt.Time.UTC().Format(time.RFC3339Nano)
 		}

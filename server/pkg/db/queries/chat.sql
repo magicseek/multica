@@ -266,8 +266,32 @@ UPDATE chat_session SET updated_at = now()
 WHERE id = $1;
 
 -- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, sqlc.narg(task_id), sqlc.narg(failure_reason), sqlc.narg(elapsed_ms))
+INSERT INTO chat_message (
+    chat_session_id,
+    role,
+    content,
+    task_id,
+    failure_reason,
+    elapsed_ms,
+    author_type,
+    author_agent_id,
+    plan_run_id,
+    consultation_id,
+    reply_to_message_id
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    sqlc.narg(task_id),
+    sqlc.narg(failure_reason),
+    sqlc.narg(elapsed_ms),
+    COALESCE(sqlc.narg('author_type'), CASE WHEN $2 = 'assistant' THEN 'agent' ELSE 'member' END),
+    sqlc.narg('author_agent_id'),
+    sqlc.narg('plan_run_id'),
+    sqlc.narg('consultation_id'),
+    sqlc.narg('reply_to_message_id')
+)
 RETURNING *;
 
 -- name: ListChatMessages :many
@@ -289,6 +313,12 @@ SET task_id = $2
 WHERE id = $1
 RETURNING *;
 
+-- name: SetChatMessagePlanRun :one
+UPDATE chat_message
+SET plan_run_id = $2
+WHERE id = $1
+RETURNING *;
+
 -- name: GetAssistantChatMessageByTask :one
 SELECT * FROM chat_message
 WHERE chat_session_id = $1
@@ -306,10 +336,189 @@ INSERT INTO agent_task_queue (
     priority,
     chat_session_id,
     trigger_chat_message_id,
+    chat_plan_run_id,
+    chat_plan_consultation_id,
+    chat_task_kind,
     connector_delegated_user_id
 )
-VALUES ($1, $2, NULL, 'queued', $3, $4, $5, sqlc.narg('connector_delegated_user_id'))
+VALUES (
+    $1,
+    $2,
+    NULL,
+    'queued',
+    $3,
+    $4,
+    $5,
+    sqlc.narg('chat_plan_run_id'),
+    sqlc.narg('chat_plan_consultation_id'),
+    COALESCE(sqlc.narg('chat_task_kind'), 'normal'),
+    sqlc.narg('connector_delegated_user_id')
+)
 RETURNING *;
+
+-- name: CreateChatPlanRun :one
+INSERT INTO chat_plan_run (
+    workspace_id,
+    chat_session_id,
+    creator_user_id,
+    actor_type,
+    actor_id,
+    lead_agent_id,
+    plan_engine,
+    engine_version,
+    status,
+    initial_message_id,
+    latest_message_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    'brainstorming',
+    $9,
+    $9
+)
+RETURNING *;
+
+-- name: GetChatPlanRun :one
+SELECT *
+FROM chat_plan_run
+WHERE id = $1;
+
+-- name: GetChatPlanRunInSession :one
+SELECT *
+FROM chat_plan_run
+WHERE id = $1
+  AND chat_session_id = $2
+  AND workspace_id = $3;
+
+-- name: ListChatPlanRunsBySession :many
+SELECT *
+FROM chat_plan_run
+WHERE chat_session_id = $1
+  AND workspace_id = $2
+ORDER BY updated_at DESC, created_at DESC;
+
+-- name: GetActiveChatPlanRunBySession :one
+SELECT *
+FROM chat_plan_run
+WHERE chat_session_id = $1
+  AND workspace_id = $2
+  AND status IN ('brainstorming', 'consulting', 'ready_for_approval')
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1;
+
+-- name: UpdateChatPlanRunLatestMessage :one
+UPDATE chat_plan_run
+SET latest_message_id = $2,
+    status = CASE
+        WHEN status IN ('cancelled', 'failed', 'completed') THEN status
+        ELSE 'brainstorming'
+    END,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChatPlanRunStatus :one
+UPDATE chat_plan_run
+SET status = $2,
+    updated_at = now(),
+    completed_at = CASE WHEN $2 = 'completed' THEN now() ELSE completed_at END,
+    cancelled_at = CASE WHEN $2 = 'cancelled' THEN now() ELSE cancelled_at END,
+    failed_at = CASE WHEN $2 = 'failed' THEN now() ELSE failed_at END
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateChatPlanRunSummary :one
+UPDATE chat_plan_run
+SET summary = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: CancelChatPlanRun :one
+UPDATE chat_plan_run
+SET status = 'cancelled',
+    cancelled_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('brainstorming', 'consulting', 'ready_for_approval')
+RETURNING *;
+
+-- name: CreateChatPlanConsultation :one
+INSERT INTO chat_plan_consultation (
+    plan_run_id,
+    requester_agent_id,
+    target_agent_id,
+    request_message_id,
+    status
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    'pending'
+)
+ON CONFLICT (plan_run_id, request_message_id, target_agent_id)
+DO UPDATE SET updated_at = chat_plan_consultation.updated_at
+RETURNING *;
+
+-- name: SetChatPlanConsultationTask :one
+UPDATE chat_plan_consultation
+SET task_id = $2,
+    status = 'running',
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkChatPlanConsultationResponded :one
+UPDATE chat_plan_consultation
+SET response_message_id = $2,
+    status = 'responded',
+    responded_at = now(),
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: MarkChatPlanConsultationFailedByTask :one
+UPDATE chat_plan_consultation
+SET status = CASE WHEN sqlc.arg('failure_reason') = 'timeout' THEN 'timed_out' ELSE 'failed' END,
+    failed_at = now(),
+    updated_at = now()
+WHERE task_id = $1
+  AND status IN ('pending', 'running')
+RETURNING *;
+
+-- name: MarkChatPlanConsultationFailed :one
+UPDATE chat_plan_consultation
+SET status = $2,
+    failed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('pending', 'running')
+RETURNING *;
+
+-- name: GetChatPlanConsultation :one
+SELECT *
+FROM chat_plan_consultation
+WHERE id = $1;
+
+-- name: ListChatPlanConsultationsByRun :many
+SELECT *
+FROM chat_plan_consultation
+WHERE plan_run_id = $1
+ORDER BY created_at ASC;
+
+-- name: CountOpenChatPlanConsultations :one
+SELECT count(*)::int
+FROM chat_plan_consultation
+WHERE plan_run_id = $1
+  AND status IN ('pending', 'running');
 
 -- name: GetLastChatTaskSession :one
 -- Returns the most recent task in this chat session that managed to record a
@@ -365,6 +574,7 @@ INSERT INTO chat_issue_proposal (
     chat_session_id,
     source_chat_message_id,
     source_task_id,
+    source_plan_run_id,
     proposer_agent_id,
     title,
     summary
@@ -373,6 +583,7 @@ INSERT INTO chat_issue_proposal (
     $2,
     sqlc.narg('source_chat_message_id'),
     sqlc.narg('source_task_id'),
+    sqlc.narg('source_plan_run_id'),
     sqlc.narg('proposer_agent_id'),
     $3,
     sqlc.narg('summary')

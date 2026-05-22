@@ -761,11 +761,17 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 type SendChatMessageRequest struct {
 	Content       string   `json:"content"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	Mode          string   `json:"mode"`
+	PlanEngine    string   `json:"plan_engine"`
+	PlanRunID     string   `json:"plan_run_id"`
+	PlanActorType string   `json:"plan_actor_type"`
+	PlanActorID   string   `json:"plan_actor_id"`
 }
 
 type SendChatMessageResponse struct {
 	MessageID string `json:"message_id"`
 	TaskID    string `json:"task_id"`
+	PlanRunID string `json:"plan_run_id,omitempty"`
 	// CreatedAt anchors the chat StatusPill timer the instant the user
 	// hits send. Without it the front-end falls back to its local clock
 	// and the timer "snaps backwards" later when WS events deliver the
@@ -789,6 +795,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Content == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "chat"
+	}
+	isPlanMode := mode == "plan" || strings.TrimSpace(req.PlanRunID) != ""
+	if mode != "chat" && mode != "plan" {
+		writeError(w, http.StatusBadRequest, "mode must be chat or plan")
 		return
 	}
 
@@ -818,15 +833,108 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var (
+		planRun       db.ChatPlanRun
+		planRunActive bool
+		planEngine    planEngineDefinition
+		planActorType string
+		planActorID   pgtype.UUID
+		leadAgentID   pgtype.UUID
+	)
+	if isPlanMode {
+		if strings.TrimSpace(req.PlanRunID) != "" {
+			planRunUUID, ok := parseUUIDOrBadRequest(w, req.PlanRunID, "plan_run_id")
+			if !ok {
+				return
+			}
+			run, err := h.Queries.GetChatPlanRunInSession(r.Context(), db.GetChatPlanRunInSessionParams{
+				ID:            planRunUUID,
+				ChatSessionID: session.ID,
+				WorkspaceID:   session.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusNotFound, "plan run not found")
+				return
+			}
+			switch run.Status {
+			case "cancelled", "failed", "completed":
+				writeError(w, http.StatusBadRequest, "plan run is not active")
+				return
+			}
+			planRun = run
+			planRunActive = true
+		} else {
+			engine, ok := findPlanEngine(req.PlanEngine)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "unknown plan_engine")
+				return
+			}
+			planEngine = engine
+			actorType, actorID, leadID, ok := h.resolvePlanActorForSend(w, r, session, req.PlanActorType, req.PlanActorID)
+			if !ok {
+				return
+			}
+			planActorType = actorType
+			planActorID = actorID
+			leadAgentID = leadID
+		}
+	}
+
 	// Create the user message first so the daemon can always find it.
+	var messagePlanRunID pgtype.UUID
+	if planRunActive {
+		messagePlanRunID = planRun.ID
+	}
 	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
 		Content:       req.Content,
+		AuthorType:    "member",
+		PlanRunID:     messagePlanRunID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create chat message")
 		return
+	}
+
+	if isPlanMode {
+		if !planRunActive {
+			created, err := h.Queries.CreateChatPlanRun(r.Context(), db.CreateChatPlanRunParams{
+				WorkspaceID:      session.WorkspaceID,
+				ChatSessionID:    session.ID,
+				CreatorUserID:    session.CreatorID,
+				ActorType:        planActorType,
+				ActorID:          planActorID,
+				LeadAgentID:      leadAgentID,
+				PlanEngine:       planEngine.ID,
+				EngineVersion:    planEngine.Version,
+				InitialMessageID: msg.ID,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create plan run")
+				return
+			}
+			planRun = created
+			planRunActive = true
+			if bound, err := h.Queries.SetChatMessagePlanRun(r.Context(), db.SetChatMessagePlanRunParams{
+				ID:        msg.ID,
+				PlanRunID: planRun.ID,
+			}); err != nil {
+				slog.Warn("failed to bind chat message to plan run", "message_id", uuidToString(msg.ID), "plan_run_id", uuidToString(planRun.ID), "error", err)
+			} else {
+				msg = bound
+			}
+		} else {
+			updated, err := h.Queries.UpdateChatPlanRunLatestMessage(r.Context(), db.UpdateChatPlanRunLatestMessageParams{
+				ID:              planRun.ID,
+				LatestMessageID: msg.ID,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to update plan run")
+				return
+			}
+			planRun = updated
+		}
 	}
 
 	if title := firstMessageChatTitle(req.Content); title != "" {
@@ -865,7 +973,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// Enqueue a chat task after the message exists, binding the queued work to
 	// this exact user message so daemon claim never has to guess under rapid
 	// back-to-back sends.
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, msg.ID)
+	var task db.AgentTaskQueue
+	if isPlanMode {
+		task, err = h.TaskService.EnqueuePlanLeadTask(r.Context(), session, planRun, msg.ID)
+	} else {
+		task, err = h.TaskService.EnqueueChatTask(r.Context(), session, msg.ID)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task: "+err.Error())
 		return
@@ -880,6 +993,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// Touch session updated_at.
 	if err := h.Queries.TouchChatSession(r.Context(), session.ID); err != nil {
 		slog.Warn("failed to touch chat session", "session_id", sessionID, "error", err)
+	}
+	if isPlanMode {
+		h.publishChatPlanRunUpdate(workspaceID, session.ID, planRun.ID, "member", userID)
 	}
 	taskContext := h.TaskService.AnalyticsContextForTask(r.Context(), task)
 	h.Analytics.Capture(analytics.ChatMessageSent(
@@ -900,12 +1016,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		Role:          "user",
 		Content:       req.Content,
 		TaskID:        uuidToString(task.ID),
+		AuthorType:    msg.AuthorType,
+		PlanRunID:     uuidToString(msg.PlanRunID),
 		CreatedAt:     timestampToString(msg.CreatedAt),
 	})
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
 		MessageID: uuidToString(msg.ID),
 		TaskID:    uuidToString(task.ID),
+		PlanRunID: uuidToString(planRun.ID),
 		CreatedAt: timestampToString(task.CreatedAt),
 	})
 }
@@ -1301,6 +1420,7 @@ type ChatIssueProposalResponse struct {
 	ChatSessionID       string                          `json:"chat_session_id"`
 	SourceChatMessageID *string                         `json:"source_chat_message_id"`
 	SourceTaskID        *string                         `json:"source_task_id"`
+	SourcePlanRunID     *string                         `json:"source_plan_run_id"`
 	ProposerAgentID     *string                         `json:"proposer_agent_id"`
 	Title               string                          `json:"title"`
 	Summary             *string                         `json:"summary"`
@@ -1328,12 +1448,16 @@ type ChatIssueProposalItemResponse struct {
 }
 
 type ChatMessageResponse struct {
-	ID            string  `json:"id"`
-	ChatSessionID string  `json:"chat_session_id"`
-	Role          string  `json:"role"`
-	Content       string  `json:"content"`
-	TaskID        *string `json:"task_id"`
-	CreatedAt     string  `json:"created_at"`
+	ID             string  `json:"id"`
+	ChatSessionID  string  `json:"chat_session_id"`
+	Role           string  `json:"role"`
+	Content        string  `json:"content"`
+	TaskID         *string `json:"task_id"`
+	AuthorType     string  `json:"author_type"`
+	AuthorAgentID  *string `json:"author_agent_id"`
+	PlanRunID      *string `json:"plan_run_id"`
+	ConsultationID *string `json:"consultation_id"`
+	CreatedAt      string  `json:"created_at"`
 	// FailureReason flags an assistant row synthesized by FailTask's chat
 	// fallback. Front-end uses it to switch to the destructive bubble.
 	FailureReason *string `json:"failure_reason"`
@@ -1519,6 +1643,7 @@ func chatIssueProposalToResponse(row db.ChatIssueProposal, items []ChatIssueProp
 		ChatSessionID:       uuidToString(row.ChatSessionID),
 		SourceChatMessageID: uuidToPtr(row.SourceChatMessageID),
 		SourceTaskID:        uuidToPtr(row.SourceTaskID),
+		SourcePlanRunID:     uuidToPtr(row.SourcePlanRunID),
 		ProposerAgentID:     uuidToPtr(row.ProposerAgentID),
 		Title:               row.Title,
 		Summary:             textToPtr(row.Summary),
@@ -1557,14 +1682,18 @@ func jsonArrayOrEmpty(raw []byte) json.RawMessage {
 
 func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) ChatMessageResponse {
 	return ChatMessageResponse{
-		ID:            uuidToString(m.ID),
-		ChatSessionID: uuidToString(m.ChatSessionID),
-		Role:          m.Role,
-		Content:       m.Content,
-		TaskID:        uuidToPtr(m.TaskID),
-		CreatedAt:     timestampToString(m.CreatedAt),
-		FailureReason: textToPtr(m.FailureReason),
-		ElapsedMs:     int8ToPtr(m.ElapsedMs),
-		Attachments:   attachments,
+		ID:             uuidToString(m.ID),
+		ChatSessionID:  uuidToString(m.ChatSessionID),
+		Role:           m.Role,
+		Content:        m.Content,
+		TaskID:         uuidToPtr(m.TaskID),
+		AuthorType:     m.AuthorType,
+		AuthorAgentID:  uuidToPtr(m.AuthorAgentID),
+		PlanRunID:      uuidToPtr(m.PlanRunID),
+		ConsultationID: uuidToPtr(m.ConsultationID),
+		CreatedAt:      timestampToString(m.CreatedAt),
+		FailureReason:  textToPtr(m.FailureReason),
+		ElapsedMs:      int8ToPtr(m.ElapsedMs),
+		Attachments:    attachments,
 	}
 }

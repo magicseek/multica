@@ -8,12 +8,16 @@ import {
   Eye,
   FileText,
   FolderKanban,
+  Lightbulb,
   MessageSquare,
   Plus,
   Sparkles,
+  Users,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { cn } from "@multica/ui/lib/utils";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { DRAFT_NEW_SESSION } from "@multica/core/chat";
@@ -32,8 +36,11 @@ import {
   chatKeys,
   chatMessagesOptions,
   chatOutputsOptions,
+  chatPlanEnginesOptions,
+  chatPlanRunsOptions,
   chatSessionOptions,
   chatSessionsOptions,
+  isActiveChatPlanRun,
   pendingChatTaskOptions,
 } from "@multica/core/chat/queries";
 import {
@@ -42,14 +49,18 @@ import {
 } from "@multica/core/workflows";
 import {
   useApproveChatIssueProposal,
+  useCancelChatPlanRun,
   useCreateChatSession,
   useSendChatMessage,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
 import { projectDetailOptions } from "@multica/core/projects/queries";
-import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
+import { agentListOptions, memberListOptions, squadListOptions } from "@multica/core/workspace/queries";
+import { DEFAULT_CHAT_PLAN_ENGINE_ID } from "@multica/core/types";
 import type {
   Agent,
+  ChatPlanActorType,
+  ChatPlanRun,
   ChatIssueProposal,
   ChatIssueProposalItem,
   ChatMessage,
@@ -60,6 +71,9 @@ import type {
   UpdateIssueRequest,
   WorkflowArtifact,
   WorkflowRun,
+  PlanEngine,
+  PlanSummary,
+  Squad,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -96,6 +110,65 @@ type ChatTab = "chat" | "issues" | "outputs" | "analytics";
 const chatIssuesViewStore = createIssueViewStore("chat_session_issues_view");
 const EMPTY_CHAT_PROPOSALS: ChatIssueProposal[] = [];
 const EMPTY_CHAT_ISSUES: Issue[] = [];
+const FALLBACK_PLAN_ENGINES: PlanEngine[] = [
+  {
+    id: "grill_with_docs",
+    label: "Grill with docs",
+    description: "",
+    version: "",
+    is_default: true,
+  },
+  {
+    id: "brainstorming",
+    label: "Brainstorming",
+    description: "",
+    version: "",
+  },
+  {
+    id: "office_hours",
+    label: "Office hours",
+    description: "",
+    version: "",
+  },
+];
+
+export type ChatActorSelection = {
+  type: ChatPlanActorType;
+  id: string;
+};
+
+interface BuildChatPlanSendVariablesInput {
+  content: string;
+  attachmentIds?: string[];
+  activePlanRun?: ChatPlanRun | null;
+  planMode: boolean;
+  selectedEngineId: string;
+  selectedActor: ChatActorSelection | null;
+}
+
+export function buildChatPlanSendVariables({
+  content,
+  attachmentIds,
+  activePlanRun,
+  planMode,
+  selectedEngineId,
+  selectedActor,
+}: BuildChatPlanSendVariablesInput) {
+  const base = attachmentIds ? { content, attachmentIds } : { content };
+  if (activePlanRun) {
+    return { ...base, planRunId: activePlanRun.id };
+  }
+  if (planMode && selectedActor) {
+    return {
+      ...base,
+      mode: "plan" as const,
+      planEngine: selectedEngineId || DEFAULT_CHAT_PLAN_ENGINE_ID,
+      planActorType: selectedActor.type,
+      planActorId: selectedActor.id,
+    };
+  }
+  return base;
+}
 
 export function ChatsPage() {
   const { t } = useT("chat");
@@ -143,28 +216,53 @@ export function ChatNewPage() {
   const navigation = useNavigation();
   const qc = useQueryClient();
   const projectId = navigation.searchParams.get("project_id");
-  const [agentId, setAgentId] = useState<string | null>(null);
+  const [actor, setActor] = useState<ChatActorSelection | null>(null);
+  const [planMode, setPlanMode] = useState(false);
+  const [planEngineId, setPlanEngineId] = useState<string>(DEFAULT_CHAT_PLAN_ENGINE_ID);
   const sessionIdRef = useRef<string | null>(null);
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const createSession = useCreateChatSession();
   const { uploadWithToast } = useFileUpload(api);
-  const visibleAgents = useVisibleChatAgents();
-  const selectedAgent = visibleAgents.find((agent) => agent.id === agentId) ?? null;
+  const { visibleAgents, visibleSquads } = useVisibleChatActors();
+  const selectedAgent = resolveLeadAgent(actor, visibleAgents, visibleSquads);
+  const selectedActorName = resolveActorName(actor, visibleAgents, visibleSquads);
+  const planEngineQuery = useQuery(chatPlanEnginesOptions(wsId));
+  const planEngines = planEngineQuery.data?.engines.length
+    ? planEngineQuery.data.engines
+    : FALLBACK_PLAN_ENGINES;
   const projectQuery = useQuery({
     ...projectDetailOptions(wsId, projectId ?? ""),
     enabled: !!projectId,
   });
 
+  useEffect(() => {
+    if (!actor) return;
+    if (!planMode && actor.type === "squad") {
+      setActor(null);
+      return;
+    }
+    if (!isActorVisible(actor, visibleAgents, visibleSquads, planMode)) {
+      setActor(null);
+    }
+  }, [actor, planMode, visibleAgents, visibleSquads]);
+
+  useEffect(() => {
+    const defaultEngine = planEngineQuery.data?.default_engine ?? DEFAULT_CHAT_PLAN_ENGINE_ID;
+    if (!planEngines.some((engine) => engine.id === planEngineId)) {
+      setPlanEngineId(defaultEngine);
+    }
+  }, [planEngineId, planEngineQuery.data?.default_engine, planEngines]);
+
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
       if (sessionIdRef.current) return sessionIdRef.current;
-      if (!agentId) return null;
+      if (!selectedAgent) return null;
       if (sessionPromiseRef.current) return sessionPromiseRef.current;
 
       const promise = (async () => {
         try {
           const session = await createSession.mutateAsync({
-            agent_id: agentId,
+            agent_id: selectedAgent.id,
             project_id: projectId,
             title: titleFromContent(titleSeed),
           });
@@ -179,7 +277,7 @@ export function ChatNewPage() {
       sessionPromiseRef.current = promise;
       return promise;
     },
-    [agentId, createSession, projectId, qc, wsId],
+    [createSession, projectId, qc, selectedAgent, wsId],
   );
 
   const handleUploadFile = useCallback(
@@ -193,9 +291,9 @@ export function ChatNewPage() {
 
   const startChat = useSendChatMessage({
     resolveSessionId: async (content) => {
-      if (!agentId) throw new Error(t(($) => $.pages.new.no_agent_error));
+      if (!selectedAgent) throw new Error(t(($) => $.pages.new.no_actor_error));
       const sessionId = await ensureSession(content);
-      if (!sessionId) throw new Error(t(($) => $.pages.new.no_agent_error));
+      if (!sessionId) throw new Error(t(($) => $.pages.new.no_actor_error));
       return sessionId;
     },
     onSuccess: ({ sessionId }) => {
@@ -216,18 +314,39 @@ export function ChatNewPage() {
         <div className="w-full max-w-4xl">
           <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">{title}</h1>
           <ChatInput
-            onSend={(content, attachmentIds) => startChat.mutate({ content, attachmentIds })}
-            onUploadFile={agentId ? handleUploadFile : undefined}
+            onSend={(content, attachmentIds) =>
+              startChat.mutate(buildChatPlanSendVariables({
+                content,
+                attachmentIds,
+                activePlanRun: null,
+                planMode,
+                selectedEngineId: planEngineId,
+                selectedActor: actor,
+              }))
+            }
+            onUploadFile={selectedAgent ? handleUploadFile : undefined}
             disabled={startChat.isPending}
             noAgent={visibleAgents.length === 0}
-            agentName={selectedAgent?.name}
-            draftKeyOverride={`${DRAFT_NEW_SESSION}:route:${projectId ?? "loose"}:${agentId ?? "no-agent"}`}
-            editorKeyOverride={`route-new:${projectId ?? "loose"}:${agentId ?? "no-agent"}`}
-            leftAdornment={
-              <AgentPicker
-                selectedAgentId={agentId}
-                onSelect={setAgentId}
-                disabled={!!sessionIdRef.current || startChat.isPending}
+            agentName={selectedActorName ?? undefined}
+            draftKeyOverride={`${DRAFT_NEW_SESSION}:route:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
+            editorKeyOverride={`route-new:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
+            topSlot={
+              <ChatComposerPlanControls
+                planMode={planMode}
+                onPlanModeChange={setPlanMode}
+                engines={planEngines}
+                selectedEngineId={planEngineId}
+                onEngineChange={setPlanEngineId}
+                actorPicker={
+                  <ChatActorPicker
+                    selectedActor={actor}
+                    onSelect={setActor}
+                    visibleAgents={visibleAgents}
+                    visibleSquads={visibleSquads}
+                    allowSquads={planMode}
+                    disabled={!!sessionIdRef.current || startChat.isPending}
+                  />
+                }
               />
             }
           />
@@ -249,15 +368,26 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
   const { data: proposals = [] } = useQuery(chatIssueProposalsOptions(sessionId));
   const { data: chatIssuesData } = useQuery(chatIssuesOptions(sessionId));
   const { data: chatOutputsData } = useQuery(chatOutputsOptions(sessionId));
+  const { data: planRuns = [] } = useQuery(chatPlanRunsOptions(sessionId));
+  const planEngineQuery = useQuery(chatPlanEnginesOptions(wsId));
   const pendingTaskQuery = useQuery(pendingChatTaskOptions(sessionId));
   const updateSession = useUpdateChatSession();
+  const cancelPlanRun = useCancelChatPlanRun(sessionId);
   const { uploadWithToast } = useFileUpload(api);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { visibleAgents, visibleSquads } = useVisibleChatActors();
+  const [planMode, setPlanMode] = useState(false);
+  const [planEngineId, setPlanEngineId] = useState<string>(DEFAULT_CHAT_PLAN_ENGINE_ID);
+  const [planActor, setPlanActor] = useState<ChatActorSelection | null>(null);
   const session = sessionQuery.data;
   const sessionAgent = session ? agents.find((agent) => agent.id === session.agent_id) ?? null : null;
   const presenceDetail = useAgentPresenceDetail(wsId, session?.agent_id);
   const availability = presenceDetail === "loading" ? undefined : presenceDetail.availability;
   const pendingTaskId = pendingTaskQuery.data?.task_id ?? null;
+  const activePlanRun = useMemo(() => planRuns.find(isActiveChatPlanRun) ?? null, [planRuns]);
+  const planEngines = planEngineQuery.data?.engines.length
+    ? planEngineQuery.data.engines
+    : FALLBACK_PLAN_ENGINES;
   const sendMessage = useSendChatMessage({
     resolveSessionId: async () => sessionId,
     onError: (err) => {
@@ -276,6 +406,25 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
       toast.error(err instanceof Error ? err.message : t(($) => $.input.stop_tooltip));
     });
   }, [pendingTaskId, qc, sessionId, t]);
+
+  useEffect(() => {
+    const defaultEngine = planEngineQuery.data?.default_engine ?? DEFAULT_CHAT_PLAN_ENGINE_ID;
+    if (!planEngines.some((engine) => engine.id === planEngineId)) {
+      setPlanEngineId(defaultEngine);
+    }
+  }, [planEngineId, planEngineQuery.data?.default_engine, planEngines]);
+
+  useEffect(() => {
+    if (!session?.agent_id) return;
+    const fallbackActor: ChatActorSelection = { type: "agent", id: session.agent_id };
+    if (!planMode) {
+      if (!sameActor(planActor, fallbackActor)) setPlanActor(fallbackActor);
+      return;
+    }
+    if (planActor && isActorVisible(planActor, visibleAgents, visibleSquads, true)) return;
+    if (!sameActor(planActor, fallbackActor)) setPlanActor(fallbackActor);
+  }, [planActor, planMode, session?.agent_id, visibleAgents, visibleSquads]);
+
   const handleTitleBlur = useCallback(
     (value: string) => {
       const title = value.trim();
@@ -342,10 +491,12 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
               messages={messagesQuery.data ?? []}
               pendingTask={pendingTaskQuery.data}
               availability={availability}
+              agents={agents}
               renderAfterMessage={(message) => (
                 <InlineProposalsForMessage
                   message={message}
                   proposals={proposals}
+                  planRuns={planRuns}
                   href={wsPaths.chatSession(sessionId, "issues")}
                 />
               )}
@@ -353,7 +504,16 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
           )}
           <div className="shrink-0 border-t bg-background/95 py-3">
             <ChatInput
-              onSend={(content, attachmentIds) => sendMessage.mutate({ content, attachmentIds })}
+              onSend={(content, attachmentIds) =>
+                sendMessage.mutate(buildChatPlanSendVariables({
+                  content,
+                  attachmentIds,
+                  activePlanRun,
+                  planMode,
+                  selectedEngineId: planEngineId,
+                  selectedActor: planActor,
+                }))
+              }
               onUploadFile={archived ? undefined : handleUploadFile}
               onStop={handleStop}
               isRunning={running}
@@ -361,6 +521,30 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
               agentName={sessionAgent?.name}
               draftKeyOverride={sessionId}
               editorKeyOverride={sessionId}
+              topSlot={
+                <ChatComposerPlanControls
+                  planMode={planMode}
+                  onPlanModeChange={setPlanMode}
+                  engines={planEngines}
+                  selectedEngineId={planEngineId}
+                  onEngineChange={setPlanEngineId}
+                  activePlanRun={activePlanRun}
+                  onCancelActivePlan={() => {
+                    if (activePlanRun) cancelPlanRun.mutate(activePlanRun.id);
+                  }}
+                  cancelPending={cancelPlanRun.isPending}
+                  actorPicker={planMode && !activePlanRun ? (
+                    <ChatActorPicker
+                      selectedActor={planActor}
+                      onSelect={setPlanActor}
+                      visibleAgents={visibleAgents.filter((agent) => agent.id === session?.agent_id)}
+                      visibleSquads={visibleSquads}
+                      allowSquads
+                      disabled={sendMessage.isPending || running}
+                    />
+                  ) : null}
+                />
+              }
             />
           </div>
         </TabsContent>
@@ -418,6 +602,7 @@ export function ProjectChatsSurface({ projectId }: { projectId: string }) {
 function ChatIssuesPanel({ sessionId }: { sessionId: string }) {
   const { t } = useT("chat");
   const { data: proposals = EMPTY_CHAT_PROPOSALS, isLoading: proposalsLoading } = useQuery(chatIssueProposalsOptions(sessionId));
+  const { data: planRuns = [] } = useQuery(chatPlanRunsOptions(sessionId));
   const { data: issueData, isLoading: issuesLoading } = useQuery(chatIssuesOptions(sessionId));
   const queryClient = useQueryClient();
   const updateIssue = useUpdateIssue();
@@ -511,6 +696,7 @@ function ChatIssuesPanel({ sessionId }: { sessionId: string }) {
             leadingColumn={
               <ProposedIssuesColumn
                 items={pendingProposalItems}
+                planRuns={planRuns}
                 selectedIds={selectedProposalItemIds}
                 isApproving={approveProposal.isPending}
                 onSelectItem={handleSelectProposalItem}
@@ -721,18 +907,30 @@ function ChatSessionList({ sessions }: { sessions: ChatSession[] }) {
   );
 }
 
-function AgentPicker({
-  selectedAgentId,
+function ChatActorPicker({
+  selectedActor,
   onSelect,
+  visibleAgents,
+  visibleSquads,
+  allowSquads,
   disabled = false,
 }: {
-  selectedAgentId: string | null;
-  onSelect: (agentId: string) => void;
+  selectedActor: ChatActorSelection | null;
+  onSelect: (actor: ChatActorSelection) => void;
+  visibleAgents: Agent[];
+  visibleSquads: Squad[];
+  allowSquads: boolean;
   disabled?: boolean;
 }) {
   const { t } = useT("chat");
-  const visibleAgents = useVisibleChatAgents();
-  const selected = visibleAgents.find((agent) => agent.id === selectedAgentId) ?? null;
+  const selectedAgent = selectedActor?.type === "agent"
+    ? visibleAgents.find((agent) => agent.id === selectedActor.id) ?? null
+    : null;
+  const selectedSquad = selectedActor?.type === "squad"
+    ? visibleSquads.find((squad) => squad.id === selectedActor.id) ?? null
+    : null;
+  const selectedLabel = selectedSquad?.name ?? selectedAgent?.name ?? null;
+  const squads = allowSquads ? visibleSquads : [];
 
   return (
     <DropdownMenu>
@@ -745,25 +943,136 @@ function AgentPicker({
             disabled={disabled}
             className="h-8 max-w-56 justify-start gap-2 px-2"
           >
-            <Bot className="size-4 shrink-0" />
-            <span className="truncate">{selected ? selected.name : t(($) => $.pages.new.select_agent)}</span>
+            {selectedActor?.type === "squad" ? (
+              <Users className="size-4 shrink-0" />
+            ) : (
+              <Bot className="size-4 shrink-0" />
+            )}
+            <span className="truncate">{selectedLabel ?? t(($) => $.pages.new.select_agent)}</span>
             <ChevronDown className="ml-auto size-3.5 shrink-0" />
           </Button>
         }
       />
       <DropdownMenuContent align="start" className="w-64">
-        {visibleAgents.length === 0 ? (
+        {visibleAgents.length === 0 && squads.length === 0 ? (
           <DropdownMenuItem disabled>{t(($) => $.pages.new.no_agents)}</DropdownMenuItem>
         ) : (
-          visibleAgents.map((agent) => (
-            <DropdownMenuItem key={agent.id} onClick={() => onSelect(agent.id)}>
-              <Bot className="size-4" />
-              <span className="truncate">{agent.name}</span>
-            </DropdownMenuItem>
-          ))
+          <>
+            {visibleAgents.map((agent) => (
+              <DropdownMenuItem key={agent.id} onClick={() => onSelect({ type: "agent", id: agent.id })}>
+                <Bot className="size-4" />
+                <span className="truncate">{agent.name}</span>
+              </DropdownMenuItem>
+            ))}
+            {squads.map((squad) => (
+              <DropdownMenuItem key={squad.id} onClick={() => onSelect({ type: "squad", id: squad.id })}>
+                <Users className="size-4" />
+                <span className="truncate">{squad.name}</span>
+              </DropdownMenuItem>
+            ))}
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function ChatComposerPlanControls({
+  planMode,
+  onPlanModeChange,
+  engines,
+  selectedEngineId,
+  onEngineChange,
+  activePlanRun,
+  onCancelActivePlan,
+  cancelPending = false,
+  actorPicker,
+}: {
+  planMode: boolean;
+  onPlanModeChange: (enabled: boolean) => void;
+  engines: PlanEngine[];
+  selectedEngineId: string;
+  onEngineChange: (engineId: string) => void;
+  activePlanRun?: ChatPlanRun | null;
+  onCancelActivePlan?: () => void;
+  cancelPending?: boolean;
+  actorPicker?: ReactNode;
+}) {
+  const { t } = useT("chat");
+  const selectedEngine = engines.find((engine) => engine.id === selectedEngineId) ?? engines[0] ?? FALLBACK_PLAN_ENGINES[0];
+  const activeEngine = activePlanRun
+    ? engines.find((engine) => engine.id === activePlanRun.plan_engine) ?? selectedEngine
+    : selectedEngine;
+
+  if (activePlanRun) {
+    return (
+      <div className="flex min-h-9 items-center gap-2 border-b px-2 py-1.5 text-xs">
+        <Lightbulb className="size-3.5 shrink-0 text-brand" />
+        <div className="min-w-0 flex-1 truncate text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {t(($) => $.plan.active_title)}
+          </span>
+          <span className="mx-1">·</span>
+          <span>{activeEngine?.label ?? activePlanRun.plan_engine}</span>
+          <span className="mx-1">·</span>
+          <span>{planRunStatusLabel(t, activePlanRun.status)}</span>
+        </div>
+        {onCancelActivePlan && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-xs"
+            disabled={cancelPending}
+            onClick={onCancelActivePlan}
+          >
+            <X className="size-3.5" />
+            {t(($) => $.plan.cancel)}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+      <Button
+        type="button"
+        variant={planMode ? "secondary" : "ghost"}
+        size="sm"
+        className="h-7 gap-1.5 px-2 text-xs"
+        onClick={() => onPlanModeChange(!planMode)}
+        aria-pressed={planMode}
+      >
+        <Lightbulb className="size-3.5" />
+        {t(($) => $.plan.mode)}
+      </Button>
+      {planMode && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-48 gap-1.5 px-2 text-xs">
+                <span className="truncate">{selectedEngine?.label ?? t(($) => $.plan.engine_fallback)}</span>
+                <ChevronDown className="size-3.5 shrink-0" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start" className="w-72">
+            {engines.map((engine) => (
+              <DropdownMenuItem key={engine.id} onClick={() => onEngineChange(engine.id)}>
+                <div className="min-w-0">
+                  <div className="truncate text-sm">{engine.label}</div>
+                  {engine.description && (
+                    <div className="line-clamp-2 text-xs text-muted-foreground">{engine.description}</div>
+                  )}
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {actorPicker}
+    </div>
   );
 }
 
@@ -792,12 +1101,14 @@ function proposalPriorityLabel(
 
 export function ProposedIssuesColumn({
   items,
+  planRuns = [],
   selectedIds,
   isApproving,
   onSelectItem,
   onApproveSelected,
 }: {
   items: PendingProposalItem[];
+  planRuns?: ChatPlanRun[];
   selectedIds: Set<string>;
   isApproving: boolean;
   onSelectItem: (itemId: string, checked: boolean) => void;
@@ -806,6 +1117,10 @@ export function ProposedIssuesColumn({
   const { t } = useT("chat");
   const selectedCount = items.filter(({ item }) => selectedIds.has(item.id)).length;
   const [preview, setPreview] = useState<PendingProposalItem | null>(null);
+  const linkedPlanRuns = useMemo(
+    () => planRunsForProposals(items.map(({ proposal }) => proposal), planRuns),
+    [items, planRuns],
+  );
 
   return (
     <div className="flex w-[280px] shrink-0 flex-col rounded-xl bg-brand/5 p-2 ring-1 ring-brand/15">
@@ -819,6 +1134,9 @@ export function ProposedIssuesColumn({
         </div>
       </div>
       <div className="min-h-[200px] flex-1 space-y-2 overflow-y-auto rounded-lg p-1">
+        {linkedPlanRuns.map((run) => (
+          <PlanSummaryBlock key={run.id} summary={run.summary} compact />
+        ))}
         {items.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-foreground">
             {t(($) => $.pages.session.empty_proposed_lane)}
@@ -1005,14 +1323,15 @@ function ProposedIssuePreviewDialog({
   );
 }
 
-function useVisibleChatAgents(): Agent[] {
+function useVisibleChatActors(): { visibleAgents: Agent[]; visibleSquads: Squad[] } {
   const wsId = useWorkspaceId();
   const userId = useAuthStore((s) => s.user?.id);
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: squads = [] } = useQuery(squadListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const role = members.find((member) => member.user_id === userId)?.role ?? null;
 
-  return useMemo(
+  const visibleAgents = useMemo(
     () =>
       agents.filter(
         (agent) =>
@@ -1024,6 +1343,16 @@ function useVisibleChatAgents(): Agent[] {
       ),
     [agents, role, userId],
   );
+  const visibleAgentIds = useMemo(
+    () => new Set(visibleAgents.map((agent) => agent.id)),
+    [visibleAgents],
+  );
+  const visibleSquads = useMemo(
+    () => squads.filter((squad) => !squad.archived_at && visibleAgentIds.has(squad.leader_id)),
+    [squads, visibleAgentIds],
+  );
+
+  return { visibleAgents, visibleSquads };
 }
 
 function ProposalStatusBadge({ status }: { status: ChatIssueProposal["status"] }) {
@@ -1048,10 +1377,12 @@ function ProposalStatusBadge({ status }: { status: ChatIssueProposal["status"] }
 function InlineProposalsForMessage({
   message,
   proposals,
+  planRuns,
   href,
 }: {
   message: ChatMessage;
   proposals: ChatIssueProposal[];
+  planRuns: ChatPlanRun[];
   href: string;
 }) {
   if (message.role !== "assistant") return null;
@@ -1060,28 +1391,98 @@ function InlineProposalsForMessage({
   return (
     <div className="space-y-2">
       {linked.map((proposal) => (
-        <InlineProposalCard key={proposal.id} proposal={proposal} href={href} />
+        <InlineProposalCard
+          key={proposal.id}
+          proposal={proposal}
+          planRun={planRuns.find((run) => run.id === proposal.source_plan_run_id) ?? null}
+          href={href}
+        />
       ))}
     </div>
   );
 }
 
-function InlineProposalCard({ proposal, href }: { proposal: ChatIssueProposal; href: string }) {
+function InlineProposalCard({
+  proposal,
+  planRun,
+  href,
+}: {
+  proposal: ChatIssueProposal;
+  planRun: ChatPlanRun | null;
+  href: string;
+}) {
   const { t } = useT("chat");
   return (
-    <AppLink
-      href={href}
-      className="ml-0 flex max-w-2xl items-center gap-3 rounded-lg border bg-muted/25 px-3 py-2 text-sm transition-colors hover:bg-accent/40"
-    >
-      <Sparkles className="size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{proposal.title}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {t(($) => $.pages.session.inline_proposal_summary, { count: proposal.items.length })}
+    <div className="max-w-2xl space-y-2">
+      <PlanSummaryBlock summary={planRun?.summary ?? null} compact />
+      <AppLink
+        href={href}
+        className="ml-0 flex items-center gap-3 rounded-lg border bg-muted/25 px-3 py-2 text-sm transition-colors hover:bg-accent/40"
+      >
+        <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{proposal.title}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {t(($) => $.pages.session.inline_proposal_summary, { count: proposal.items.length })}
+          </div>
         </div>
+        <ProposalStatusBadge status={proposal.status} />
+      </AppLink>
+    </div>
+  );
+}
+
+export function PlanSummaryBlock({
+  summary,
+  compact = false,
+}: {
+  summary: PlanSummary | null | undefined;
+  compact?: boolean;
+}) {
+  const { t } = useT("chat");
+  if (!summary || !hasPlanSummaryContent(summary)) return null;
+  const sections = [
+    {
+      key: "confirmed",
+      label: t(($) => $.plan.summary.confirmed),
+      items: summary.confirmed_requirements,
+    },
+    {
+      key: "rejected",
+      label: t(($) => $.plan.summary.rejected),
+      items: summary.rejected_options,
+    },
+    {
+      key: "consensus",
+      label: t(($) => $.plan.summary.consensus),
+      items: summary.consensus_notes,
+    },
+    {
+      key: "open",
+      label: t(($) => $.plan.summary.open),
+      items: summary.open_questions,
+    },
+  ].filter((section) => section.items.length > 0);
+
+  return (
+    <div className={cn(
+      "rounded-lg border bg-background/80 text-xs",
+      compact ? "p-2" : "p-3",
+    )}>
+      <div className="mb-1.5 flex items-center gap-1.5 font-medium">
+        <Lightbulb className="size-3.5 text-brand" />
+        {t(($) => $.plan.summary.title)}
       </div>
-      <ProposalStatusBadge status={proposal.status} />
-    </AppLink>
+      <div className="space-y-1.5 text-muted-foreground">
+        {sections.map((section) => (
+          <div key={section.key}>
+            <span className="font-medium text-foreground">{section.label}</span>
+            <span className="mx-1">·</span>
+            <span>{section.items.join("; ")}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1133,6 +1534,88 @@ function ChatSessionListSkeleton() {
 
 function parseChatTab(value: string | null | undefined): ChatTab {
   return value === "issues" || value === "outputs" || value === "analytics" ? value : "chat";
+}
+
+function sameActor(a: ChatActorSelection | null, b: ChatActorSelection | null): boolean {
+  return a?.type === b?.type && a?.id === b?.id;
+}
+
+function isActorVisible(
+  actor: ChatActorSelection,
+  visibleAgents: Agent[],
+  visibleSquads: Squad[],
+  allowSquads: boolean,
+): boolean {
+  if (actor.type === "agent") return visibleAgents.some((agent) => agent.id === actor.id);
+  return allowSquads && visibleSquads.some((squad) => squad.id === actor.id);
+}
+
+function resolveLeadAgent(
+  actor: ChatActorSelection | null,
+  visibleAgents: Agent[],
+  visibleSquads: Squad[],
+): Agent | null {
+  if (!actor) return null;
+  if (actor.type === "agent") return visibleAgents.find((agent) => agent.id === actor.id) ?? null;
+  const squad = visibleSquads.find((candidate) => candidate.id === actor.id);
+  if (!squad) return null;
+  return visibleAgents.find((agent) => agent.id === squad.leader_id) ?? null;
+}
+
+function resolveActorName(
+  actor: ChatActorSelection | null,
+  visibleAgents: Agent[],
+  visibleSquads: Squad[],
+): string | null {
+  if (!actor) return null;
+  if (actor.type === "agent") {
+    return visibleAgents.find((agent) => agent.id === actor.id)?.name ?? null;
+  }
+  return visibleSquads.find((squad) => squad.id === actor.id)?.name ?? null;
+}
+
+function planRunStatusLabel(
+  t: ReturnType<typeof useT<"chat">>["t"],
+  status: string,
+): string {
+  switch (status) {
+    case "consulting":
+      return t(($) => $.plan.status.consulting);
+    case "ready_for_approval":
+      return t(($) => $.plan.status.ready_for_approval);
+    case "completed":
+      return t(($) => $.plan.status.completed);
+    case "cancelled":
+      return t(($) => $.plan.status.cancelled);
+    case "failed":
+      return t(($) => $.plan.status.failed);
+    case "brainstorming":
+      return t(($) => $.plan.status.brainstorming);
+    default:
+      return t(($) => $.plan.status.active);
+  }
+}
+
+function planRunsForProposals(
+  proposals: ChatIssueProposal[],
+  planRuns: ChatPlanRun[],
+): ChatPlanRun[] {
+  const ids = new Set(
+    proposals
+      .map((proposal) => proposal.source_plan_run_id)
+      .filter((id): id is string => !!id),
+  );
+  return planRuns.filter((run) => ids.has(run.id) && hasPlanSummaryContent(run.summary));
+}
+
+function hasPlanSummaryContent(summary: PlanSummary | null | undefined): summary is PlanSummary {
+  if (!summary) return false;
+  return (
+    summary.confirmed_requirements.length > 0 ||
+    summary.rejected_options.length > 0 ||
+    summary.consensus_notes.length > 0 ||
+    summary.open_questions.length > 0
+  );
 }
 
 function titleFromContent(content: string): string {

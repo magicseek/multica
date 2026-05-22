@@ -4,6 +4,18 @@ import type { ListTaskOutputMetadataResponse } from "./repository";
 export type ChatSessionStatus = "active" | "archived";
 export type ChatProjectContextKind = "loose" | "project";
 export type ChatSessionTitleSource = "legacy" | "first_message" | "agent_summary" | "user";
+export type ChatPlanEngineId = "grill_with_docs" | "brainstorming" | "office_hours";
+export type ChatPlanActorType = "agent" | "squad";
+export type ChatPlanRunStatus =
+  | "brainstorming"
+  | "consulting"
+  | "ready_for_approval"
+  | "completed"
+  | "cancelled"
+  | "failed";
+export type ChatPlanConsultationStatus = "pending" | "running" | "responded" | "failed" | "timed_out" | "skipped";
+
+export const DEFAULT_CHAT_PLAN_ENGINE_ID: ChatPlanEngineId = "grill_with_docs";
 
 export interface ProjectContextSnapshot {
   id: string;
@@ -63,6 +75,60 @@ export interface ChatSidebarRecentsResponse {
   has_more: boolean;
 }
 
+export interface PlanEngine {
+  id: ChatPlanEngineId | string;
+  label: string;
+  description: string;
+  version: string;
+  is_default?: boolean;
+}
+
+export interface PlanEngineListResponse {
+  engines: PlanEngine[];
+  default_engine: ChatPlanEngineId | string;
+}
+
+export interface PlanSummary {
+  confirmed_requirements: string[];
+  rejected_options: string[];
+  consensus_notes: string[];
+  open_questions: string[];
+}
+
+export interface ChatPlanRun {
+  id: string;
+  workspace_id: string;
+  chat_session_id: string;
+  creator_user_id: string;
+  actor_type: ChatPlanActorType;
+  actor_id: string;
+  lead_agent_id: string;
+  plan_engine: ChatPlanEngineId | string;
+  engine_version: string;
+  status: ChatPlanRunStatus | string;
+  initial_message_id: string | null;
+  latest_message_id: string | null;
+  summary: PlanSummary | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  failed_at?: string | null;
+}
+
+export interface ChatPlanConsultation {
+  id: string;
+  plan_run_id: string;
+  requester_agent_id: string;
+  target_agent_id: string;
+  request_message_id: string | null;
+  response_message_id: string | null;
+  task_id: string | null;
+  status: ChatPlanConsultationStatus | string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type ChatIssueProposalStatus = "pending" | "accepted" | "partially_accepted" | "dismissed" | "superseded";
 export type ChatIssueProposalItemStatus = "pending" | "created" | "skipped";
 
@@ -90,6 +156,7 @@ export interface ChatIssueProposal {
   source_chat_message_id: string | null;
   source_task_id: string | null;
   proposer_agent_id: string | null;
+  source_plan_run_id: string | null;
   title: string;
   summary: string | null;
   status: ChatIssueProposalStatus;
@@ -135,6 +202,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   task_id: string | null;
+  author_type?: "member" | "agent" | "system" | string | null;
+  author_agent_id?: string | null;
+  plan_run_id?: string | null;
+  consultation_id?: string | null;
+  reply_to_message_id?: string | null;
   created_at: string;
   /**
    * Attachments linked to this message via the attachment table's
@@ -163,9 +235,22 @@ export interface ChatMessage {
   elapsed_ms?: number | null;
 }
 
+export type SendChatMessageMode = "chat" | "plan";
+
+export interface SendChatMessageRequest {
+  content: string;
+  attachment_ids?: string[];
+  mode?: SendChatMessageMode;
+  plan_engine?: ChatPlanEngineId | string;
+  plan_run_id?: string;
+  plan_actor_type?: ChatPlanActorType;
+  plan_actor_id?: string;
+}
+
 export interface SendChatMessageResponse {
   message_id: string;
   task_id: string;
+  plan_run_id?: string | null;
   /**
    * Server-authoritative task creation time. Optimistic StatusPill seed
    * uses this as its anchor so the timer starts from the real `0s` —

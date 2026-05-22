@@ -69,6 +69,7 @@ func TestLoadStructuredTaskOutputsReadsAllManifests(t *testing.T) {
 	}
 	files := map[string]string{
 		TaskChatSummaryManifestRelativePath:    `{"version":1,"title":"Structured title"}`,
+		TaskPlanSummaryManifestRelativePath:    `{"version":1,"confirmed_requirements":["Need plan mode"],"rejected_options":[],"consensus_notes":["Use proposals"],"open_questions":[]}`,
 		TaskIssueProposalsManifestRelativePath: `{"version":1,"proposals":[{"title":"Follow-ups","items":[{"title":"Create review flow","description":"Review proposed issues","priority":"medium","labels":["chat"]}]}]}`,
 		TaskOutputManifestRelativePath:         `{"outputs":[{"relative_path":"docs/chat.md","kind":"doc"}]}`,
 	}
@@ -84,6 +85,9 @@ func TestLoadStructuredTaskOutputsReadsAllManifests(t *testing.T) {
 	}
 	if structured.ChatSummary == nil || structured.ChatSummary.Title != "Structured title" {
 		t.Fatalf("chat summary = %+v", structured.ChatSummary)
+	}
+	if structured.PlanSummary == nil || len(structured.PlanSummary.ConfirmedRequirements) != 1 {
+		t.Fatalf("plan summary = %+v", structured.PlanSummary)
 	}
 	if structured.IssueProposals == nil || len(structured.IssueProposals.Proposals) != 1 {
 		t.Fatalf("issue proposals = %+v", structured.IssueProposals)
@@ -103,6 +107,7 @@ func TestClearStaleStructuredTaskOutputManifestsRemovesOnlyTaskOutputs(t *testin
 	}
 	files := map[string]string{
 		TaskChatSummaryManifestRelativePath:           `{"version":1,"title":"Old chat"}`,
+		TaskPlanSummaryManifestRelativePath:           `{"version":1,"confirmed_requirements":["old"]}`,
 		TaskIssueProposalsManifestRelativePath:        `{"version":1,"proposals":[{"title":"Old proposal"}]}`,
 		TaskOutputManifestRelativePath:                `{"outputs":[{"relative_path":"old.md","kind":"doc"}]}`,
 		".multica/project/resources.json":             `{"resources":[{"label":"Keep me"}]}`,
@@ -118,6 +123,7 @@ func TestClearStaleStructuredTaskOutputManifestsRemovesOnlyTaskOutputs(t *testin
 
 	for _, relativePath := range []string{
 		TaskChatSummaryManifestRelativePath,
+		TaskPlanSummaryManifestRelativePath,
 		TaskIssueProposalsManifestRelativePath,
 		TaskOutputManifestRelativePath,
 	} {

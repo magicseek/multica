@@ -82,6 +82,128 @@ describe("ApiClient", () => {
     expect(proposals).toEqual([]);
   });
 
+  it("parses plan engines with server defaults and display labels", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            engines: [
+              {
+                id: "grill_with_docs",
+                display_label: "Grill with docs",
+                description: "Challenge the plan against attached context.",
+                version: "v1",
+                is_default: true,
+              },
+            ],
+            default_engine: "grill_with_docs",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const response = await client.listPlanEngines();
+
+    expect(response.default_engine).toBe("grill_with_docs");
+    expect(response.engines[0]).toMatchObject({
+      id: "grill_with_docs",
+      label: "Grill with docs",
+      version: "v1",
+    });
+  });
+
+  it("falls back to an empty plan run list when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ plan_runs: null, total: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const runs = await client.listChatPlanRuns("session-1");
+
+    expect(runs).toEqual([]);
+  });
+
+  it("sends plan fields through the chat message endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          message_id: "msg-1",
+          task_id: "task-1",
+          plan_run_id: "plan-1",
+          created_at: "2026-05-23T00:00:00Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const response = await client.sendChatMessage("session-1", "Plan this", undefined, {
+      mode: "plan",
+      plan_engine: "grill_with_docs",
+      plan_actor_type: "squad",
+      plan_actor_id: "squad-1",
+    });
+
+    expect(response.plan_run_id).toBe("plan-1");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/chat/sessions/session-1/messages",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          content: "Plan this",
+          mode: "plan",
+          plan_engine: "grill_with_docs",
+          plan_actor_type: "squad",
+          plan_actor_id: "squad-1",
+        }),
+      }),
+    );
+  });
+
+  it("preserves consultation message attribution from chat messages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            {
+              id: "msg-1",
+              chat_session_id: "session-1",
+              role: "assistant",
+              content: "I would split this into two issues.",
+              task_id: "task-1",
+              author_type: "agent",
+              author_agent_id: "agent-helper",
+              plan_run_id: "plan-1",
+              consultation_id: "consult-1",
+              created_at: "2026-05-23T00:00:00Z",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const messages = await client.listChatMessages("session-1");
+
+    expect(messages[0]).toMatchObject({
+      author_agent_id: "agent-helper",
+      plan_run_id: "plan-1",
+      consultation_id: "consult-1",
+    });
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {

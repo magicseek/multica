@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -155,6 +156,9 @@ func buildCommentPrompt(task Task, provider string) string {
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.
 func buildChatPrompt(task Task) string {
+	if task.Plan != nil {
+		return buildPlanChatPrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a chat assistant for a Multica workspace.\n")
 	b.WriteString("A user is chatting with you directly. Respond to their message.\n\n")
@@ -179,6 +183,152 @@ func buildChatPrompt(task Task) string {
 		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n")
 	}
 	return b.String()
+}
+
+func buildPlanChatPrompt(task Task) string {
+	plan := task.Plan
+	var b strings.Builder
+	b.WriteString("You are running as a Plan mode assistant for a Multica Chat Plan Run.\n")
+	b.WriteString("A Chat Plan Run is a multi-turn planning exchange that turns a rough idea into reviewable issue proposals. Keep all plan state in the server-owned transcript and structured summary.\n\n")
+
+	fmt.Fprintf(&b, "Plan run ID: %s\n", plan.RunID)
+	fmt.Fprintf(&b, "Plan status: %s\n", plan.Status)
+	fmt.Fprintf(&b, "Plan actor: %s %s\n", plan.ActorType, plan.ActorID)
+	fmt.Fprintf(&b, "Lead agent ID: %s\n\n", plan.LeadAgentID)
+
+	b.WriteString("## Plan Engine\n\n")
+	fmt.Fprintf(&b, "Engine: %s (`%s`)\n", plan.PlanEngine.Label, plan.PlanEngine.ID)
+	fmt.Fprintf(&b, "Engine version: %s\n", plan.PlanEngine.Version)
+	if strings.TrimSpace(plan.PlanEngine.Description) != "" {
+		fmt.Fprintf(&b, "Description: %s\n", plan.PlanEngine.Description)
+	}
+	b.WriteString("\nProtocol:\n")
+	b.WriteString(plan.PlanEngine.Protocol)
+	b.WriteString("\n\n")
+
+	b.WriteString("## Current Plan Summary\n\n")
+	if len(plan.Summary) > 0 {
+		b.WriteString(prettyJSON(plan.Summary))
+	} else {
+		b.WriteString("{}")
+	}
+	b.WriteString("\n\n")
+
+	b.WriteString("## Structured Outputs\n\n")
+	planSummaryPath := plan.PlanSummaryPath
+	if planSummaryPath == "" {
+		planSummaryPath = filepath.ToSlash(filepath.Join(execenv.ChatStructuredOutputRelativeDir(task.ChatSessionID), TaskPlanSummaryManifestFileName))
+	}
+	proposalPath := plan.ProposalPath
+	if proposalPath == "" {
+		proposalPath = filepath.ToSlash(filepath.Join(execenv.ChatStructuredOutputRelativeDir(task.ChatSessionID), TaskIssueProposalsManifestFileName))
+	}
+	fmt.Fprintf(&b, "- Update the Plan Summary at `$%s/%s` (relative path `%s`) whenever requirements, rejected options, consensus notes, or open questions change.\n", execenv.StructuredOutputDirEnv, TaskPlanSummaryManifestFileName, planSummaryPath)
+	b.WriteString("  Shape: `{\"version\":1,\"confirmed_requirements\":[],\"rejected_options\":[],\"consensus_notes\":[],\"open_questions\":[]}`\n")
+	fmt.Fprintf(&b, "- When the plan is ready for human review, write issue proposals to `$%s/%s` (relative path `%s`).\n", execenv.StructuredOutputDirEnv, TaskIssueProposalsManifestFileName, proposalPath)
+	b.WriteString("- Do not run `multica issue create` from Plan mode unless the user explicitly asks to bypass proposal approval.\n\n")
+
+	if len(plan.Transcript) > 0 {
+		b.WriteString("## Plan Transcript\n\n")
+		for _, msg := range plan.Transcript {
+			author := msg.AuthorType
+			if msg.AuthorAgentID != nil {
+				author = "agent:" + *msg.AuthorAgentID
+			}
+			fmt.Fprintf(&b, "- %s %s: %s\n", msg.Role, author, compactPromptLine(msg.Content))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(plan.Consultations) > 0 {
+		b.WriteString("## Consultation Status\n\n")
+		for _, consultation := range plan.Consultations {
+			fmt.Fprintf(&b, "- %s -> %s: %s\n", consultation.RequesterAgentID, consultation.TargetAgentID, consultation.Status)
+		}
+		b.WriteString("\n")
+	}
+
+	if plan.TaskKind == "plan_consultation" && plan.Consultation != nil {
+		b.WriteString("## Consultation Task\n\n")
+		b.WriteString("You are a squad helper. Answer the lead agent's specific planning request; do not take over the final synthesis.\n\n")
+		if plan.Consultation.TargetAgentMention != "" {
+			fmt.Fprintf(&b, "You are the helper addressed as: %s\n", plan.Consultation.TargetAgentMention)
+		}
+		if plan.Consultation.LeadMention != "" {
+			fmt.Fprintf(&b, "When you respond, include this exact lead mention so the server can resume the lead: %s\n", plan.Consultation.LeadMention)
+		}
+		if strings.TrimSpace(plan.Consultation.RequestContent) != "" {
+			fmt.Fprintf(&b, "\nLead request:\n%s\n\n", plan.Consultation.RequestContent)
+		}
+		b.WriteString("Return one concise helper opinion with risks, missing facts, and recommendation. Your final assistant output is saved into the same chat transcript.\n")
+		return b.String()
+	}
+
+	if task.ChatMessage != "" {
+		fmt.Fprintf(&b, "User message for this turn:\n%s\n\n", task.ChatMessage)
+	} else {
+		b.WriteString("This is a lead continuation after squad consultation updates. Synthesize available helper input and continue the plan.\n\n")
+	}
+
+	if plan.Squad != nil {
+		b.WriteString("## Squad Consultation\n\n")
+		fmt.Fprintf(&b, "Squad: %s\n", plan.Squad.Name)
+		if plan.Squad.LeadMention != "" {
+			fmt.Fprintf(&b, "Your lead mention: %s\n", plan.Squad.LeadMention)
+		}
+		if len(plan.Squad.Helpers) > 0 {
+			b.WriteString("Eligible helper agents. Use only these exact mention links when a bounded helper opinion is needed:\n")
+			for _, helper := range plan.Squad.Helpers {
+				role := helper.Role
+				if role == "" {
+					role = "member"
+				}
+				fmt.Fprintf(&b, "- %s (%s): %s\n", helper.Name, role, helper.Mention)
+			}
+			b.WriteString("Mentions of agents outside this roster are ignored. Ask for a specific opinion; do not start an unbounded roundtable.\n\n")
+		} else {
+			b.WriteString("No eligible helper agents are available; synthesize the plan yourself and record the gap if it matters.\n\n")
+		}
+	}
+
+	if len(task.ChatMessageAttachments) > 0 {
+		b.WriteString("Attachments on this message:\n")
+		for _, a := range task.ChatMessageAttachments {
+			if a.ContentType != "" {
+				fmt.Fprintf(&b, "- id=%s filename=%q content_type=%s\n", a.ID, a.Filename, a.ContentType)
+			} else {
+				fmt.Fprintf(&b, "- id=%s filename=%q\n", a.ID, a.Filename)
+			}
+		}
+		b.WriteString("Use `multica attachment download <id>` to fetch each file locally before referring to it.\n\n")
+	}
+
+	b.WriteString("Final assistant output is captured as the chat reply. If more user input is needed, ask the next best question. If the plan is ready, say so and write proposal cards for review.\n")
+	return b.String()
+}
+
+func compactPromptLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len([]rune(s)) <= 500 {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:500]) + "..."
+}
+
+func prettyJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "{}"
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return string(data)
 }
 
 // buildAutopilotPrompt constructs a prompt for run_only autopilot tasks.

@@ -64,6 +64,7 @@ import type {
   TaskCancelledPayload,
   ChatDonePayload,
   ChatIssuesUpdatedPayload,
+  ChatPlanRunsUpdatedPayload,
   ChatMessage,
   ChatPendingTask,
   ChatSession,
@@ -95,6 +96,11 @@ export function applyChatDoneToCache(
           role: "assistant",
           content,
           task_id: taskId,
+          author_type: payload.author_type ?? undefined,
+          author_agent_id: payload.author_agent_id ?? undefined,
+          plan_run_id: payload.plan_run_id ?? undefined,
+          consultation_id: payload.consultation_id ?? undefined,
+          reply_to_message_id: payload.reply_to_message_id ?? undefined,
           created_at: payload.created_at ?? new Date().toISOString(),
           elapsed_ms: payload.elapsed_ms ?? null,
         };
@@ -334,7 +340,7 @@ export function useRealtimeSync(
       "daemon:heartbeat",
       // Chat events are handled explicitly below; do not double-invalidate.
       "chat:message", "chat:done", "chat:session_read", "chat:session_archived", "chat:session_deleted",
-      "chat:session_updated", "chat:issue_proposals_updated", "chat:issues_updated",
+      "chat:session_updated", "chat:issue_proposals_updated", "chat:issues_updated", "chat:plan_runs_updated",
       // task:message stays out of the prefix path because it fires per
       // streamed message during a long run — invalidating the snapshot on
       // every message would flood the network. Specific chat handlers below
@@ -676,6 +682,7 @@ export function useRealtimeSync(
       chatWsLogger.info("chat:message (global)", { chat_session_id: payload.chat_session_id });
       qc.invalidateQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
       invalidatePendingAggregate();
     });
 
@@ -699,6 +706,7 @@ export function useRealtimeSync(
       // work: they ignore the extra fields and rely on the invalidate
       // below, which keeps the old behavior alive.
       applyChatDoneToCache(qc, payload);
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
       invalidatePendingAggregate();
       // Assistant message just landed → has_unread may have flipped to true.
       invalidateSessionLists();
@@ -759,6 +767,7 @@ export function useRealtimeSync(
         chat_session_id: payload.chat_session_id,
       });
       qc.setQueryData(chatKeys.pendingTask(payload.chat_session_id), {});
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
       invalidatePendingAggregate();
     });
 
@@ -794,6 +803,7 @@ export function useRealtimeSync(
       qc.setQueryData(chatKeys.pendingTask(payload.chat_session_id), {});
       qc.invalidateQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
       invalidatePendingAggregate();
     });
 
@@ -823,6 +833,7 @@ export function useRealtimeSync(
       const payload = p as { chat_session_id: string };
       if (!payload.chat_session_id) return;
       qc.invalidateQueries({ queryKey: chatKeys.issueProposals(payload.chat_session_id) });
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
     });
 
     const unsubChatIssuesUpdated = ws.on("chat:issues_updated", (p) => {
@@ -831,6 +842,13 @@ export function useRealtimeSync(
       qc.invalidateQueries({ queryKey: chatKeys.issues(payload.chat_session_id) });
       const wsId = getCurrentWsId();
       if (wsId) qc.invalidateQueries({ queryKey: issueKeys.all(wsId) });
+    });
+
+    const unsubChatPlanRunsUpdated = ws.on("chat:plan_runs_updated", (p) => {
+      const payload = p as ChatPlanRunsUpdatedPayload;
+      if (!payload.chat_session_id) return;
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(payload.chat_session_id) });
+      qc.invalidateQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
     });
 
     const unsubTaskOutputsUpdated = ws.on("task:outputs_updated", (p) => {
@@ -921,6 +939,7 @@ export function useRealtimeSync(
       unsubChatSessionUpdated();
       unsubChatIssueProposalsUpdated();
       unsubChatIssuesUpdated();
+      unsubChatPlanRunsUpdated();
       unsubTaskOutputsUpdated();
       timers.forEach(clearTimeout);
       timers.clear();

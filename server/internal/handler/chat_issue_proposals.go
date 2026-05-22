@@ -260,6 +260,9 @@ func (h *Handler) ApproveChatIssueProposal(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	h.publishChatIssueProposalUpdate(workspaceID, session.ID, proposal.ID)
+	if proposal.SourcePlanRunID.Valid {
+		h.publishChatPlanRunUpdate(workspaceID, session.ID, proposal.SourcePlanRunID, "member", userID)
+	}
 	h.publishChat(protocol.EventChatIssuesUpdated, workspaceID, "member", userID, uuidToString(session.ID), map[string]any{
 		"chat_session_id": uuidToString(session.ID),
 		"count":           len(result.Issues),
@@ -382,6 +385,14 @@ func (h *Handler) approveChatIssueProposalTransaction(
 	updatedProposal, updatedItems, err := h.refreshChatIssueProposalStatus(r, qtx, proposal.ID)
 	if err != nil {
 		return ApproveChatIssueProposalResponse{}, 0, "", err
+	}
+	if proposal.SourcePlanRunID.Valid {
+		if _, err := qtx.UpdateChatPlanRunStatus(r.Context(), db.UpdateChatPlanRunStatusParams{
+			ID:     proposal.SourcePlanRunID,
+			Status: "completed",
+		}); err != nil {
+			return ApproveChatIssueProposalResponse{}, 0, "", err
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		return ApproveChatIssueProposalResponse{}, 0, "", err

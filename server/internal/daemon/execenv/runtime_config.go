@@ -591,11 +591,13 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	if ctx.ChatSessionID != "" {
 		chatOutputDir := filepath.ToSlash(ChatStructuredOutputRelativeDir(ctx.ChatSessionID))
 		summaryPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "chat-summary.json"))
+		planSummaryPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "plan-summary.json"))
 		proposalsPath := filepath.ToSlash(filepath.Join(ChatStructuredOutputRelativeDir(ctx.ChatSessionID), "issue-proposals.json"))
 		b.WriteString("## Chat Structured Output Manifests\n\n")
 		fmt.Fprintf(&b, "For chat tasks, the backend can ingest optional structured handoff files only from `$%s` (relative directory `%s`) when your run completes. ", StructuredOutputDirEnv, chatOutputDir)
 		b.WriteString("Use these files only for metadata and proposals; do not create issues directly unless the user explicitly asks through the normal issue workflow.\n\n")
 		fmt.Fprintf(&b, "- `$%s/chat-summary.json` (relative path `%s`) updates the chat title when the user has not renamed it manually: `{\"version\":1,\"title\":\"Implement project chat sessions\"}`\n", StructuredOutputDirEnv, summaryPath)
+		fmt.Fprintf(&b, "- `$%s/plan-summary.json` (relative path `%s`) updates an active Plan Run summary: `{\"version\":1,\"confirmed_requirements\":[],\"rejected_options\":[],\"consensus_notes\":[],\"open_questions\":[]}`\n", StructuredOutputDirEnv, planSummaryPath)
 		fmt.Fprintf(&b, "- `$%s/issue-proposals.json` (relative path `%s`) proposes backlog issues for the user to review. Each proposal needs a title and at least one item:\n\n", StructuredOutputDirEnv, proposalsPath)
 		b.WriteString("```json\n")
 		b.WriteString("{\"version\":1,\"proposals\":[{\"title\":\"Implementation follow-ups\",\"summary\":\"Suggested issues from this chat.\",\"items\":[{\"title\":\"Add chat issue proposal review flow\",\"description\":\"Let users edit and accept proposed issues.\",\"priority\":\"medium\",\"labels\":[\"chat\"]}]}]}\n")

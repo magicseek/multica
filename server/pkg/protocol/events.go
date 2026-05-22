@@ -75,6 +75,7 @@ const (
 	EventChatSessionUpdated        = "chat:session_updated"
 	EventChatIssueProposalsUpdated = "chat:issue_proposals_updated"
 	EventChatIssuesUpdated         = "chat:issues_updated"
+	EventChatPlanRunsUpdated       = "chat:plan_runs_updated"
 
 	// Project events
 	EventProjectCreated         = "project:created"

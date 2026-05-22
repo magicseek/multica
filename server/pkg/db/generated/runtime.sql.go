@@ -16,7 +16,7 @@ UPDATE agent_task_queue
 SET status = 'cancelled', completed_at = now()
 WHERE (runtime_id = ANY($1::uuid[]) OR agent_id = ANY($2::uuid[]))
   AND status IN ('queued', 'dispatched', 'running', 'waiting')
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id, chat_plan_run_id, chat_plan_consultation_id, chat_task_kind
 `
 
 type CancelAgentTasksByRuntimeOrAgentParams struct {
@@ -78,6 +78,9 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 			&i.WorkflowSnapshot,
 			&i.TriggerChatMessageID,
 			&i.ConnectorDelegatedUserID,
+			&i.ChatPlanRunID,
+			&i.ChatPlanConsultationID,
+			&i.ChatTaskKind,
 		); err != nil {
 			return nil, err
 		}
@@ -192,7 +195,7 @@ WHERE status IN ('dispatched', 'running')
   AND runtime_id IN (
     SELECT id FROM agent_runtime WHERE status = 'offline'
   )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id, chat_plan_run_id, chat_plan_consultation_id, chat_task_kind
 `
 
 // Marks dispatched/running tasks as failed when their runtime is offline.
@@ -237,6 +240,9 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]AgentTaskQ
 			&i.WorkflowSnapshot,
 			&i.TriggerChatMessageID,
 			&i.ConnectorDelegatedUserID,
+			&i.ChatPlanRunID,
+			&i.ChatPlanConsultationID,
+			&i.ChatTaskKind,
 		); err != nil {
 			return nil, err
 		}

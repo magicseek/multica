@@ -26,12 +26,69 @@ func (q *Queries) ArchiveChatSession(ctx context.Context, id pgtype.UUID) error 
 	return err
 }
 
+const cancelChatPlanRun = `-- name: CancelChatPlanRun :one
+UPDATE chat_plan_run
+SET status = 'cancelled',
+    cancelled_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('brainstorming', 'consulting', 'ready_for_approval')
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+`
+
+type CancelChatPlanRunParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CancelChatPlanRun(ctx context.Context, arg CancelChatPlanRunParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, cancelChatPlanRun, arg.ID, arg.WorkspaceID)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const countOpenChatPlanConsultations = `-- name: CountOpenChatPlanConsultations :one
+SELECT count(*)::int
+FROM chat_plan_consultation
+WHERE plan_run_id = $1
+  AND status IN ('pending', 'running')
+`
+
+func (q *Queries) CountOpenChatPlanConsultations(ctx context.Context, planRunID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countOpenChatPlanConsultations, planRunID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createChatIssueProposal = `-- name: CreateChatIssueProposal :one
 INSERT INTO chat_issue_proposal (
     workspace_id,
     chat_session_id,
     source_chat_message_id,
     source_task_id,
+    source_plan_run_id,
     proposer_agent_id,
     title,
     summary
@@ -41,9 +98,10 @@ INSERT INTO chat_issue_proposal (
     $4,
     $5,
     $6,
+    $7,
     $3,
-    $7
-) RETURNING id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at
+    $8
+) RETURNING id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at, source_plan_run_id
 `
 
 type CreateChatIssueProposalParams struct {
@@ -52,6 +110,7 @@ type CreateChatIssueProposalParams struct {
 	Title               string      `json:"title"`
 	SourceChatMessageID pgtype.UUID `json:"source_chat_message_id"`
 	SourceTaskID        pgtype.UUID `json:"source_task_id"`
+	SourcePlanRunID     pgtype.UUID `json:"source_plan_run_id"`
 	ProposerAgentID     pgtype.UUID `json:"proposer_agent_id"`
 	Summary             pgtype.Text `json:"summary"`
 }
@@ -63,6 +122,7 @@ func (q *Queries) CreateChatIssueProposal(ctx context.Context, arg CreateChatIss
 		arg.Title,
 		arg.SourceChatMessageID,
 		arg.SourceTaskID,
+		arg.SourcePlanRunID,
 		arg.ProposerAgentID,
 		arg.Summary,
 	)
@@ -79,6 +139,7 @@ func (q *Queries) CreateChatIssueProposal(ctx context.Context, arg CreateChatIss
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourcePlanRunID,
 	)
 	return i, err
 }
@@ -148,18 +209,47 @@ func (q *Queries) CreateChatIssueProposalItem(ctx context.Context, arg CreateCha
 }
 
 const createChatMessage = `-- name: CreateChatMessage :one
-INSERT INTO chat_message (chat_session_id, role, content, task_id, failure_reason, elapsed_ms)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+INSERT INTO chat_message (
+    chat_session_id,
+    role,
+    content,
+    task_id,
+    failure_reason,
+    elapsed_ms,
+    author_type,
+    author_agent_id,
+    plan_run_id,
+    consultation_id,
+    reply_to_message_id
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    COALESCE($7, CASE WHEN $2 = 'assistant' THEN 'agent' ELSE 'member' END),
+    $8,
+    $9,
+    $10,
+    $11
+)
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
 `
 
 type CreateChatMessageParams struct {
-	ChatSessionID pgtype.UUID `json:"chat_session_id"`
-	Role          string      `json:"role"`
-	Content       string      `json:"content"`
-	TaskID        pgtype.UUID `json:"task_id"`
-	FailureReason pgtype.Text `json:"failure_reason"`
-	ElapsedMs     pgtype.Int8 `json:"elapsed_ms"`
+	ChatSessionID    pgtype.UUID `json:"chat_session_id"`
+	Role             string      `json:"role"`
+	Content          string      `json:"content"`
+	TaskID           pgtype.UUID `json:"task_id"`
+	FailureReason    pgtype.Text `json:"failure_reason"`
+	ElapsedMs        pgtype.Int8 `json:"elapsed_ms"`
+	AuthorType       interface{} `json:"author_type"`
+	AuthorAgentID    pgtype.UUID `json:"author_agent_id"`
+	PlanRunID        pgtype.UUID `json:"plan_run_id"`
+	ConsultationID   pgtype.UUID `json:"consultation_id"`
+	ReplyToMessageID pgtype.UUID `json:"reply_to_message_id"`
 }
 
 func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessageParams) (ChatMessage, error) {
@@ -170,6 +260,11 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.TaskID,
 		arg.FailureReason,
 		arg.ElapsedMs,
+		arg.AuthorType,
+		arg.AuthorAgentID,
+		arg.PlanRunID,
+		arg.ConsultationID,
+		arg.ReplyToMessageID,
 	)
 	var i ChatMessage
 	err := row.Scan(
@@ -181,6 +276,139 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
+	)
+	return i, err
+}
+
+const createChatPlanConsultation = `-- name: CreateChatPlanConsultation :one
+INSERT INTO chat_plan_consultation (
+    plan_run_id,
+    requester_agent_id,
+    target_agent_id,
+    request_message_id,
+    status
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    'pending'
+)
+ON CONFLICT (plan_run_id, request_message_id, target_agent_id)
+DO UPDATE SET updated_at = chat_plan_consultation.updated_at
+RETURNING id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+`
+
+type CreateChatPlanConsultationParams struct {
+	PlanRunID        pgtype.UUID `json:"plan_run_id"`
+	RequesterAgentID pgtype.UUID `json:"requester_agent_id"`
+	TargetAgentID    pgtype.UUID `json:"target_agent_id"`
+	RequestMessageID pgtype.UUID `json:"request_message_id"`
+}
+
+func (q *Queries) CreateChatPlanConsultation(ctx context.Context, arg CreateChatPlanConsultationParams) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, createChatPlanConsultation,
+		arg.PlanRunID,
+		arg.RequesterAgentID,
+		arg.TargetAgentID,
+		arg.RequestMessageID,
+	)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const createChatPlanRun = `-- name: CreateChatPlanRun :one
+INSERT INTO chat_plan_run (
+    workspace_id,
+    chat_session_id,
+    creator_user_id,
+    actor_type,
+    actor_id,
+    lead_agent_id,
+    plan_engine,
+    engine_version,
+    status,
+    initial_message_id,
+    latest_message_id
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    'brainstorming',
+    $9,
+    $9
+)
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+`
+
+type CreateChatPlanRunParams struct {
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	ChatSessionID    pgtype.UUID `json:"chat_session_id"`
+	CreatorUserID    pgtype.UUID `json:"creator_user_id"`
+	ActorType        string      `json:"actor_type"`
+	ActorID          pgtype.UUID `json:"actor_id"`
+	LeadAgentID      pgtype.UUID `json:"lead_agent_id"`
+	PlanEngine       string      `json:"plan_engine"`
+	EngineVersion    string      `json:"engine_version"`
+	InitialMessageID pgtype.UUID `json:"initial_message_id"`
+}
+
+func (q *Queries) CreateChatPlanRun(ctx context.Context, arg CreateChatPlanRunParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, createChatPlanRun,
+		arg.WorkspaceID,
+		arg.ChatSessionID,
+		arg.CreatorUserID,
+		arg.ActorType,
+		arg.ActorID,
+		arg.LeadAgentID,
+		arg.PlanEngine,
+		arg.EngineVersion,
+		arg.InitialMessageID,
+	)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
 	)
 	return i, err
 }
@@ -269,10 +497,25 @@ INSERT INTO agent_task_queue (
     priority,
     chat_session_id,
     trigger_chat_message_id,
+    chat_plan_run_id,
+    chat_plan_consultation_id,
+    chat_task_kind,
     connector_delegated_user_id
 )
-VALUES ($1, $2, NULL, 'queued', $3, $4, $5, $6)
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id
+VALUES (
+    $1,
+    $2,
+    NULL,
+    'queued',
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    COALESCE($8, 'normal'),
+    $9
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id, chat_plan_run_id, chat_plan_consultation_id, chat_task_kind
 `
 
 type CreateChatTaskParams struct {
@@ -281,6 +524,9 @@ type CreateChatTaskParams struct {
 	Priority                 int32       `json:"priority"`
 	ChatSessionID            pgtype.UUID `json:"chat_session_id"`
 	TriggerChatMessageID     pgtype.UUID `json:"trigger_chat_message_id"`
+	ChatPlanRunID            pgtype.UUID `json:"chat_plan_run_id"`
+	ChatPlanConsultationID   pgtype.UUID `json:"chat_plan_consultation_id"`
+	ChatTaskKind             interface{} `json:"chat_task_kind"`
 	ConnectorDelegatedUserID pgtype.UUID `json:"connector_delegated_user_id"`
 }
 
@@ -291,6 +537,9 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		arg.Priority,
 		arg.ChatSessionID,
 		arg.TriggerChatMessageID,
+		arg.ChatPlanRunID,
+		arg.ChatPlanConsultationID,
+		arg.ChatTaskKind,
 		arg.ConnectorDelegatedUserID,
 	)
 	var i AgentTaskQueue
@@ -325,6 +574,9 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		&i.WorkflowSnapshot,
 		&i.TriggerChatMessageID,
 		&i.ConnectorDelegatedUserID,
+		&i.ChatPlanRunID,
+		&i.ChatPlanConsultationID,
+		&i.ChatTaskKind,
 	)
 	return i, err
 }
@@ -345,8 +597,49 @@ func (q *Queries) DeleteChatIssueProposalsForTask(ctx context.Context, arg Delet
 	return err
 }
 
+const getActiveChatPlanRunBySession = `-- name: GetActiveChatPlanRunBySession :one
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+FROM chat_plan_run
+WHERE chat_session_id = $1
+  AND workspace_id = $2
+  AND status IN ('brainstorming', 'consulting', 'ready_for_approval')
+ORDER BY updated_at DESC, created_at DESC
+LIMIT 1
+`
+
+type GetActiveChatPlanRunBySessionParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetActiveChatPlanRunBySession(ctx context.Context, arg GetActiveChatPlanRunBySessionParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, getActiveChatPlanRunBySession, arg.ChatSessionID, arg.WorkspaceID)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const getAssistantChatMessageByTask = `-- name: GetAssistantChatMessageByTask :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
 WHERE chat_session_id = $1
   AND task_id = $2
   AND role = 'assistant'
@@ -371,12 +664,17 @@ func (q *Queries) GetAssistantChatMessageByTask(ctx context.Context, arg GetAssi
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
 	)
 	return i, err
 }
 
 const getChatIssueProposal = `-- name: GetChatIssueProposal :one
-SELECT id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at
+SELECT id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at, source_plan_run_id
 FROM chat_issue_proposal
 WHERE id = $1
 `
@@ -396,12 +694,13 @@ func (q *Queries) GetChatIssueProposal(ctx context.Context, id pgtype.UUID) (Cha
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourcePlanRunID,
 	)
 	return i, err
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
 WHERE id = $1
 `
 
@@ -417,12 +716,17 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
 	)
 	return i, err
 }
 
 const getChatMessageInSession = `-- name: GetChatMessageInSession :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
 WHERE id = $1 AND chat_session_id = $2
 `
 
@@ -443,6 +747,109 @@ func (q *Queries) GetChatMessageInSession(ctx context.Context, arg GetChatMessag
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
+	)
+	return i, err
+}
+
+const getChatPlanConsultation = `-- name: GetChatPlanConsultation :one
+SELECT id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+FROM chat_plan_consultation
+WHERE id = $1
+`
+
+func (q *Queries) GetChatPlanConsultation(ctx context.Context, id pgtype.UUID) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, getChatPlanConsultation, id)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getChatPlanRun = `-- name: GetChatPlanRun :one
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+FROM chat_plan_run
+WHERE id = $1
+`
+
+func (q *Queries) GetChatPlanRun(ctx context.Context, id pgtype.UUID) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, getChatPlanRun, id)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const getChatPlanRunInSession = `-- name: GetChatPlanRunInSession :one
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+FROM chat_plan_run
+WHERE id = $1
+  AND chat_session_id = $2
+  AND workspace_id = $3
+`
+
+type GetChatPlanRunInSessionParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetChatPlanRunInSession(ctx context.Context, arg GetChatPlanRunInSessionParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, getChatPlanRunInSession, arg.ID, arg.ChatSessionID, arg.WorkspaceID)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
 	)
 	return i, err
 }
@@ -903,7 +1310,7 @@ func (q *Queries) ListChatIssueProposalItemsForTaskForUpdate(ctx context.Context
 }
 
 const listChatIssueProposalsBySession = `-- name: ListChatIssueProposalsBySession :many
-SELECT id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at
+SELECT id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at, source_plan_run_id
 FROM chat_issue_proposal
 WHERE workspace_id = $1
   AND chat_session_id = $2
@@ -943,6 +1350,7 @@ func (q *Queries) ListChatIssueProposalsBySession(ctx context.Context, arg ListC
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourcePlanRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -955,7 +1363,7 @@ func (q *Queries) ListChatIssueProposalsBySession(ctx context.Context, arg ListC
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -978,6 +1386,103 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.CreatedAt,
 			&i.FailureReason,
 			&i.ElapsedMs,
+			&i.AuthorType,
+			&i.AuthorAgentID,
+			&i.PlanRunID,
+			&i.ConsultationID,
+			&i.ReplyToMessageID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatPlanConsultationsByRun = `-- name: ListChatPlanConsultationsByRun :many
+SELECT id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+FROM chat_plan_consultation
+WHERE plan_run_id = $1
+ORDER BY created_at ASC
+`
+
+func (q *Queries) ListChatPlanConsultationsByRun(ctx context.Context, planRunID pgtype.UUID) ([]ChatPlanConsultation, error) {
+	rows, err := q.db.Query(ctx, listChatPlanConsultationsByRun, planRunID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatPlanConsultation{}
+	for rows.Next() {
+		var i ChatPlanConsultation
+		if err := rows.Scan(
+			&i.ID,
+			&i.PlanRunID,
+			&i.RequesterAgentID,
+			&i.TargetAgentID,
+			&i.RequestMessageID,
+			&i.ResponseMessageID,
+			&i.TaskID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RespondedAt,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatPlanRunsBySession = `-- name: ListChatPlanRunsBySession :many
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+FROM chat_plan_run
+WHERE chat_session_id = $1
+  AND workspace_id = $2
+ORDER BY updated_at DESC, created_at DESC
+`
+
+type ListChatPlanRunsBySessionParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListChatPlanRunsBySession(ctx context.Context, arg ListChatPlanRunsBySessionParams) ([]ChatPlanRun, error) {
+	rows, err := q.db.Query(ctx, listChatPlanRunsBySession, arg.ChatSessionID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatPlanRun{}
+	for rows.Next() {
+		var i ChatPlanRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatSessionID,
+			&i.CreatorUserID,
+			&i.ActorType,
+			&i.ActorID,
+			&i.LeadAgentID,
+			&i.PlanEngine,
+			&i.EngineVersion,
+			&i.Status,
+			&i.InitialMessageID,
+			&i.LatestMessageID,
+			&i.Summary,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.FailedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1804,6 +2309,111 @@ func (q *Queries) MarkChatIssueProposalItemCreated(ctx context.Context, arg Mark
 	return i, err
 }
 
+const markChatPlanConsultationFailed = `-- name: MarkChatPlanConsultationFailed :one
+UPDATE chat_plan_consultation
+SET status = $2,
+    failed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND status IN ('pending', 'running')
+RETURNING id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+`
+
+type MarkChatPlanConsultationFailedParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
+}
+
+func (q *Queries) MarkChatPlanConsultationFailed(ctx context.Context, arg MarkChatPlanConsultationFailedParams) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, markChatPlanConsultationFailed, arg.ID, arg.Status)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const markChatPlanConsultationFailedByTask = `-- name: MarkChatPlanConsultationFailedByTask :one
+UPDATE chat_plan_consultation
+SET status = CASE WHEN $2 = 'timeout' THEN 'timed_out' ELSE 'failed' END,
+    failed_at = now(),
+    updated_at = now()
+WHERE task_id = $1
+  AND status IN ('pending', 'running')
+RETURNING id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+`
+
+type MarkChatPlanConsultationFailedByTaskParams struct {
+	TaskID        pgtype.UUID `json:"task_id"`
+	FailureReason interface{} `json:"failure_reason"`
+}
+
+func (q *Queries) MarkChatPlanConsultationFailedByTask(ctx context.Context, arg MarkChatPlanConsultationFailedByTaskParams) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, markChatPlanConsultationFailedByTask, arg.TaskID, arg.FailureReason)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const markChatPlanConsultationResponded = `-- name: MarkChatPlanConsultationResponded :one
+UPDATE chat_plan_consultation
+SET response_message_id = $2,
+    status = 'responded',
+    responded_at = now(),
+    updated_at = now()
+WHERE id = $1
+RETURNING id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+`
+
+type MarkChatPlanConsultationRespondedParams struct {
+	ID                pgtype.UUID `json:"id"`
+	ResponseMessageID pgtype.UUID `json:"response_message_id"`
+}
+
+func (q *Queries) MarkChatPlanConsultationResponded(ctx context.Context, arg MarkChatPlanConsultationRespondedParams) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, markChatPlanConsultationResponded, arg.ID, arg.ResponseMessageID)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
 const markChatSessionRead = `-- name: MarkChatSessionRead :exec
 UPDATE chat_session SET unread_since = NULL
 WHERE id = $1
@@ -1878,7 +2488,7 @@ UPDATE chat_issue_proposal
 SET status = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at
+RETURNING id, workspace_id, chat_session_id, source_chat_message_id, source_task_id, proposer_agent_id, title, summary, status, created_at, updated_at, source_plan_run_id
 `
 
 type SetChatIssueProposalStatusParams struct {
@@ -1901,6 +2511,40 @@ func (q *Queries) SetChatIssueProposalStatus(ctx context.Context, arg SetChatIss
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourcePlanRunID,
+	)
+	return i, err
+}
+
+const setChatMessagePlanRun = `-- name: SetChatMessagePlanRun :one
+UPDATE chat_message
+SET plan_run_id = $2
+WHERE id = $1
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
+`
+
+type SetChatMessagePlanRunParams struct {
+	ID        pgtype.UUID `json:"id"`
+	PlanRunID pgtype.UUID `json:"plan_run_id"`
+}
+
+func (q *Queries) SetChatMessagePlanRun(ctx context.Context, arg SetChatMessagePlanRunParams) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, setChatMessagePlanRun, arg.ID, arg.PlanRunID)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.Role,
+		&i.Content,
+		&i.TaskID,
+		&i.CreatedAt,
+		&i.FailureReason,
+		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
 	)
 	return i, err
 }
@@ -1909,7 +2553,7 @@ const setChatMessageTaskID = `-- name: SetChatMessageTaskID :one
 UPDATE chat_message
 SET task_id = $2
 WHERE id = $1
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
 `
 
 type SetChatMessageTaskIDParams struct {
@@ -1929,6 +2573,45 @@ func (q *Queries) SetChatMessageTaskID(ctx context.Context, arg SetChatMessageTa
 		&i.CreatedAt,
 		&i.FailureReason,
 		&i.ElapsedMs,
+		&i.AuthorType,
+		&i.AuthorAgentID,
+		&i.PlanRunID,
+		&i.ConsultationID,
+		&i.ReplyToMessageID,
+	)
+	return i, err
+}
+
+const setChatPlanConsultationTask = `-- name: SetChatPlanConsultationTask :one
+UPDATE chat_plan_consultation
+SET task_id = $2,
+    status = 'running',
+    updated_at = now()
+WHERE id = $1
+RETURNING id, plan_run_id, requester_agent_id, target_agent_id, request_message_id, response_message_id, task_id, status, created_at, updated_at, responded_at, failed_at
+`
+
+type SetChatPlanConsultationTaskParams struct {
+	ID     pgtype.UUID `json:"id"`
+	TaskID pgtype.UUID `json:"task_id"`
+}
+
+func (q *Queries) SetChatPlanConsultationTask(ctx context.Context, arg SetChatPlanConsultationTaskParams) (ChatPlanConsultation, error) {
+	row := q.db.QueryRow(ctx, setChatPlanConsultationTask, arg.ID, arg.TaskID)
+	var i ChatPlanConsultation
+	err := row.Scan(
+		&i.ID,
+		&i.PlanRunID,
+		&i.RequesterAgentID,
+		&i.TargetAgentID,
+		&i.RequestMessageID,
+		&i.ResponseMessageID,
+		&i.TaskID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RespondedAt,
+		&i.FailedAt,
 	)
 	return i, err
 }
@@ -2154,6 +2837,130 @@ func (q *Queries) UpdateChatIssueProposalItemDraft(ctx context.Context, arg Upda
 		&i.ApprovedSnapshot,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateChatPlanRunLatestMessage = `-- name: UpdateChatPlanRunLatestMessage :one
+UPDATE chat_plan_run
+SET latest_message_id = $2,
+    status = CASE
+        WHEN status IN ('cancelled', 'failed', 'completed') THEN status
+        ELSE 'brainstorming'
+    END,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+`
+
+type UpdateChatPlanRunLatestMessageParams struct {
+	ID              pgtype.UUID `json:"id"`
+	LatestMessageID pgtype.UUID `json:"latest_message_id"`
+}
+
+func (q *Queries) UpdateChatPlanRunLatestMessage(ctx context.Context, arg UpdateChatPlanRunLatestMessageParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, updateChatPlanRunLatestMessage, arg.ID, arg.LatestMessageID)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const updateChatPlanRunStatus = `-- name: UpdateChatPlanRunStatus :one
+UPDATE chat_plan_run
+SET status = $2,
+    updated_at = now(),
+    completed_at = CASE WHEN $2 = 'completed' THEN now() ELSE completed_at END,
+    cancelled_at = CASE WHEN $2 = 'cancelled' THEN now() ELSE cancelled_at END,
+    failed_at = CASE WHEN $2 = 'failed' THEN now() ELSE failed_at END
+WHERE id = $1
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+`
+
+type UpdateChatPlanRunStatusParams struct {
+	ID     pgtype.UUID `json:"id"`
+	Status string      `json:"status"`
+}
+
+func (q *Queries) UpdateChatPlanRunStatus(ctx context.Context, arg UpdateChatPlanRunStatusParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, updateChatPlanRunStatus, arg.ID, arg.Status)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+	)
+	return i, err
+}
+
+const updateChatPlanRunSummary = `-- name: UpdateChatPlanRunSummary :one
+UPDATE chat_plan_run
+SET summary = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+`
+
+type UpdateChatPlanRunSummaryParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Summary []byte      `json:"summary"`
+}
+
+func (q *Queries) UpdateChatPlanRunSummary(ctx context.Context, arg UpdateChatPlanRunSummaryParams) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, updateChatPlanRunSummary, arg.ID, arg.Summary)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
 	)
 	return i, err
 }

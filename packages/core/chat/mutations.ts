@@ -10,7 +10,9 @@ import type {
   ChatPendingTask,
   ChatSession,
   PendingChatTasksResponse,
+  SendChatMessageMode,
   SendChatMessageResponse,
+  ChatPlanActorType,
   UpdateChatIssueProposalItemRequest,
 } from "../types";
 
@@ -46,6 +48,11 @@ export function useCreateChatSession() {
 export interface SendChatMessageVariables {
   content: string;
   attachmentIds?: string[];
+  mode?: SendChatMessageMode;
+  planEngine?: string;
+  planRunId?: string;
+  planActorType?: ChatPlanActorType;
+  planActorId?: string;
 }
 
 export interface SendChatMessageMutationResult {
@@ -81,6 +88,7 @@ export function useSendChatMessage(options: UseSendChatMessageOptions) {
         role: "user",
         content: variables.content,
         task_id: null,
+        plan_run_id: variables.planRunId ?? null,
         created_at: sentAt,
       };
 
@@ -104,7 +112,19 @@ export function useSendChatMessage(options: UseSendChatMessageOptions) {
       options.onSessionResolved?.(sessionId);
 
       try {
-        const result = await api.sendChatMessage(sessionId, variables.content, variables.attachmentIds);
+        const planOptions =
+          variables.mode || variables.planEngine || variables.planRunId || variables.planActorType || variables.planActorId
+            ? {
+                mode: variables.mode,
+                plan_engine: variables.planEngine,
+                plan_run_id: variables.planRunId,
+                plan_actor_type: variables.planActorType,
+                plan_actor_id: variables.planActorId,
+              }
+            : undefined;
+        const result = planOptions
+          ? await api.sendChatMessage(sessionId, variables.content, variables.attachmentIds, planOptions)
+          : await api.sendChatMessage(sessionId, variables.content, variables.attachmentIds);
         // The POST response is enough to replace temporary ids; websocket
         // recovery can still refetch later, but send itself does not force a
         // transcript roundtrip.
@@ -126,6 +146,9 @@ export function useSendChatMessage(options: UseSendChatMessageOptions) {
           status: "queued",
           chat_session_id: sessionId,
         });
+        if (variables.mode === "plan" || variables.planRunId || result.plan_run_id) {
+          qc.invalidateQueries({ queryKey: chatKeys.planRuns(sessionId) });
+        }
         return { sessionId, result };
       } catch (err) {
         qc.setQueryData<ChatMessage[] | undefined>(
@@ -172,6 +195,25 @@ function removePendingChatTaskFromAggregate(
       ? { tasks: old.tasks.filter((t) => t.chat_session_id !== sessionId) }
       : old,
   );
+}
+
+export function useCancelChatPlanRun(sessionId: string) {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (planRunId: string) => {
+      logger.info("cancelChatPlanRun.start", { sessionId, planRunId });
+      return api.cancelChatPlanRun(planRunId);
+    },
+    onError: (err, planRunId) => {
+      logger.error("cancelChatPlanRun.error", { sessionId, planRunId, err });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.planRuns(sessionId) });
+      qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
+      qc.invalidateQueries({ queryKey: chatKeys.issueProposals(sessionId) });
+    },
+  });
 }
 
 /**

@@ -59,6 +59,7 @@ export type WSEventType =
   | "chat:session_updated"
   | "chat:issue_proposals_updated"
   | "chat:issues_updated"
+  | "chat:plan_runs_updated"
   | "project:created"
   | "project:updated"
   | "project:deleted"
@@ -312,6 +313,11 @@ export interface ChatDonePayload {
   content?: string;
   elapsed_ms?: number;
   created_at?: string;
+  author_type?: string | null;
+  author_agent_id?: string | null;
+  plan_run_id?: string | null;
+  consultation_id?: string | null;
+  reply_to_message_id?: string | null;
 }
 
 export interface ChatSessionReadPayload {
@@ -329,6 +335,11 @@ export interface ChatSessionDeletedPayload {
 export interface ChatIssuesUpdatedPayload {
   chat_session_id: string;
   count?: number;
+}
+
+export interface ChatPlanRunsUpdatedPayload {
+  chat_session_id: string;
+  plan_run_id?: string;
 }
 
 export interface ProjectCreatedPayload {

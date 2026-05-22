@@ -66,6 +66,7 @@
       "select_agent": "Select agent",
       "no_agents": "No agents",
       "no_agent_error": "Select an agent before starting the chat.",
+      "no_actor_error": "Select who should plan this before starting the chat.",
       "start_failed": "Failed to start chat",
       "submit": "Send"
     },
@@ -161,6 +162,32 @@
       "new_chat": "New chat",
       "empty_title": "No project chats",
       "empty_description": "Start a chat from this project to keep its context attached."
+    }
+  },
+  "plan": {
+    "mode": "Plan",
+    "engine_fallback": "Plan engine",
+    "active_title": "Planning",
+    "cancel": "Cancel",
+    "status": {
+      "active": "Active",
+      "brainstorming": "Brainstorming",
+      "consulting": "Consulting",
+      "ready_for_approval": "Ready for approval",
+      "completed": "Completed",
+      "cancelled": "Cancelled",
+      "failed": "Failed"
+    },
+    "summary": {
+      "title": "Plan summary",
+      "confirmed": "Confirmed",
+      "rejected": "Ruled out",
+      "consensus": "Consensus",
+      "open": "Open"
+    },
+    "consultation": {
+      "from_helper": "{{name}} consulted",
+      "helper_fallback": "Helper agent"
     }
   },
   "window": {
