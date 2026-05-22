@@ -4,10 +4,12 @@
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to daemon registration metadata, runtime metadata used by UI gates, local daemon health/bridge endpoints, or native helper actions launched from the daemon.
+- Trigger: changes to daemon registration metadata, runtime metadata used by UI gates, daemon task-claim routing, local daemon health/bridge endpoints, or native helper actions launched from the daemon.
 - Applies when modifying:
   - `DaemonRegisterRequest.cli_version`
   - runtime `metadata.cli_version`
+  - `TaskService.ClaimTaskForRuntime`
+  - runtime-scoped task claim SQL
   - daemon local `/health`
   - daemon local `/folder/select`
   - frontend quick-create preflight checks that mirror server gates
@@ -47,9 +49,16 @@ Quick-create CLI version gate:
 - Server checker: `CheckMinCLIVersion(detected string) error`
 - Frontend checker: `checkQuickCreateCliVersion(detected?: string | null)`
 
+Runtime task claim:
+
+- `TaskService.ClaimTaskForRuntime(ctx, runtimeID)`
+- SQL claim path must include `agent_task_queue.runtime_id = runtimeID`.
+
 ### 3. Contracts
 
 - The server gate is authoritative. Frontend preflight exists only to show an actionable error before submit.
+- Runtime polling must only dispatch queued rows assigned to the polling runtime. Do not route `ClaimTaskForRuntime` through the generic agent-only claim query; that can dispatch an older task for the same agent but a different runtime and hide the intended runtime-bound task.
+- Runtime-scoped claim still respects the agent's global `max_concurrent_tasks` and per-issue/per-chat serialization.
 - Frontend and server minimum constants must match when the quick-create CLI requirement changes.
 - `cli_version` is a daemon-reported Multica CLI version, not the provider runtime version.
 - Missing or unparsable `cli_version` fails closed for agent-created issues.
@@ -83,6 +92,8 @@ Quick-create CLI version gate:
 ### 4. Validation & Error Matrix
 
 - Missing `cli_version` for quick-create -> frontend `missing`; server `ErrCLIVersionMissing`.
+- Runtime poll sees queued task for same agent but another runtime first -> task for other runtime is not dispatched by this poll.
+- Runtime poll sees queued task for this runtime while same agent is at capacity -> no task dispatched.
 - Unparsable `cli_version` for quick-create -> frontend `missing`; server `ErrCLIVersionMissing`.
 - `cli_version=0.2.19` when minimum is `0.2.20` -> frontend `too_old`; server `ErrCLIVersionTooOld`.
 - `cli_version=0.2.20` -> allowed.
@@ -97,11 +108,13 @@ Quick-create CLI version gate:
 ### 5. Good/Base/Bad Cases
 
 - Good: desktop uses native IPC to pick a local folder and receives an absolute path.
+- Good: a daemon polling runtime A dispatches only `agent_task_queue` rows whose `runtime_id` is runtime A, even when the same agent has stale queued rows on runtime B.
 - Good: web uses the selected runtime's daemon health port to call `/folder/select`, verifies the daemon id, and only then submits a `local_dir` binding.
 - Good: local development daemon reporting `dev` can create agent issues after passing both frontend and server gates.
 - Base: release daemon reporting `v0.2.20` passes the quick-create gate.
 - Bad: web calls `showDirectoryPicker()` and submits the folder handle name as `local_path`.
 - Bad: frontend treats missing `cli_version` as OK while the server rejects it.
+- Bad: runtime polling calls the generic `ClaimAgentTask(agent_id)` query and then discards the result if the claimed row belongs to another runtime. That loses the claim attempt and leaves the correct runtime-bound task hidden.
 - Bad: server bypasses `CheckMinCLIVersion` based on request origin, desktop app presence, or local environment variables.
 - Bad: `/folder/select` opens the native picker before checking `daemon_id`.
 - Bad: a reused local workdir still contains `.multica/issue-proposals.json` from a prior chat and the daemon uploads it as the current chat's proposal set.
@@ -122,6 +135,8 @@ Quick-create CLI version gate:
   - minimum and higher semver pass
   - `dev` and git-describe source builds pass
 - Frontend version gate tests mirror the same cases and states.
+- Runtime claim tests verify `ClaimTaskForRuntime` uses a runtime-scoped SQL claim and does not dispatch queued rows for another runtime before the target runtime's task.
+- Full handler package tests should pass with direct SQL fixtures that insert runtime-bound tasks; a leaked active fixture task must not be accepted as a reason to weaken runtime claim semantics.
 - Daemon health tests verify snake_case response keys including `cli_version` and `active_task_count`.
 - Daemon folder bridge tests:
   - allowed local origin sets CORS/private-network headers

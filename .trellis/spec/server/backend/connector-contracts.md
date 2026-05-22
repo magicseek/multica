@@ -125,6 +125,10 @@ default public Multica surface.
     credential, and disabled write policy reject before upstream call.
   - fake provider servers cover validation, read/search, auth failures, and
     write guardrails.
+  - Tests that seed active `agent_task_queue` rows directly for task-scoped
+    connector actions must clean up the task and owning issue or use an
+    isolated agent/runtime. Leaked `running` rows consume agent capacity and
+    can make later daemon claim tests return `task:null`.
 - Frontend tests/typecheck:
   - provider metadata gates settings and resource UI.
   - shared types stay in `packages/core`; business rendering stays in
