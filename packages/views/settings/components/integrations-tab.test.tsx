@@ -9,6 +9,8 @@ import type { ConnectorCredential, ConnectorProvider, WorkspaceConnector } from 
 
 const invalidateQueriesMock = vi.hoisted(() => vi.fn());
 const updateWorkspaceConnectorMock = vi.hoisted(() => vi.fn());
+const saveConnectorCredentialMock = vi.hoisted(() => vi.fn());
+const deleteConnectorCredentialMock = vi.hoisted(() => vi.fn());
 const connectorProvidersRef = vi.hoisted(() => ({
   current: [] as ConnectorProvider[],
 }));
@@ -82,8 +84,8 @@ vi.mock("@multica/core/api", () => ({
   api: {
     getGitHubConnectURL: vi.fn(),
     updateWorkspaceConnector: updateWorkspaceConnectorMock,
-    saveConnectorCredential: vi.fn(),
-    deleteConnectorCredential: vi.fn(),
+    saveConnectorCredential: saveConnectorCredentialMock,
+    deleteConnectorCredential: deleteConnectorCredentialMock,
   },
 }));
 
@@ -113,6 +115,15 @@ describe("IntegrationsTab", () => {
       enabled: false,
       settings: {},
     });
+    saveConnectorCredentialMock.mockResolvedValue({
+      provider_id: "ringcentral_jira",
+      has_credential: true,
+      status: "valid",
+      last_validated_at: null,
+      invalidated_at: null,
+      updated_at: "2026-05-22T00:00:00Z",
+    });
+    deleteConnectorCredentialMock.mockResolvedValue(undefined);
     connectorProvidersRef.current = [
       makeProvider(),
       makeProvider({
@@ -150,7 +161,7 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "owner" }];
   });
 
-  it("renders RingCentral integrations as compact rows without internal resource IDs", () => {
+  it("renders RingCentral integrations as roomy rows without internal resource IDs", () => {
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
 
     expect(screen.getByText("GitLab")).toBeTruthy();
@@ -161,19 +172,23 @@ describe("IntegrationsTab", () => {
     expect(screen.queryByText(/issue.search/)).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.getAllByRole("switch")).toHaveLength(3);
+    expect(screen.getByPlaceholderText("GitLab personal access token")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Jira personal access token")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Wiki personal access token")).toBeTruthy();
   });
 
   it("opens a focused detail view from a row", async () => {
     const user = userEvent.setup();
     render(<IntegrationsTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /GitLab/ }));
+    await user.click(screen.getAllByRole("button", { name: /Details/ })[0]!);
 
     expect(screen.getByRole("heading", { name: "GitLab" })).toBeTruthy();
     expect(screen.getByText("Information")).toBeTruthy();
     expect(screen.getByText("Agent use")).toBeTruthy();
     expect(screen.getAllByText("gitlab.example.com")).toHaveLength(2);
     expect(screen.queryByText(/ringcentral_gitlab_repo/)).toBeNull();
+    expect(screen.queryByPlaceholderText("GitLab personal access token")).toBeNull();
   });
 
   it("uses the workspace connector switch to enable and disable a row", async () => {
@@ -190,6 +205,23 @@ describe("IntegrationsTab", () => {
     });
     expect(invalidateQueriesMock).toHaveBeenCalledWith({
       queryKey: ["connectors", "workspace-1", "workspace"],
+    });
+  });
+
+  it("saves access tokens directly from the integration list", async () => {
+    const user = userEvent.setup();
+    render(<IntegrationsTab />, { wrapper: I18nWrapper });
+
+    await user.type(screen.getByPlaceholderText("Jira personal access token"), "jira-token");
+    await user.click(screen.getAllByRole("button", { name: "Save token" })[1]!);
+
+    await waitFor(() => {
+      expect(saveConnectorCredentialMock).toHaveBeenCalledWith("workspace-1", "ringcentral_jira", {
+        secret: "jira-token",
+      });
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["connectors", "workspace-1", "credentials"],
     });
   });
 });
