@@ -36,6 +36,79 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 			out += " — " + label
 		}
 		return out
+	case "ringcentral_gitlab_repo":
+		var payload struct {
+			ProjectID     string `json:"project_id"`
+			WebURL        string `json:"web_url,omitempty"`
+			DefaultBranch string `json:"default_branch,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**RingCentral GitLab repo**: `%s`", payload.ProjectID)
+		if payload.DefaultBranch != "" {
+			out += fmt.Sprintf(" (default branch: `%s`)", payload.DefaultBranch)
+		}
+		if payload.WebURL != "" {
+			out += fmt.Sprintf(" — %s", payload.WebURL)
+		} else if label != "" {
+			out += " — " + label
+		}
+		return out
+	case "ringcentral_jira_project":
+		var payload struct {
+			ProjectKey string `json:"project_key"`
+			Name       string `json:"name,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**RingCentral Jira project**: `%s`", payload.ProjectKey)
+		if payload.Name != "" {
+			out += " — " + payload.Name
+		} else if label != "" {
+			out += " — " + label
+		}
+		return out
+	case "ringcentral_jira_issue":
+		var payload struct {
+			IssueKey string `json:"issue_key"`
+			Summary  string `json:"summary,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**RingCentral Jira issue**: `%s`", payload.IssueKey)
+		if payload.Summary != "" {
+			out += " — " + payload.Summary
+		} else if label != "" {
+			out += " — " + label
+		}
+		return out
+	case "ringcentral_wiki_space":
+		var payload struct {
+			SpaceKey string `json:"space_key"`
+			Name     string `json:"name,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**RingCentral Wiki space**: `%s`", payload.SpaceKey)
+		if payload.Name != "" {
+			out += " — " + payload.Name
+		} else if label != "" {
+			out += " — " + label
+		}
+		return out
+	case "ringcentral_wiki_page":
+		var payload struct {
+			PageID   string `json:"page_id"`
+			SpaceKey string `json:"space_key,omitempty"`
+			Title    string `json:"title,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**RingCentral Wiki page**: `%s`", payload.PageID)
+		if payload.SpaceKey != "" {
+			out += fmt.Sprintf(" (space: `%s`)", payload.SpaceKey)
+		}
+		if payload.Title != "" {
+			out += " — " + payload.Title
+		} else if label != "" {
+			out += " — " + label
+		}
+		return out
 	default:
 		ref := string(r.ResourceRef)
 		if ref == "" {
@@ -349,7 +422,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 				fmt.Fprintf(&b, "- %s\n", formatProjectResource(r))
 			}
 			b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. ")
+			b.WriteString("For RingCentral GitLab/Jira/Wiki resources, use `multica connector ...` commands; those commands are task-scoped and use the delegated user's credential without exposing tokens. ")
+			b.WriteString("Add `--ref <branch-or-sha>` when a task or handoff names an exact repository revision.\n\n")
 		} else {
 			b.WriteString("This project has no resources attached yet.\n\n")
 		}

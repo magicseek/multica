@@ -71,6 +71,7 @@ type Config struct {
 	UseDailyRollupForDashboard bool
 	ConnectorRegistry          *connectors.Registry
 	ConnectorVault             *connectors.CredentialVault
+	ConnectorClients           *connectors.ClientSet
 }
 
 type Handler struct {

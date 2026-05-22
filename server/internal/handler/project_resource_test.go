@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/connectors"
 )
 
 func TestProjectResourceLifecycle(t *testing.T) {
@@ -135,6 +137,71 @@ func TestProjectResourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestRingCentralProjectResourcesRequireProfile(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "RingCentral resource profile project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		req := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		req = withURLParam(req, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), req)
+	}()
+
+	h := *testHandler
+	h.cfg.ConnectorRegistry = nil
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": connectors.ResourceRingCentralGitLabRepo,
+		"resource_ref":  map[string]any{"project_id": "group/repo", "default_branch": "main"},
+	})
+	req = withURLParam(req, "id", project.ID)
+	h.CreateProjectResource(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("disabled profile CreateProjectResource: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	connectorConfig := connectors.Config{
+		RingCentral: connectors.RingCentralConfig{
+			Enabled:          true,
+			GitLabAPIBaseURL: "https://git.example.test/api/v4",
+			GitLabWebBaseURL: "https://git.example.test",
+			JiraBaseURL:      "https://jira.example.test",
+			WikiBaseURL:      "https://wiki.example.test",
+		},
+	}
+	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectorConfig)
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": connectors.ResourceRingCentralGitLabRepo,
+		"resource_ref": map[string]any{
+			"project_id":     "group/repo",
+			"web_url":        "https://git.example.test/group/repo",
+			"default_branch": "main",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	h.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("enabled profile CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created resource: %v", err)
+	}
+	if created.ResourceType != connectors.ResourceRingCentralGitLabRepo {
+		t.Fatalf("resource type = %q", created.ResourceType)
+	}
+}
+
 // TestProjectResourceAcceptsSSHRepoURLs covers GitHub issue #2484: SSH and
 // scp-like git URLs must be accepted alongside https URLs, because workspace
 // repos configured with an SSH remote previously got rejected when attached
@@ -215,9 +282,9 @@ func TestIsValidGitRepoURL(t *testing.T) {
 		"ftp://example.com/repo",        // unsupported scheme
 		"file:///tmp/repo",              // unsupported scheme
 		"some random text with spaces",
-		"github.com:org/repo@branch",    // '@' after ':' belongs to the path, not user
-		"foo:bar@baz",                   // '@' after ':' with no scheme
-		":foo/bar",                      // leading ':' with no host
+		"github.com:org/repo@branch", // '@' after ':' belongs to the path, not user
+		"foo:bar@baz",                // '@' after ':' with no scheme
+		":foo/bar",                   // leading ':' with no host
 	}
 	for _, s := range good {
 		if !isValidGitRepoURL(s) {
@@ -437,4 +504,3 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 		}
 	}
 }
-

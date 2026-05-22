@@ -38,6 +38,23 @@ func TestLoadConfigFromEnvRequiresCredentialKeyForRingCentral(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromEnvRequiresEndpointsForRingCentral(t *testing.T) {
+	t.Setenv(envConnectorProfiles, "ringcentral")
+	t.Setenv(envCredentialEncryptionKey, base64.StdEncoding.EncodeToString(make([]byte, credentialKeySize)))
+	t.Setenv("RINGCENTRAL_GITLAB_API_BASE_URL", "")
+	t.Setenv("RINGCENTRAL_GITLAB_WEB_BASE_URL", "https://git.example.test")
+	t.Setenv("RINGCENTRAL_JIRA_BASE_URL", "https://jira.example.test")
+	t.Setenv("RINGCENTRAL_WIKI_BASE_URL", "https://wiki.example.test")
+
+	_, err := LoadConfigFromEnv()
+	if err == nil {
+		t.Fatalf("LoadConfigFromEnv should fail without GitLab API endpoint")
+	}
+	if !strings.Contains(err.Error(), "RINGCENTRAL_GITLAB_API_BASE_URL") {
+		t.Fatalf("error %q should mention RINGCENTRAL_GITLAB_API_BASE_URL", err.Error())
+	}
+}
+
 func TestLoadConfigFromEnvRegistersRingCentralProviders(t *testing.T) {
 	t.Setenv(envConnectorProfiles, "ringcentral")
 	t.Setenv(envCredentialEncryptionKey, base64.StdEncoding.EncodeToString(make([]byte, credentialKeySize)))

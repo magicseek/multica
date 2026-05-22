@@ -139,6 +139,12 @@ export type {
   ProjectResource,
   ProjectResourceType,
   GithubRepoResourceRef,
+  RingCentralGitLabRepoResourceRef,
+  RingCentralJiraIssueResourceRef,
+  RingCentralJiraProjectResourceRef,
+  RingCentralResourceRef,
+  RingCentralWikiPageResourceRef,
+  RingCentralWikiSpaceResourceRef,
   CreateProjectResourceRequest,
   ListProjectResourcesResponse,
 } from "./project";
@@ -189,6 +195,9 @@ export type {
   ConnectorProvidersResponse,
   ConnectorRemoteWritePolicy,
   SaveConnectorCredentialRequest,
+  WorkspaceConnector,
+  WorkspaceConnectorsResponse,
+  UpdateWorkspaceConnectorRequest,
 } from "./connector";
 export type {
   Autopilot,

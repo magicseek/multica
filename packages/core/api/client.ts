@@ -121,6 +121,9 @@ import type {
   ConnectorCredentialsResponse,
   ConnectorCredential,
   SaveConnectorCredentialRequest,
+  WorkspaceConnectorsResponse,
+  WorkspaceConnector,
+  UpdateWorkspaceConnectorRequest,
   Squad,
   SquadMember,
   WorkflowApplicability,
@@ -2356,6 +2359,21 @@ export class ApiClient {
 
   async listConnectorCredentials(_workspaceId: string): Promise<ConnectorCredentialsResponse> {
     return this.fetch("/api/connectors/credentials");
+  }
+
+  async listWorkspaceConnectors(_workspaceId: string): Promise<WorkspaceConnectorsResponse> {
+    return this.fetch("/api/connectors/workspace");
+  }
+
+  async updateWorkspaceConnector(
+    _workspaceId: string,
+    providerId: string,
+    data: UpdateWorkspaceConnectorRequest,
+  ): Promise<WorkspaceConnector> {
+    return this.fetch(`/api/connectors/providers/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
   }
 
   async saveConnectorCredential(

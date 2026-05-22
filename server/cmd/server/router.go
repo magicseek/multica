@@ -111,6 +111,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		UseDailyRollupForDashboard:    os.Getenv("USAGE_DASHBOARD_ROLLUP_ENABLED") == "true",
 		ConnectorRegistry:             connectors.NewRegistry(opts.ConnectorConfig),
 		ConnectorVault:                opts.ConnectorConfig.Vault,
+		ConnectorClients:              connectors.NewClientSet(opts.ConnectorConfig, nil),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if opts.DaemonWakeup != nil {
@@ -339,9 +340,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Connectors
 			r.Get("/api/connectors/providers", h.ListConnectorProviders)
+			r.Get("/api/connectors/workspace", h.ListWorkspaceConnectors)
 			r.Get("/api/connectors/credentials", h.ListConnectorCredentials)
+			r.Put("/api/connectors/providers/{providerID}", h.UpdateWorkspaceConnector)
 			r.Put("/api/connectors/providers/{providerID}/credential", h.SaveConnectorCredential)
 			r.Delete("/api/connectors/providers/{providerID}/credential", h.DeleteConnectorCredential)
+			r.Post("/api/connectors/actions", h.RunConnectorAction)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {

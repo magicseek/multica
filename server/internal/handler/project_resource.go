@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/connectors"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -65,14 +66,42 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 	switch resourceType {
 	case "github_repo":
 		return validateGithubRepoRef(ref)
+	case connectors.ResourceRingCentralGitLabRepo:
+		return validateRingCentralGitLabRepoRef(ref)
+	case connectors.ResourceRingCentralJiraProject:
+		return validateRingCentralJiraProjectRef(ref)
+	case connectors.ResourceRingCentralJiraIssue:
+		return validateRingCentralJiraIssueRef(ref)
+	case connectors.ResourceRingCentralWikiSpace:
+		return validateRingCentralWikiSpaceRef(ref)
+	case connectors.ResourceRingCentralWikiPage:
+		return validateRingCentralWikiPageRef(ref)
 	default:
 		return nil, fmt.Errorf("unknown resource_type %q", resourceType)
 	}
 }
 
+func (h *Handler) validateAndNormalizeProjectResourceRef(resourceType string, ref json.RawMessage) (json.RawMessage, error) {
+	switch resourceType {
+	case connectors.ResourceRingCentralGitLabRepo:
+		if !h.connectorProviderEnabled(connectors.ProviderRingCentralGitLab) {
+			return nil, fmt.Errorf("unknown resource_type %q", resourceType)
+		}
+	case connectors.ResourceRingCentralJiraProject, connectors.ResourceRingCentralJiraIssue:
+		if !h.connectorProviderEnabled(connectors.ProviderRingCentralJira) {
+			return nil, fmt.Errorf("unknown resource_type %q", resourceType)
+		}
+	case connectors.ResourceRingCentralWikiSpace, connectors.ResourceRingCentralWikiPage:
+		if !h.connectorProviderEnabled(connectors.ProviderRingCentralWiki) {
+			return nil, fmt.Errorf("unknown resource_type %q", resourceType)
+		}
+	}
+	return validateAndNormalizeResourceRef(resourceType, ref)
+}
+
 type githubRepoRef struct {
-	URL                string `json:"url"`
-	DefaultBranchHint  string `json:"default_branch_hint,omitempty"`
+	URL               string `json:"url"`
+	DefaultBranchHint string `json:"default_branch_hint,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -93,6 +122,105 @@ func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+type ringCentralGitLabRepoRef struct {
+	ProjectID     string `json:"project_id"`
+	WebURL        string `json:"web_url,omitempty"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+}
+
+func validateRingCentralGitLabRepoRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload ringCentralGitLabRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid ringcentral_gitlab_repo payload: %w", err)
+	}
+	payload.ProjectID = strings.TrimSpace(payload.ProjectID)
+	if payload.ProjectID == "" {
+		return nil, errors.New("ringcentral_gitlab_repo: project_id is required")
+	}
+	payload.WebURL = strings.TrimSpace(payload.WebURL)
+	if payload.WebURL != "" {
+		if u, err := url.Parse(payload.WebURL); err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return nil, errors.New("ringcentral_gitlab_repo: web_url must be a valid http(s) URL")
+		}
+	}
+	payload.DefaultBranch = strings.TrimSpace(payload.DefaultBranch)
+	return json.Marshal(payload)
+}
+
+type ringCentralJiraProjectRef struct {
+	ProjectKey string `json:"project_key"`
+	Name       string `json:"name,omitempty"`
+}
+
+func validateRingCentralJiraProjectRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload ringCentralJiraProjectRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid ringcentral_jira_project payload: %w", err)
+	}
+	payload.ProjectKey = strings.ToUpper(strings.TrimSpace(payload.ProjectKey))
+	if payload.ProjectKey == "" {
+		return nil, errors.New("ringcentral_jira_project: project_key is required")
+	}
+	payload.Name = strings.TrimSpace(payload.Name)
+	return json.Marshal(payload)
+}
+
+type ringCentralJiraIssueRef struct {
+	IssueKey string `json:"issue_key"`
+	Summary  string `json:"summary,omitempty"`
+}
+
+func validateRingCentralJiraIssueRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload ringCentralJiraIssueRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid ringcentral_jira_issue payload: %w", err)
+	}
+	payload.IssueKey = strings.ToUpper(strings.TrimSpace(payload.IssueKey))
+	if payload.IssueKey == "" {
+		return nil, errors.New("ringcentral_jira_issue: issue_key is required")
+	}
+	payload.Summary = strings.TrimSpace(payload.Summary)
+	return json.Marshal(payload)
+}
+
+type ringCentralWikiSpaceRef struct {
+	SpaceKey string `json:"space_key"`
+	Name     string `json:"name,omitempty"`
+}
+
+func validateRingCentralWikiSpaceRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload ringCentralWikiSpaceRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid ringcentral_wiki_space payload: %w", err)
+	}
+	payload.SpaceKey = strings.ToUpper(strings.TrimSpace(payload.SpaceKey))
+	if payload.SpaceKey == "" {
+		return nil, errors.New("ringcentral_wiki_space: space_key is required")
+	}
+	payload.Name = strings.TrimSpace(payload.Name)
+	return json.Marshal(payload)
+}
+
+type ringCentralWikiPageRef struct {
+	PageID   string `json:"page_id"`
+	SpaceKey string `json:"space_key,omitempty"`
+	Title    string `json:"title,omitempty"`
+}
+
+func validateRingCentralWikiPageRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload ringCentralWikiPageRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid ringcentral_wiki_page payload: %w", err)
+	}
+	payload.PageID = strings.TrimSpace(payload.PageID)
+	if payload.PageID == "" {
+		return nil, errors.New("ringcentral_wiki_page: page_id is required")
+	}
+	payload.SpaceKey = strings.ToUpper(strings.TrimSpace(payload.SpaceKey))
+	payload.Title = strings.TrimSpace(payload.Title)
+	return json.Marshal(payload)
 }
 
 // isValidGitRepoURL accepts the three forms a user can paste from GitHub's
@@ -197,7 +325,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "resource_type is required")
 		return
 	}
-	normalizedRef, err := validateAndNormalizeResourceRef(req.ResourceType, req.ResourceRef)
+	normalizedRef, err := h.validateAndNormalizeProjectResourceRef(req.ResourceType, req.ResourceRef)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -55,19 +55,59 @@ export interface ListProjectsResponse {
 // { url, default_branch_hint? }). New types add a case in
 // validateAndNormalizeResourceRef on the server and a renderer in the UI;
 // no schema or type changes required.
-export type ProjectResourceType = "github_repo";
+export type ProjectResourceType =
+  | "github_repo"
+  | "ringcentral_gitlab_repo"
+  | "ringcentral_jira_project"
+  | "ringcentral_jira_issue"
+  | "ringcentral_wiki_space"
+  | "ringcentral_wiki_page";
 
 export interface GithubRepoResourceRef {
   url: string;
   default_branch_hint?: string;
 }
 
+export interface RingCentralGitLabRepoResourceRef {
+  project_id: string;
+  web_url?: string;
+  default_branch?: string;
+}
+
+export interface RingCentralJiraProjectResourceRef {
+  project_key: string;
+  name?: string;
+}
+
+export interface RingCentralJiraIssueResourceRef {
+  issue_key: string;
+  summary?: string;
+}
+
+export interface RingCentralWikiSpaceResourceRef {
+  space_key: string;
+  name?: string;
+}
+
+export interface RingCentralWikiPageResourceRef {
+  page_id: string;
+  space_key?: string;
+  title?: string;
+}
+
+export type RingCentralResourceRef =
+  | RingCentralGitLabRepoResourceRef
+  | RingCentralJiraProjectResourceRef
+  | RingCentralJiraIssueResourceRef
+  | RingCentralWikiSpaceResourceRef
+  | RingCentralWikiPageResourceRef;
+
 export interface ProjectResource {
   id: string;
   project_id: string;
   workspace_id: string;
   resource_type: ProjectResourceType;
-  resource_ref: GithubRepoResourceRef | Record<string, unknown>;
+  resource_ref: GithubRepoResourceRef | RingCentralResourceRef | Record<string, unknown>;
   label: string | null;
   position: number;
   created_at: string;
@@ -76,7 +116,7 @@ export interface ProjectResource {
 
 export interface CreateProjectResourceRequest {
   resource_type: ProjectResourceType;
-  resource_ref: GithubRepoResourceRef | Record<string, unknown>;
+  resource_ref: GithubRepoResourceRef | RingCentralResourceRef | Record<string, unknown>;
   label?: string;
   position?: number;
 }

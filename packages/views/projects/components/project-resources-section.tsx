@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FolderGit, Plus, Trash2 } from "lucide-react";
+import { BookOpen, ChevronRight, FolderGit, GitBranch, Plus, Ticket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   projectResourcesOptions,
+  useCreateProjectResource,
   useDeleteProjectResource,
 } from "@multica/core/projects";
+import { connectorProvidersOptions } from "@multica/core/connectors/queries";
 import {
   projectRepositoriesOptions,
   repositoryListOptions,
@@ -19,7 +21,13 @@ import type {
   GithubRepoResourceRef,
   ProjectRepository,
   ProjectResource,
+  ProjectResourceType,
   Repository,
+  RingCentralGitLabRepoResourceRef,
+  RingCentralJiraIssueResourceRef,
+  RingCentralJiraProjectResourceRef,
+  RingCentralWikiPageResourceRef,
+  RingCentralWikiSpaceResourceRef,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -48,7 +56,15 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const { data: resources = [] } = useQuery(
     projectResourcesOptions(wsId, projectId),
   );
+  const { data: connectorProviders } = useQuery(connectorProvidersOptions(wsId));
+  const ringCentralResourceTypes = new Set(
+    (connectorProviders?.providers ?? [])
+      .filter((provider) => provider.profile === "ringcentral")
+      .flatMap((provider) => provider.resource_types),
+  );
+  const hasRingCentralResources = ringCentralResourceTypes.size > 0;
   const deleteResource = useDeleteProjectResource(wsId, projectId);
+  const createResource = useCreateProjectResource(wsId, projectId);
   const { data: projectRepositories = [] } = useQuery(
     projectRepositoriesOptions(wsId, projectId),
   );
@@ -231,6 +247,17 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   setAddOpen(false);
                 }}
               />
+              {hasRingCentralResources && (
+                <RingCentralResourceForm
+                  enabledTypes={ringCentralResourceTypes}
+                  disabled={createResource.isPending}
+                  onSubmit={async (resource) => {
+                    await createResource.mutateAsync(resource);
+                    toast.success(t(($) => $.resources.toast_attached));
+                    setAddOpen(false);
+                  }}
+                />
+              )}
             </PopoverContent>
           </Popover>
         </div>
@@ -327,6 +354,9 @@ function ResourceRow({
       </div>
     );
   }
+  if (resource.resource_type.startsWith("ringcentral_")) {
+    return <RingCentralResourceRow resource={resource} onRemove={onRemove} />;
+  }
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate flex-1">
@@ -342,6 +372,88 @@ function ResourceRow({
       </button>
     </div>
   );
+}
+
+function RingCentralResourceRow({
+  resource,
+  onRemove,
+}: {
+  resource: ProjectResource;
+  onRemove: () => void;
+}) {
+  const { t } = useT("projects");
+  const { icon, label, detail } = ringCentralResourceDisplay(resource);
+  return (
+    <div className="flex items-center gap-2 text-xs group">
+      {icon}
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="truncate flex-1">{resource.label || label}</span>}
+        />
+        <TooltipContent side="top">{detail}</TooltipContent>
+      </Tooltip>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+        title={t(($) => $.resources.remove_tooltip)}
+      >
+        <Trash2 className="size-3 text-muted-foreground" />
+      </button>
+    </div>
+  );
+}
+
+function ringCentralResourceDisplay(resource: ProjectResource) {
+  const iconClass = "size-3.5 text-muted-foreground shrink-0";
+  switch (resource.resource_type) {
+    case "ringcentral_gitlab_repo": {
+      const ref = resource.resource_ref as RingCentralGitLabRepoResourceRef;
+      return {
+        icon: <GitBranch className={iconClass} />,
+        label: ref.project_id,
+        detail: ref.web_url || ref.project_id,
+      };
+    }
+    case "ringcentral_jira_project": {
+      const ref = resource.resource_ref as RingCentralJiraProjectResourceRef;
+      return {
+        icon: <Ticket className={iconClass} />,
+        label: ref.name || ref.project_key,
+        detail: ref.project_key,
+      };
+    }
+    case "ringcentral_jira_issue": {
+      const ref = resource.resource_ref as RingCentralJiraIssueResourceRef;
+      return {
+        icon: <Ticket className={iconClass} />,
+        label: ref.summary || ref.issue_key,
+        detail: ref.issue_key,
+      };
+    }
+    case "ringcentral_wiki_space": {
+      const ref = resource.resource_ref as RingCentralWikiSpaceResourceRef;
+      return {
+        icon: <BookOpen className={iconClass} />,
+        label: ref.name || ref.space_key,
+        detail: ref.space_key,
+      };
+    }
+    case "ringcentral_wiki_page": {
+      const ref = resource.resource_ref as RingCentralWikiPageResourceRef;
+      return {
+        icon: <BookOpen className={iconClass} />,
+        label: ref.title || ref.page_id,
+        detail: ref.space_key ? `${ref.space_key}: ${ref.page_id}` : ref.page_id,
+      };
+    }
+    default:
+      return {
+        icon: <BookOpen className={iconClass} />,
+        label: resource.resource_type,
+        detail: resource.resource_type,
+      };
+  }
 }
 
 function CustomRepoForm({
@@ -385,3 +497,128 @@ function CustomRepoForm({
     </form>
   );
 }
+
+function RingCentralResourceForm({
+  enabledTypes,
+  disabled,
+  onSubmit,
+}: {
+  enabledTypes: Set<string>;
+  disabled: boolean;
+  onSubmit: (resource: {
+    resource_type: ProjectResourceType;
+    resource_ref: Record<string, string>;
+    label?: string;
+  }) => Promise<void> | void;
+}) {
+  const { t } = useT("projects");
+  const options = ringCentralResourceOptions.filter((option) => enabledTypes.has(option.type));
+  const [type, setType] = useState<ProjectResourceType>(
+    (options[0]?.type ?? "ringcentral_gitlab_repo") as ProjectResourceType,
+  );
+  const [value, setValue] = useState("");
+  const [label, setLabel] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const selected = options.find((option) => option.type === type) ?? options[0];
+  if (!selected) return null;
+
+  const handle = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        resource_type: selected.type,
+        resource_ref: { [selected.refKey]: trimmed },
+        label: label.trim() || undefined,
+      });
+      setValue("");
+      setLabel("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handle} className="space-y-2 pt-2 border-t">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-1.5">
+        <select
+          value={type}
+          onChange={(event) => setType(event.target.value as ProjectResourceType)}
+          className="min-w-0 rounded-md border bg-background px-2 py-1 text-xs outline-none"
+          disabled={disabled || submitting}
+        >
+          {options.map((option) => (
+            <option key={option.type} value={option.type}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          placeholder={t(($) => $.resources.ringcentral_label_placeholder)}
+          className="min-w-0 rounded-md border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={selected.placeholder}
+          className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
+        />
+        <Button
+          type="submit"
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-xs"
+          disabled={disabled || submitting || !value.trim()}
+        >
+          {t(($) => $.resources.url_submit)}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+const ringCentralResourceOptions: Array<{
+  type: ProjectResourceType;
+  label: string;
+  refKey: string;
+  placeholder: string;
+}> = [
+  {
+    type: "ringcentral_gitlab_repo",
+    label: "GitLab",
+    refKey: "project_id",
+    placeholder: "group/project",
+  },
+  {
+    type: "ringcentral_jira_project",
+    label: "Jira project",
+    refKey: "project_key",
+    placeholder: "ABC",
+  },
+  {
+    type: "ringcentral_jira_issue",
+    label: "Jira issue",
+    refKey: "issue_key",
+    placeholder: "ABC-123",
+  },
+  {
+    type: "ringcentral_wiki_space",
+    label: "Wiki space",
+    refKey: "space_key",
+    placeholder: "ENG",
+  },
+  {
+    type: "ringcentral_wiki_page",
+    label: "Wiki page",
+    refKey: "page_id",
+    placeholder: "123456",
+  },
+];

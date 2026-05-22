@@ -114,7 +114,7 @@ func ringCentralProviders(cfg RingCentralConfig) []ProviderDefinition {
 				"api_base_url": cfg.GitLabAPIBaseURL,
 				"web_base_url": cfg.GitLabWebBaseURL,
 			},
-			ResourceTypes: []string{"ringcentral_gitlab_repo"},
+			ResourceTypes: []string{ResourceRingCentralGitLabRepo},
 			Capabilities: []Capability{
 				{ID: "validate", DisplayName: "Validate token", Write: false},
 				{ID: "repo.read", DisplayName: "Read repository files", Write: false},
@@ -137,7 +137,7 @@ func ringCentralProviders(cfg RingCentralConfig) []ProviderDefinition {
 			Endpoints: map[string]string{
 				"base_url": cfg.JiraBaseURL,
 			},
-			ResourceTypes: []string{"ringcentral_jira_issue", "ringcentral_jira_project"},
+			ResourceTypes: []string{ResourceRingCentralJiraIssue, ResourceRingCentralJiraProject},
 			Capabilities: []Capability{
 				{ID: "validate", DisplayName: "Validate token", Write: false},
 				{ID: "project.list", DisplayName: "List projects", Write: false},
@@ -153,7 +153,7 @@ func ringCentralProviders(cfg RingCentralConfig) []ProviderDefinition {
 			Endpoints: map[string]string{
 				"base_url": cfg.WikiBaseURL,
 			},
-			ResourceTypes: []string{"ringcentral_wiki_page", "ringcentral_wiki_space"},
+			ResourceTypes: []string{ResourceRingCentralWikiPage, ResourceRingCentralWikiSpace},
 			Capabilities: []Capability{
 				{ID: "validate", DisplayName: "Validate token", Write: false},
 				{ID: "space.search", DisplayName: "Search spaces", Write: false},

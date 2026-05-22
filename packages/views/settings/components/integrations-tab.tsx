@@ -12,9 +12,14 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { githubInstallationsOptions } from "@multica/core/github/queries";
-import { connectorCredentialsOptions, connectorKeys, connectorProvidersOptions } from "@multica/core/connectors/queries";
+import {
+  connectorCredentialsOptions,
+  connectorKeys,
+  connectorProvidersOptions,
+  workspaceConnectorsOptions,
+} from "@multica/core/connectors/queries";
 import { api } from "@multica/core/api";
-import type { ConnectorCredential, ConnectorProvider } from "@multica/core/types";
+import type { ConnectorCredential, ConnectorProvider, WorkspaceConnector } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 // lucide-react v1.x dropped brand marks (including Github). Render an inline
@@ -69,10 +74,17 @@ export function IntegrationsTab() {
     ...connectorCredentialsOptions(wsId),
     enabled: !!wsId,
   });
+  const { data: workspaceConnectors } = useQuery({
+    ...workspaceConnectorsOptions(wsId),
+    enabled: !!wsId,
+  });
   const ringCentralProviders =
     connectorProviders?.providers.filter((provider) => provider.profile === "ringcentral") ?? [];
   const connectorCredentialsByProvider = new Map(
     (connectorCredentials?.credentials ?? []).map((credential) => [credential.provider_id, credential]),
+  );
+  const workspaceConnectorsByProvider = new Map(
+    (workspaceConnectors?.connectors ?? []).map((connector) => [connector.provider_id, connector]),
   );
 
   async function handleConnect() {
@@ -162,9 +174,14 @@ export function IntegrationsTab() {
                 key={provider.id}
                 provider={provider}
                 credential={connectorCredentialsByProvider.get(provider.id) ?? null}
+                workspaceConnector={workspaceConnectorsByProvider.get(provider.id) ?? null}
                 workspaceId={wsId}
+                canManage={canManage}
                 onCredentialChanged={() =>
                   queryClient.invalidateQueries({ queryKey: connectorKeys.credentials(wsId) })
+                }
+                onWorkspaceConnectorChanged={() =>
+                  queryClient.invalidateQueries({ queryKey: connectorKeys.workspace(wsId) })
                 }
               />
             ))}
@@ -178,13 +195,19 @@ export function IntegrationsTab() {
 function RingCentralProviderCard({
   provider,
   credential,
+  workspaceConnector,
   workspaceId,
+  canManage,
   onCredentialChanged,
+  onWorkspaceConnectorChanged,
 }: {
   provider: ConnectorProvider;
   credential: ConnectorCredential | null;
+  workspaceConnector: WorkspaceConnector | null;
   workspaceId: string;
+  canManage: boolean;
   onCredentialChanged: () => void;
+  onWorkspaceConnectorChanged: () => void;
 }) {
   const { t } = useT("settings");
   const [secret, setSecret] = useState("");
@@ -193,6 +216,8 @@ function RingCentralProviderCard({
   const endpointValues = Object.values(provider.endpoints ?? {}).filter(Boolean);
   const writeCount = provider.capabilities.filter((capability) => capability.write).length;
   const readCount = provider.capabilities.length - writeCount;
+  const enabled = workspaceConnector?.enabled ?? true;
+  const remoteWritePolicy = workspaceConnector?.settings?.remote_write_policy ?? "disabled";
   const status = credential?.has_credential
     ? t(($) => $.integrations.ringcentral_credential_saved)
     : t(($) => $.integrations.ringcentral_credential_missing);
@@ -250,6 +275,11 @@ function RingCentralProviderCard({
           <Badge variant={credential?.has_credential ? "secondary" : "outline"} className="rounded-sm px-1.5 py-0 text-[10px]">
             {status}
           </Badge>
+          <Badge variant={enabled ? "secondary" : "outline"} className="rounded-sm px-1.5 py-0 text-[10px]">
+            {enabled
+              ? t(($) => $.integrations.ringcentral_provider_enabled)
+              : t(($) => $.integrations.ringcentral_provider_disabled)}
+          </Badge>
           <Badge variant="outline" className="rounded-sm px-1.5 py-0 text-[10px]">
             {readCount} {t(($) => $.integrations.ringcentral_read_capabilities)}
           </Badge>
@@ -274,6 +304,59 @@ function RingCentralProviderCard({
           <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{t(($) => $.integrations.ringcentral_task_scoped)}</span>
         </div>
+
+        {canManage && (
+          <div className="space-y-2 rounded-md border p-2">
+            <label className="flex items-center justify-between gap-3 text-xs">
+              <span>{t(($) => $.integrations.ringcentral_provider_enable_label)}</span>
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={async (event) => {
+                  try {
+                    await api.updateWorkspaceConnector(workspaceId, provider.id, {
+                      enabled: event.target.checked,
+                      settings: workspaceConnector?.settings ?? {},
+                    });
+                    onWorkspaceConnectorChanged();
+                    toast.success(t(($) => $.integrations.ringcentral_workspace_saved_toast));
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_workspace_save_failed));
+                  }
+                }}
+              />
+            </label>
+            {provider.remote_write_policies && provider.remote_write_policies.length > 0 && (
+              <label className="space-y-1 text-xs">
+                <span className="text-muted-foreground">
+                  {t(($) => $.integrations.ringcentral_write_policy_label)}
+                </span>
+                <select
+                  value={remoteWritePolicy}
+                  onChange={async (event) => {
+                    try {
+                      await api.updateWorkspaceConnector(workspaceId, provider.id, {
+                        enabled,
+                        settings: { ...(workspaceConnector?.settings ?? {}), remote_write_policy: event.target.value },
+                      });
+                      onWorkspaceConnectorChanged();
+                      toast.success(t(($) => $.integrations.ringcentral_workspace_saved_toast));
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : t(($) => $.integrations.ringcentral_workspace_save_failed));
+                    }
+                  }}
+                  className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                >
+                  {provider.remote_write_policies.map((policy) => (
+                    <option key={policy.id} value={policy.id}>
+                      {policy.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
 
         {provider.requires_user_credential && (
           <div className="flex flex-col gap-2">

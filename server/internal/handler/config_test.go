@@ -128,16 +128,29 @@ func TestListConnectorProvidersWithRingCentralProfile(t *testing.T) {
 func TestConnectorCredentialLifecycle(t *testing.T) {
 	requireConnectorCredentialSchema(t)
 
-	h := *testHandler
-	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectors.Config{
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/user" {
+			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
+		}
+		if r.Header.Get("PRIVATE-TOKEN") != "glpat-secret-value" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": 100, "username": "connector-user"})
+	}))
+	defer upstream.Close()
+	connectorConfig := connectors.Config{
 		RingCentral: connectors.RingCentralConfig{
 			Enabled:          true,
-			GitLabAPIBaseURL: "https://git.example.test/api/v4",
-			GitLabWebBaseURL: "https://git.example.test",
-			JiraBaseURL:      "https://jira.example.test",
-			WikiBaseURL:      "https://wiki.example.test",
+			GitLabAPIBaseURL: upstream.URL + "/api/v4",
+			GitLabWebBaseURL: upstream.URL,
+			JiraBaseURL:      upstream.URL,
+			WikiBaseURL:      upstream.URL,
 		},
-	})
+	}
+	h := *testHandler
+	h.cfg.ConnectorRegistry = connectors.NewRegistry(connectorConfig)
+	h.cfg.ConnectorClients = connectors.NewClientSet(connectorConfig, upstream.Client())
 	vault, err := connectors.NewCredentialVault("test:v1", bytes.Repeat([]byte{7}, 32))
 	if err != nil {
 		t.Fatalf("create vault: %v", err)
@@ -160,8 +173,8 @@ func TestConnectorCredentialLifecycle(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
 		t.Fatalf("decode saved credential: %v", err)
 	}
-	if !saved.HasCredential || saved.Status != "never_validated" {
-		t.Fatalf("saved credential = %+v, want has_credential true and never_validated", saved)
+	if !saved.HasCredential || saved.Status != "valid" || saved.LastValidatedAt == nil {
+		t.Fatalf("saved credential = %+v, want has_credential true, valid, and last_validated_at", saved)
 	}
 
 	var encrypted []byte
