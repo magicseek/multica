@@ -141,3 +141,41 @@ Implemented workspace-level editable workflow definitions with system templates,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: RingCentral connector implementation and verification
+
+**Date**: 2026-05-22
+**Task**: RingCentral connector implementation and verification
+**Branch**: `feat/ringcentral-connectors`
+
+### Summary
+
+Implemented and verified profile-gated RingCentral GitLab/Jira/Wiki connectors, documented connector/runtime contracts, stabilized full Go verification, and launched backend/web plus desktop dev app with RingCentral profile.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1951d8c8` | (see git log) |
+| `6093b3e1` | (see git log) |
+| `73716468` | (see git log) |
+| `fca8f3b2` | (see git log) |
+| `62ada118` | (see git log) |
+| `d5d7c8fc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
