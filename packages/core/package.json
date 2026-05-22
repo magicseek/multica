@@ -47,6 +47,8 @@
     "./runtimes/mutations": "./runtimes/mutations.ts",
     "./runtimes/hooks": "./runtimes/hooks.ts",
     "./runtimes/custom-pricing-store": "./runtimes/custom-pricing-store.ts",
+    "./agent-analytics": "./agent-analytics/index.ts",
+    "./agent-analytics/queries": "./agent-analytics/queries.ts",
     "./workflows": "./workflows/index.ts",
     "./workflows/queries": "./workflows/queries.ts",
     "./workflows/mutations": "./workflows/mutations.ts",

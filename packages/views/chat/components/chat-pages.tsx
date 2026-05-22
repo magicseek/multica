@@ -88,8 +88,9 @@ import { ChatInput } from "./chat-input";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { BoardView } from "../../issues/components/board-view";
 import { WorkflowArtifactReviewList } from "../../workflows";
+import { AgentAnalyticsSurface } from "../../agent-analytics";
 
-type ChatTab = "chat" | "issues" | "outputs";
+type ChatTab = "chat" | "issues" | "outputs" | "analytics";
 
 const chatIssuesViewStore = createIssueViewStore("chat_session_issues_view");
 const EMPTY_CHAT_PROPOSALS: ChatIssueProposal[] = [];
@@ -319,6 +320,7 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
             <TabsTrigger value="outputs">
               <TabLabel label={t(($) => $.pages.session.tabs.outputs)} count={outputCount} />
             </TabsTrigger>
+            <TabsTrigger value="analytics">{t(($) => $.pages.session.tabs.analytics)}</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
@@ -366,6 +368,12 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
         </TabsContent>
         <TabsContent value="outputs" className="min-h-0 overflow-y-auto">
           <ChatOutputsPanel sessionId={sessionId} />
+        </TabsContent>
+        <TabsContent value="analytics" className="min-h-0">
+          <AgentAnalyticsSurface
+            scope={{ kind: "chat", sessionId }}
+            active={tab === "analytics"}
+          />
         </TabsContent>
       </Tabs>
     </div>
@@ -1132,7 +1140,7 @@ function ChatSessionListSkeleton() {
 }
 
 function parseChatTab(value: string | null | undefined): ChatTab {
-  return value === "issues" || value === "outputs" ? value : "chat";
+  return value === "issues" || value === "outputs" || value === "analytics" ? value : "chat";
 }
 
 function titleFromContent(content: string): string {

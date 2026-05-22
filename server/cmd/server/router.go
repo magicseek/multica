@@ -597,6 +597,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/runtime/daily", h.GetDashboardRunTimeDaily)
 			})
 
+			// Analytics — scoped raw agent run metrics for project/chat
+			// performance views. Summary aggregates span the full filter;
+			// only the run table is paginated.
+			r.Route("/api/analytics", func(r chi.Router) {
+				r.Get("/agent-runs", h.GetAgentAnalyticsRuns)
+			})
+
 			// Runtimes
 			r.Route("/api/runtimes", func(r chi.Router) {
 				r.Get("/", h.ListAgentRuntimes)

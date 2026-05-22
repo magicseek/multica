@@ -42,5 +42,85 @@
   },
   "duration": {
     "less_than_minute": "<1m"
+  },
+  "analytics": {
+    "error_title": "Analytics unavailable",
+    "error_description": "The metrics request failed. Try again after the current run finishes.",
+    "empty_title": "No analytics yet",
+    "empty_description": "Metrics appear after agent runs finish and usage is recorded.",
+    "controls": {
+      "period": "Period",
+      "all": "All",
+      "source": "Source",
+      "source_all": "All",
+      "source_issues": "Issues",
+      "source_chats": "Chats"
+    },
+    "gauges": {
+      "tokens": "Total tokens",
+      "tokens_hint": "Input {{input}} · Output {{output}}",
+      "cost": "Estimated cost",
+      "cost_hint": "Priced with current model catalog",
+      "unpriced_tokens": "{{tokens}} unpriced",
+      "configure_pricing": "Pricing",
+      "speed": "Completion speed",
+      "speed_hint": "p95 {{p95}}"
+    },
+    "trend": {
+      "title": "Daily token trend",
+      "caption": "last 14 buckets",
+      "empty": "No daily buckets"
+    },
+    "breakdown": {
+      "title": "Cost breakdown",
+      "input": "Input",
+      "output": "Output",
+      "cache_read": "Cache read",
+      "cache_write": "Cache write",
+      "top_sources": "Top sources"
+    },
+    "table": {
+      "title": "Runs",
+      "caption": "{{count}} terminal runs",
+      "source": "Source",
+      "status": "Status",
+      "agent": "Agent / model",
+      "duration": "Duration",
+      "first_text": "First text",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "cache": "Cache",
+      "tools": "Tools",
+      "page": "{{start}}–{{end}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "expand": "Expand run",
+      "unknown_model": "Unknown model"
+    },
+    "details": {
+      "latency": "Latency",
+      "queue": "Queue",
+      "startup": "Startup",
+      "execution": "Execution",
+      "first_event": "First event",
+      "first_tool": "First tool",
+      "context": "Context",
+      "prompt": "Prompt",
+      "system": "System",
+      "chat": "Chat",
+      "skills": "Skills",
+      "workflow": "Workflow",
+      "output": "Output",
+      "text": "Text",
+      "thinking": "Thinking",
+      "tool_input": "Tool input",
+      "tool_result": "Tool result",
+      "cost_segments": "Cost segments"
+    },
+    "status": {
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    }
   }
 }

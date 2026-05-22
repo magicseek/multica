@@ -28,7 +28,7 @@ function workspaceScoped(slug: string) {
       const base = `${ws}/chats/new`;
       return projectId ? `${base}?project_id=${encode(projectId)}` : base;
     },
-    chatSession: (id: string, tab?: "chat" | "issues" | "outputs") => {
+    chatSession: (id: string, tab?: "chat" | "issues" | "outputs" | "analytics") => {
       const base = `${ws}/chats/${encode(id)}`;
       return tab && tab !== "chat" ? `${base}?tab=${encode(tab)}` : base;
     },

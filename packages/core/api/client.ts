@@ -1,5 +1,6 @@
 import type {
   Issue,
+  AgentAnalyticsResponse,
   CreateIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
@@ -137,6 +138,7 @@ import type {
   WorkflowInputRequest,
   WorkflowQualityGateResult,
   WorkflowReview,
+  GetAgentAnalyticsParams,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -146,6 +148,7 @@ import { parseWithFallback } from "./schema";
 import {
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
+  AgentAnalyticsResponseSchema,
   AttachmentResponseSchema,
   ChatIssueProposalApprovalResponseSchema,
   ChatIssueProposalItemSchema,
@@ -163,6 +166,7 @@ import {
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
+  EMPTY_AGENT_ANALYTICS_RESPONSE,
   EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_ATTACHMENT,
@@ -1010,6 +1014,26 @@ export class ApiClient {
       DashboardRunTimeDailyListSchema,
       [],
       { endpoint: "GET /api/dashboard/runtime/daily" },
+    );
+  }
+
+  async getAgentAnalyticsRuns(
+    params: GetAgentAnalyticsParams,
+  ): Promise<AgentAnalyticsResponse> {
+    const search = new URLSearchParams();
+    search.set("scope", params.scope);
+    search.set("scope_id", params.scope_id);
+    if (params.days !== undefined) search.set("days", String(params.days));
+    if (params.source) search.set("source", params.source);
+    if (params.limit) search.set("limit", String(params.limit));
+    if (params.offset) search.set("offset", String(params.offset));
+    if (params.sort) search.set("sort", params.sort);
+    const raw = await this.fetch<unknown>(`/api/analytics/agent-runs?${search}`);
+    return parseWithFallback<AgentAnalyticsResponse>(
+      raw,
+      AgentAnalyticsResponseSchema,
+      EMPTY_AGENT_ANALYTICS_RESPONSE,
+      { endpoint: "GET /api/analytics/agent-runs" },
     );
   }
 

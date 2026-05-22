@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "05-22-project-chat-analytics-tabs"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

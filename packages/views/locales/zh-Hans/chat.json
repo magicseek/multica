@@ -147,7 +147,8 @@
       "tabs": {
         "chat": "Chat",
         "issues": "Issues",
-        "outputs": "Outputs"
+        "outputs": "Outputs",
+        "analytics": "Analytics"
       }
     },
     "project_chats": {

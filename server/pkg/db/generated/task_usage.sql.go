@@ -11,6 +11,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAgentAnalyticsRuns = `-- name: CountAgentAnalyticsRuns :one
+SELECT COUNT(DISTINCT atq.id)::int AS total
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+JOIN agent a ON a.id = atq.agent_id
+LEFT JOIN issue i ON i.id = atq.issue_id
+LEFT JOIN chat_session cs ON cs.id = atq.chat_session_id
+WHERE a.workspace_id = $1
+  AND atq.status IN ('completed', 'failed', 'cancelled')
+  AND atq.completed_at IS NOT NULL
+  AND (
+    NOT $2::boolean
+    OR tu.created_at >= DATE_TRUNC('day', $3::timestamptz)
+  )
+  AND (
+    NOT $4::boolean
+    OR tu.created_at < DATE_TRUNC('day', $5::timestamptz)
+  )
+  AND (
+    ($6::text = 'project' AND (i.project_id = $7 OR cs.project_id = $7))
+    OR ($6::text = 'chat' AND atq.chat_session_id = $7)
+  )
+  AND (
+    $8::text = 'all'
+    OR ($8::text = 'issues' AND atq.chat_session_id IS NULL AND atq.issue_id IS NOT NULL)
+    OR ($8::text = 'chats' AND atq.chat_session_id IS NOT NULL)
+  )
+`
+
+type CountAgentAnalyticsRunsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	HasSince    bool               `json:"has_since"`
+	Since       pgtype.Timestamptz `json:"since"`
+	HasBefore   bool               `json:"has_before"`
+	Before      pgtype.Timestamptz `json:"before"`
+	Scope       string             `json:"scope"`
+	ScopeID     pgtype.UUID        `json:"scope_id"`
+	Source      string             `json:"source"`
+}
+
+// Count terminal runs with recorded usage for the current analytics scope.
+// Matches ListAgentAnalyticsRuns exactly except for projection/pagination.
+func (q *Queries) CountAgentAnalyticsRuns(ctx context.Context, arg CountAgentAnalyticsRunsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countAgentAnalyticsRuns,
+		arg.WorkspaceID,
+		arg.HasSince,
+		arg.Since,
+		arg.HasBefore,
+		arg.Before,
+		arg.Scope,
+		arg.ScopeID,
+		arg.Source,
+	)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const getIssueUsageSummary = `-- name: GetIssueUsageSummary :one
 SELECT
     COALESCE(SUM(tu.input_tokens), 0)::bigint AS total_input_tokens,
@@ -196,6 +254,510 @@ func (q *Queries) GetWorkspaceUsageSummary(ctx context.Context, arg GetWorkspace
 			&i.TotalCacheReadTokens,
 			&i.TotalCacheWriteTokens,
 			&i.TaskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentAnalyticsRuns = `-- name: ListAgentAnalyticsRuns :many
+WITH filtered AS (
+  SELECT
+      atq.id AS task_id,
+      atq.agent_id,
+      a.name AS agent_name,
+      atq.status,
+      atq.created_at,
+      atq.dispatched_at,
+      atq.started_at,
+      atq.completed_at,
+      atq.autopilot_run_id,
+      atq.workflow_definition_id,
+      wr.id AS workflow_run_id,
+      CASE
+        WHEN atq.chat_session_id IS NOT NULL THEN 'chat'
+        WHEN atq.issue_id IS NOT NULL THEN 'issue'
+        ELSE 'task'
+      END::text AS source_type,
+      i.id AS issue_id,
+      CASE
+        WHEN i.id IS NOT NULL THEN (ws.issue_prefix || '-' || i.number)::text
+        ELSE ''
+      END::text AS issue_identifier,
+      i.title AS issue_title,
+      cs.id AS chat_session_id,
+      cs.title AS chat_title,
+      tu.provider,
+      tu.model,
+      tu.input_tokens,
+      tu.output_tokens,
+      tu.cache_read_tokens,
+      tu.cache_write_tokens,
+      tu.metadata
+  FROM task_usage tu
+  JOIN agent_task_queue atq ON atq.id = tu.task_id
+  JOIN agent a ON a.id = atq.agent_id
+  JOIN workspace ws ON ws.id = a.workspace_id
+  LEFT JOIN issue i ON i.id = atq.issue_id
+  LEFT JOIN chat_session cs ON cs.id = atq.chat_session_id
+  LEFT JOIN LATERAL (
+    SELECT id
+    FROM workflow_run
+    WHERE agent_task_queue_id = atq.id
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) wr ON TRUE
+  WHERE a.workspace_id = $4
+    AND atq.status IN ('completed', 'failed', 'cancelled')
+    AND atq.completed_at IS NOT NULL
+    AND (
+      NOT $5::boolean
+      OR tu.created_at >= DATE_TRUNC('day', $6::timestamptz)
+    )
+    AND (
+      NOT $7::boolean
+      OR tu.created_at < DATE_TRUNC('day', $8::timestamptz)
+    )
+    AND (
+      ($9::text = 'project' AND (i.project_id = $10 OR cs.project_id = $10))
+      OR ($9::text = 'chat' AND atq.chat_session_id = $10)
+    )
+    AND (
+      $11::text = 'all'
+      OR ($11::text = 'issues' AND atq.chat_session_id IS NULL AND atq.issue_id IS NOT NULL)
+      OR ($11::text = 'chats' AND atq.chat_session_id IS NOT NULL)
+    )
+)
+SELECT
+    task_id,
+    agent_id,
+    agent_name,
+    status,
+    source_type,
+    issue_id,
+    issue_identifier,
+    issue_title,
+    chat_session_id,
+    chat_title,
+    autopilot_run_id,
+    workflow_definition_id,
+    workflow_run_id,
+    created_at,
+    dispatched_at,
+    started_at,
+    completed_at,
+    COALESCE(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000, 0)::bigint AS total_duration_ms,
+    COALESCE(EXTRACT(EPOCH FROM (dispatched_at - created_at)) * 1000, 0)::bigint AS queue_ms,
+    COALESCE(EXTRACT(EPOCH FROM (started_at - dispatched_at)) * 1000, 0)::bigint AS startup_ms,
+    COALESCE(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000, 0)::bigint AS execution_ms,
+    COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+    COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
+    COALESCE(SUM(cache_read_tokens), 0)::bigint AS cache_read_tokens,
+    COALESCE(SUM(cache_write_tokens), 0)::bigint AS cache_write_tokens,
+    COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'provider', provider,
+          'model', model,
+          'input_tokens', input_tokens,
+          'output_tokens', output_tokens,
+          'cache_read_tokens', cache_read_tokens,
+          'cache_write_tokens', cache_write_tokens,
+          'task_count', 1
+        )
+        ORDER BY provider, model
+      ) FILTER (WHERE model IS NOT NULL),
+      '[]'::jsonb
+    ) AS model_usage,
+    COALESCE(MAX(NULLIF(metadata->>'prompt_bytes', '')::bigint), 0)::bigint AS prompt_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'system_prompt_bytes', '')::bigint), 0)::bigint AS system_prompt_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'chat_message_bytes', '')::bigint), 0)::bigint AS chat_message_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'chat_attachment_count', '')::bigint), 0)::bigint AS chat_attachment_count,
+    COALESCE(MAX(NULLIF(metadata->>'agent_instructions_bytes', '')::bigint), 0)::bigint AS agent_instructions_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'agent_skill_count', '')::bigint), 0)::bigint AS agent_skill_count,
+    COALESCE(MAX(NULLIF(metadata->>'agent_skill_bytes', '')::bigint), 0)::bigint AS agent_skill_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'repo_count', '')::bigint), 0)::bigint AS repo_count,
+    COALESCE(MAX(NULLIF(metadata->>'repository_count', '')::bigint), 0)::bigint AS repository_count,
+    COALESCE(MAX(NULLIF(metadata->>'project_resource_count', '')::bigint), 0)::bigint AS project_resource_count,
+    COALESCE(MAX(NULLIF(metadata->>'workflow_snapshot_bytes', '')::bigint), 0)::bigint AS workflow_snapshot_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'workflow_step_snapshot_bytes', '')::bigint), 0)::bigint AS workflow_step_snapshot_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'autopilot_description_bytes', '')::bigint), 0)::bigint AS autopilot_description_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'autopilot_payload_bytes', '')::bigint), 0)::bigint AS autopilot_payload_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'quick_create_prompt_bytes', '')::bigint), 0)::bigint AS quick_create_prompt_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'exec_env_ms', '')::bigint), 0)::bigint AS exec_env_ms,
+    COALESCE(MAX(NULLIF(metadata->>'runtime_config_ms', '')::bigint), 0)::bigint AS runtime_config_ms,
+    COALESCE(MAX(NULLIF(metadata->>'backend_create_ms', '')::bigint), 0)::bigint AS backend_create_ms,
+    COALESCE(MAX(NULLIF(metadata->>'agent_run_ms', '')::bigint), 0)::bigint AS agent_run_ms,
+    COALESCE(MAX(NULLIF(metadata->>'daemon_run_ms', '')::bigint), 0)::bigint AS daemon_run_ms,
+    COALESCE(MAX(NULLIF(metadata->>'first_event_ms', '')::bigint), 0)::bigint AS first_event_ms,
+    COALESCE(MAX(NULLIF(metadata->>'first_text_ms', '')::bigint), 0)::bigint AS first_text_ms,
+    COALESCE(MAX(NULLIF(metadata->>'first_tool_use_ms', '')::bigint), 0)::bigint AS first_tool_use_ms,
+    COALESCE(MAX(NULLIF(metadata->>'first_tool_result_ms', '')::bigint), 0)::bigint AS first_tool_result_ms,
+    COALESCE(MAX(NULLIF(metadata->>'task_message_text_count', '')::bigint), 0)::bigint AS task_message_text_count,
+    COALESCE(MAX(NULLIF(metadata->>'task_message_thinking_count', '')::bigint), 0)::bigint AS task_message_thinking_count,
+    COALESCE(MAX(NULLIF(metadata->>'task_message_tool_use_count', '')::bigint), 0)::bigint AS task_message_tool_use_count,
+    COALESCE(MAX(NULLIF(metadata->>'task_message_tool_result_count', '')::bigint), 0)::bigint AS task_message_tool_result_count,
+    COALESCE(MAX(NULLIF(metadata->>'task_message_error_count', '')::bigint), 0)::bigint AS task_message_error_count,
+    COALESCE(MAX(NULLIF(metadata->>'assistant_text_bytes', '')::bigint), 0)::bigint AS assistant_text_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'thinking_bytes', '')::bigint), 0)::bigint AS thinking_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'tool_input_bytes', '')::bigint), 0)::bigint AS tool_input_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'tool_result_bytes', '')::bigint), 0)::bigint AS tool_result_bytes,
+    COALESCE(MAX(NULLIF(metadata->>'agent_result_output_bytes', '')::bigint), 0)::bigint AS agent_result_output_bytes
+FROM filtered
+GROUP BY
+    task_id,
+    agent_id,
+    agent_name,
+    status,
+    source_type,
+    issue_id,
+    issue_identifier,
+    issue_title,
+    chat_session_id,
+    chat_title,
+    autopilot_run_id,
+    workflow_definition_id,
+    workflow_run_id,
+    created_at,
+    dispatched_at,
+    started_at,
+    completed_at
+ORDER BY
+    CASE WHEN $1::text = 'duration_desc' THEN COALESCE(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000, 0)::bigint END DESC NULLS LAST,
+    CASE WHEN $1::text = 'tokens_desc' THEN COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens), 0)::bigint END DESC NULLS LAST,
+    completed_at DESC,
+    task_id DESC
+LIMIT $3::int
+OFFSET $2::int
+`
+
+type ListAgentAnalyticsRunsParams struct {
+	Sort        string             `json:"sort"`
+	OffsetCount int32              `json:"offset_count"`
+	LimitCount  int32              `json:"limit_count"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	HasSince    bool               `json:"has_since"`
+	Since       pgtype.Timestamptz `json:"since"`
+	HasBefore   bool               `json:"has_before"`
+	Before      pgtype.Timestamptz `json:"before"`
+	Scope       string             `json:"scope"`
+	ScopeID     pgtype.UUID        `json:"scope_id"`
+	Source      string             `json:"source"`
+}
+
+type ListAgentAnalyticsRunsRow struct {
+	TaskID                     pgtype.UUID        `json:"task_id"`
+	AgentID                    pgtype.UUID        `json:"agent_id"`
+	AgentName                  string             `json:"agent_name"`
+	Status                     string             `json:"status"`
+	SourceType                 string             `json:"source_type"`
+	IssueID                    pgtype.UUID        `json:"issue_id"`
+	IssueIdentifier            string             `json:"issue_identifier"`
+	IssueTitle                 pgtype.Text        `json:"issue_title"`
+	ChatSessionID              pgtype.UUID        `json:"chat_session_id"`
+	ChatTitle                  pgtype.Text        `json:"chat_title"`
+	AutopilotRunID             pgtype.UUID        `json:"autopilot_run_id"`
+	WorkflowDefinitionID       pgtype.UUID        `json:"workflow_definition_id"`
+	WorkflowRunID              pgtype.UUID        `json:"workflow_run_id"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	DispatchedAt               pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt                  pgtype.Timestamptz `json:"started_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	TotalDurationMs            int64              `json:"total_duration_ms"`
+	QueueMs                    int64              `json:"queue_ms"`
+	StartupMs                  int64              `json:"startup_ms"`
+	ExecutionMs                int64              `json:"execution_ms"`
+	InputTokens                int64              `json:"input_tokens"`
+	OutputTokens               int64              `json:"output_tokens"`
+	CacheReadTokens            int64              `json:"cache_read_tokens"`
+	CacheWriteTokens           int64              `json:"cache_write_tokens"`
+	ModelUsage                 interface{}        `json:"model_usage"`
+	PromptBytes                int64              `json:"prompt_bytes"`
+	SystemPromptBytes          int64              `json:"system_prompt_bytes"`
+	ChatMessageBytes           int64              `json:"chat_message_bytes"`
+	ChatAttachmentCount        int64              `json:"chat_attachment_count"`
+	AgentInstructionsBytes     int64              `json:"agent_instructions_bytes"`
+	AgentSkillCount            int64              `json:"agent_skill_count"`
+	AgentSkillBytes            int64              `json:"agent_skill_bytes"`
+	RepoCount                  int64              `json:"repo_count"`
+	RepositoryCount            int64              `json:"repository_count"`
+	ProjectResourceCount       int64              `json:"project_resource_count"`
+	WorkflowSnapshotBytes      int64              `json:"workflow_snapshot_bytes"`
+	WorkflowStepSnapshotBytes  int64              `json:"workflow_step_snapshot_bytes"`
+	AutopilotDescriptionBytes  int64              `json:"autopilot_description_bytes"`
+	AutopilotPayloadBytes      int64              `json:"autopilot_payload_bytes"`
+	QuickCreatePromptBytes     int64              `json:"quick_create_prompt_bytes"`
+	ExecEnvMs                  int64              `json:"exec_env_ms"`
+	RuntimeConfigMs            int64              `json:"runtime_config_ms"`
+	BackendCreateMs            int64              `json:"backend_create_ms"`
+	AgentRunMs                 int64              `json:"agent_run_ms"`
+	DaemonRunMs                int64              `json:"daemon_run_ms"`
+	FirstEventMs               int64              `json:"first_event_ms"`
+	FirstTextMs                int64              `json:"first_text_ms"`
+	FirstToolUseMs             int64              `json:"first_tool_use_ms"`
+	FirstToolResultMs          int64              `json:"first_tool_result_ms"`
+	TaskMessageTextCount       int64              `json:"task_message_text_count"`
+	TaskMessageThinkingCount   int64              `json:"task_message_thinking_count"`
+	TaskMessageToolUseCount    int64              `json:"task_message_tool_use_count"`
+	TaskMessageToolResultCount int64              `json:"task_message_tool_result_count"`
+	TaskMessageErrorCount      int64              `json:"task_message_error_count"`
+	AssistantTextBytes         int64              `json:"assistant_text_bytes"`
+	ThinkingBytes              int64              `json:"thinking_bytes"`
+	ToolInputBytes             int64              `json:"tool_input_bytes"`
+	ToolResultBytes            int64              `json:"tool_result_bytes"`
+	AgentResultOutputBytes     int64              `json:"agent_result_output_bytes"`
+}
+
+// One paginated row per terminal agent run. Tracing metadata is normalized
+// into typed numeric columns so views do not parse arbitrary metadata JSON.
+func (q *Queries) ListAgentAnalyticsRuns(ctx context.Context, arg ListAgentAnalyticsRunsParams) ([]ListAgentAnalyticsRunsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentAnalyticsRuns,
+		arg.Sort,
+		arg.OffsetCount,
+		arg.LimitCount,
+		arg.WorkspaceID,
+		arg.HasSince,
+		arg.Since,
+		arg.HasBefore,
+		arg.Before,
+		arg.Scope,
+		arg.ScopeID,
+		arg.Source,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentAnalyticsRunsRow{}
+	for rows.Next() {
+		var i ListAgentAnalyticsRunsRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.AgentID,
+			&i.AgentName,
+			&i.Status,
+			&i.SourceType,
+			&i.IssueID,
+			&i.IssueIdentifier,
+			&i.IssueTitle,
+			&i.ChatSessionID,
+			&i.ChatTitle,
+			&i.AutopilotRunID,
+			&i.WorkflowDefinitionID,
+			&i.WorkflowRunID,
+			&i.CreatedAt,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.TotalDurationMs,
+			&i.QueueMs,
+			&i.StartupMs,
+			&i.ExecutionMs,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.ModelUsage,
+			&i.PromptBytes,
+			&i.SystemPromptBytes,
+			&i.ChatMessageBytes,
+			&i.ChatAttachmentCount,
+			&i.AgentInstructionsBytes,
+			&i.AgentSkillCount,
+			&i.AgentSkillBytes,
+			&i.RepoCount,
+			&i.RepositoryCount,
+			&i.ProjectResourceCount,
+			&i.WorkflowSnapshotBytes,
+			&i.WorkflowStepSnapshotBytes,
+			&i.AutopilotDescriptionBytes,
+			&i.AutopilotPayloadBytes,
+			&i.QuickCreatePromptBytes,
+			&i.ExecEnvMs,
+			&i.RuntimeConfigMs,
+			&i.BackendCreateMs,
+			&i.AgentRunMs,
+			&i.DaemonRunMs,
+			&i.FirstEventMs,
+			&i.FirstTextMs,
+			&i.FirstToolUseMs,
+			&i.FirstToolResultMs,
+			&i.TaskMessageTextCount,
+			&i.TaskMessageThinkingCount,
+			&i.TaskMessageToolUseCount,
+			&i.TaskMessageToolResultCount,
+			&i.TaskMessageErrorCount,
+			&i.AssistantTextBytes,
+			&i.ThinkingBytes,
+			&i.ToolInputBytes,
+			&i.ToolResultBytes,
+			&i.AgentResultOutputBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentAnalyticsUsageRows = `-- name: ListAgentAnalyticsUsageRows :many
+SELECT
+    tu.task_id,
+    atq.agent_id,
+    a.name AS agent_name,
+    atq.status,
+    CASE
+      WHEN atq.chat_session_id IS NOT NULL THEN 'chat'
+      WHEN atq.issue_id IS NOT NULL THEN 'issue'
+      ELSE 'task'
+    END::text AS source_type,
+    DATE(tu.created_at) AS date,
+    atq.created_at,
+    atq.dispatched_at,
+    atq.started_at,
+    atq.completed_at,
+    i.id AS issue_id,
+    CASE
+      WHEN i.id IS NOT NULL THEN (ws.issue_prefix || '-' || i.number)::text
+      ELSE ''
+    END::text AS issue_identifier,
+    i.title AS issue_title,
+    cs.id AS chat_session_id,
+    cs.title AS chat_title,
+    tu.provider,
+    tu.model,
+    tu.input_tokens,
+    tu.output_tokens,
+    tu.cache_read_tokens,
+    tu.cache_write_tokens,
+    COALESCE(NULLIF(tu.metadata->>'prompt_bytes', '')::bigint, 0)::bigint AS prompt_bytes,
+    COALESCE(NULLIF(tu.metadata->>'first_text_ms', '')::bigint, 0)::bigint AS first_text_ms,
+    COALESCE(NULLIF(tu.metadata->>'task_message_tool_use_count', '')::bigint, 0)::bigint AS task_message_tool_use_count,
+    COALESCE(NULLIF(tu.metadata->>'tool_result_bytes', '')::bigint, 0)::bigint AS tool_result_bytes
+FROM task_usage tu
+JOIN agent_task_queue atq ON atq.id = tu.task_id
+JOIN agent a ON a.id = atq.agent_id
+JOIN workspace ws ON ws.id = a.workspace_id
+LEFT JOIN issue i ON i.id = atq.issue_id
+LEFT JOIN chat_session cs ON cs.id = atq.chat_session_id
+WHERE a.workspace_id = $1
+  AND atq.status IN ('completed', 'failed', 'cancelled')
+  AND atq.completed_at IS NOT NULL
+  AND (
+    NOT $2::boolean
+    OR tu.created_at >= DATE_TRUNC('day', $3::timestamptz)
+  )
+  AND (
+    NOT $4::boolean
+    OR tu.created_at < DATE_TRUNC('day', $5::timestamptz)
+  )
+  AND (
+    ($6::text = 'project' AND (i.project_id = $7 OR cs.project_id = $7))
+    OR ($6::text = 'chat' AND atq.chat_session_id = $7)
+  )
+  AND (
+    $8::text = 'all'
+    OR ($8::text = 'issues' AND atq.chat_session_id IS NULL AND atq.issue_id IS NOT NULL)
+    OR ($8::text = 'chats' AND atq.chat_session_id IS NOT NULL)
+  )
+ORDER BY tu.created_at DESC, tu.model
+`
+
+type ListAgentAnalyticsUsageRowsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	HasSince    bool               `json:"has_since"`
+	Since       pgtype.Timestamptz `json:"since"`
+	HasBefore   bool               `json:"has_before"`
+	Before      pgtype.Timestamptz `json:"before"`
+	Scope       string             `json:"scope"`
+	ScopeID     pgtype.UUID        `json:"scope_id"`
+	Source      string             `json:"source"`
+}
+
+type ListAgentAnalyticsUsageRowsRow struct {
+	TaskID                  pgtype.UUID        `json:"task_id"`
+	AgentID                 pgtype.UUID        `json:"agent_id"`
+	AgentName               string             `json:"agent_name"`
+	Status                  string             `json:"status"`
+	SourceType              string             `json:"source_type"`
+	Date                    pgtype.Date        `json:"date"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	DispatchedAt            pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	IssueID                 pgtype.UUID        `json:"issue_id"`
+	IssueIdentifier         string             `json:"issue_identifier"`
+	IssueTitle              pgtype.Text        `json:"issue_title"`
+	ChatSessionID           pgtype.UUID        `json:"chat_session_id"`
+	ChatTitle               pgtype.Text        `json:"chat_title"`
+	Provider                string             `json:"provider"`
+	Model                   string             `json:"model"`
+	InputTokens             int64              `json:"input_tokens"`
+	OutputTokens            int64              `json:"output_tokens"`
+	CacheReadTokens         int64              `json:"cache_read_tokens"`
+	CacheWriteTokens        int64              `json:"cache_write_tokens"`
+	PromptBytes             int64              `json:"prompt_bytes"`
+	FirstTextMs             int64              `json:"first_text_ms"`
+	TaskMessageToolUseCount int64              `json:"task_message_tool_use_count"`
+	ToolResultBytes         int64              `json:"tool_result_bytes"`
+}
+
+// Raw per-(task, model) usage rows for Project/Chat Analytics. The handler
+// folds this into summary, daily, agent, and source aggregates so the client
+// can compute cost from the preserved model dimension while the run table
+// itself remains separately paginated.
+func (q *Queries) ListAgentAnalyticsUsageRows(ctx context.Context, arg ListAgentAnalyticsUsageRowsParams) ([]ListAgentAnalyticsUsageRowsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentAnalyticsUsageRows,
+		arg.WorkspaceID,
+		arg.HasSince,
+		arg.Since,
+		arg.HasBefore,
+		arg.Before,
+		arg.Scope,
+		arg.ScopeID,
+		arg.Source,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentAnalyticsUsageRowsRow{}
+	for rows.Next() {
+		var i ListAgentAnalyticsUsageRowsRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.AgentID,
+			&i.AgentName,
+			&i.Status,
+			&i.SourceType,
+			&i.Date,
+			&i.CreatedAt,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.IssueID,
+			&i.IssueIdentifier,
+			&i.IssueTitle,
+			&i.ChatSessionID,
+			&i.ChatTitle,
+			&i.Provider,
+			&i.Model,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.PromptBytes,
+			&i.FirstTextMs,
+			&i.TaskMessageToolUseCount,
+			&i.ToolResultBytes,
 		); err != nil {
 			return nil, err
 		}

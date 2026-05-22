@@ -71,6 +71,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n";
 import { ProjectChatsSurface } from "../../chat/components/chat-pages";
+import { AgentAnalyticsSurface } from "../../agent-analytics";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
@@ -312,7 +313,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [propertiesOpen, setPropertiesOpen] = useState(true);
   const [progressOpen, setProgressOpen] = useState(true);
   const [descriptionOpen, setDescriptionOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<"issues" | "chats">("issues");
+  const [activeTab, setActiveTab] = useState<"issues" | "chats" | "analytics">("issues");
 
   // Sidebar panel
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -608,10 +609,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <ChevronRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
               <span className="truncate">{project.title}</span>
             </div>
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value === "chats" ? "chats" : "issues")}>
+            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value === "chats" || value === "analytics" ? value : "issues")}>
               <TabsList>
                 <TabsTrigger value="issues">{t(($) => $.detail.tabs.issues)}</TabsTrigger>
                 <TabsTrigger value="chats">{t(($) => $.detail.tabs.chats)}</TabsTrigger>
+                <TabsTrigger value="analytics">{t(($) => $.detail.tabs.analytics)}</TabsTrigger>
               </TabsList>
             </Tabs>
             <div className="flex items-center gap-1 shrink-0">
@@ -691,8 +693,13 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 filter={projectFilter}
               />
             </ViewStoreProvider>
-          ) : (
+          ) : activeTab === "chats" ? (
             <ProjectChatsSurface projectId={projectId} />
+          ) : (
+            <AgentAnalyticsSurface
+              scope={{ kind: "project", projectId }}
+              active={activeTab === "analytics"}
+            />
           )}
           </div>
         </ResizablePanel>

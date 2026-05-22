@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   Agent,
+  AgentAnalyticsResponse,
   AgentTemplate,
   AgentTemplateSummary,
   Attachment,
@@ -275,6 +276,254 @@ const DashboardRunTimeDailySchema = z.object({
 }).loose();
 
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
+
+// ---------------------------------------------------------------------------
+// Agent analytics schemas
+//
+// Project/chat analytics is an operational diagnosis surface. Most fields are
+// numeric and feed gauges/tables directly, so missing numbers fall back to 0
+// while arrays default to [].
+// ---------------------------------------------------------------------------
+
+const AgentAnalyticsModelUsageSchema = z.object({
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+}).loose();
+
+const AgentAnalyticsSummarySchema = z.object({
+  task_count: z.number().default(0),
+  completed_count: z.number().default(0),
+  failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  median_completion_ms: z.number().default(0),
+  p95_completion_ms: z.number().default(0),
+  prompt_cache_read_rate: z.number().default(0),
+  prompt_bytes: z.number().default(0),
+  median_first_text_ms: z.number().default(0),
+  tool_use_count: z.number().default(0),
+  tool_result_bytes: z.number().default(0),
+  model_usage: z.array(AgentAnalyticsModelUsageSchema).default([]),
+}).loose();
+
+const AgentAnalyticsWindowSchema = z.object({
+  days: z.number().nullable().optional(),
+  since: z.string().nullable().optional(),
+  before: z.string().nullable().optional(),
+  has_previous: z.boolean().default(false),
+}).loose();
+
+const AgentAnalyticsDailySchema = z.object({
+  date: z.string(),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  task_count: z.number().default(0),
+  completed_count: z.number().default(0),
+  failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
+}).loose();
+
+const AgentAnalyticsAgentSchema = z.object({
+  agent_id: z.string(),
+  agent_name: z.string().default(""),
+  task_count: z.number().default(0),
+  completed_count: z.number().default(0),
+  failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  median_completion_ms: z.number().default(0),
+  model_usage: z.array(AgentAnalyticsModelUsageSchema).default([]),
+}).loose();
+
+const AgentAnalyticsSourceSchema = z.object({
+  source_type: z.string(),
+  source_id: z.string().nullable().optional(),
+  source_title: z.string().nullable().optional(),
+  issue_identifier: z.string().nullable().optional(),
+  task_count: z.number().default(0),
+  completed_count: z.number().default(0),
+  failed_count: z.number().default(0),
+  cancelled_count: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  median_completion_ms: z.number().default(0),
+  model_usage: z.array(AgentAnalyticsModelUsageSchema).default([]),
+}).loose();
+
+const AgentAnalyticsTracingSchema = z.object({
+  prompt_bytes: z.number().default(0),
+  system_prompt_bytes: z.number().default(0),
+  chat_message_bytes: z.number().default(0),
+  chat_attachment_count: z.number().default(0),
+  agent_instructions_bytes: z.number().default(0),
+  agent_skill_count: z.number().default(0),
+  agent_skill_bytes: z.number().default(0),
+  repo_count: z.number().default(0),
+  repository_count: z.number().default(0),
+  project_resource_count: z.number().default(0),
+  workflow_snapshot_bytes: z.number().default(0),
+  workflow_step_snapshot_bytes: z.number().default(0),
+  autopilot_description_bytes: z.number().default(0),
+  autopilot_payload_bytes: z.number().default(0),
+  quick_create_prompt_bytes: z.number().default(0),
+  exec_env_ms: z.number().default(0),
+  runtime_config_ms: z.number().default(0),
+  backend_create_ms: z.number().default(0),
+  agent_run_ms: z.number().default(0),
+  daemon_run_ms: z.number().default(0),
+  first_event_ms: z.number().default(0),
+  first_text_ms: z.number().default(0),
+  first_tool_use_ms: z.number().default(0),
+  first_tool_result_ms: z.number().default(0),
+  task_message_text_count: z.number().default(0),
+  task_message_thinking_count: z.number().default(0),
+  task_message_tool_use_count: z.number().default(0),
+  task_message_tool_result_count: z.number().default(0),
+  task_message_error_count: z.number().default(0),
+  assistant_text_bytes: z.number().default(0),
+  thinking_bytes: z.number().default(0),
+  tool_input_bytes: z.number().default(0),
+  tool_result_bytes: z.number().default(0),
+  agent_result_output_bytes: z.number().default(0),
+}).loose();
+
+const EMPTY_AGENT_ANALYTICS_TRACING = {
+  prompt_bytes: 0,
+  system_prompt_bytes: 0,
+  chat_message_bytes: 0,
+  chat_attachment_count: 0,
+  agent_instructions_bytes: 0,
+  agent_skill_count: 0,
+  agent_skill_bytes: 0,
+  repo_count: 0,
+  repository_count: 0,
+  project_resource_count: 0,
+  workflow_snapshot_bytes: 0,
+  workflow_step_snapshot_bytes: 0,
+  autopilot_description_bytes: 0,
+  autopilot_payload_bytes: 0,
+  quick_create_prompt_bytes: 0,
+  exec_env_ms: 0,
+  runtime_config_ms: 0,
+  backend_create_ms: 0,
+  agent_run_ms: 0,
+  daemon_run_ms: 0,
+  first_event_ms: 0,
+  first_text_ms: 0,
+  first_tool_use_ms: 0,
+  first_tool_result_ms: 0,
+  task_message_text_count: 0,
+  task_message_thinking_count: 0,
+  task_message_tool_use_count: 0,
+  task_message_tool_result_count: 0,
+  task_message_error_count: 0,
+  assistant_text_bytes: 0,
+  thinking_bytes: 0,
+  tool_input_bytes: 0,
+  tool_result_bytes: 0,
+  agent_result_output_bytes: 0,
+};
+
+const AgentAnalyticsRunSchema = z.object({
+  task_id: z.string(),
+  agent_id: z.string(),
+  agent_name: z.string().default(""),
+  status: z.string(),
+  source_type: z.string(),
+  issue_id: z.string().nullable().optional(),
+  issue_identifier: z.string().nullable().optional(),
+  issue_title: z.string().nullable().optional(),
+  chat_session_id: z.string().nullable().optional(),
+  chat_title: z.string().nullable().optional(),
+  autopilot_run_id: z.string().nullable().optional(),
+  workflow_definition_id: z.string().nullable().optional(),
+  workflow_run_id: z.string().nullable().optional(),
+  created_at: z.string().nullable().optional(),
+  dispatched_at: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  completed_at: z.string().nullable().optional(),
+  total_duration_ms: z.number().default(0),
+  queue_ms: z.number().default(0),
+  startup_ms: z.number().default(0),
+  execution_ms: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  total_tokens: z.number().default(0),
+  model_usage: z.array(AgentAnalyticsModelUsageSchema).default([]),
+  tracing: AgentAnalyticsTracingSchema.default(EMPTY_AGENT_ANALYTICS_TRACING),
+}).loose();
+
+const AgentAnalyticsPaginationSchema = z.object({
+  limit: z.number().default(50),
+  offset: z.number().default(0),
+  total: z.number().default(0),
+}).loose();
+
+const EMPTY_AGENT_ANALYTICS_SUMMARY = {
+  task_count: 0,
+  completed_count: 0,
+  failed_count: 0,
+  cancelled_count: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
+  total_tokens: 0,
+  median_completion_ms: 0,
+  p95_completion_ms: 0,
+  prompt_cache_read_rate: 0,
+  prompt_bytes: 0,
+  median_first_text_ms: 0,
+  tool_use_count: 0,
+  tool_result_bytes: 0,
+  model_usage: [],
+};
+
+export const AgentAnalyticsResponseSchema = z.object({
+  window: AgentAnalyticsWindowSchema.default({ has_previous: false }),
+  summary: AgentAnalyticsSummarySchema.default(EMPTY_AGENT_ANALYTICS_SUMMARY),
+  previous_summary: AgentAnalyticsSummarySchema.nullable().optional(),
+  daily: z.array(AgentAnalyticsDailySchema).default([]),
+  agents: z.array(AgentAnalyticsAgentSchema).default([]),
+  sources: z.array(AgentAnalyticsSourceSchema).default([]),
+  runs: z.array(AgentAnalyticsRunSchema).default([]),
+  pagination: AgentAnalyticsPaginationSchema.default({ limit: 50, offset: 0, total: 0 }),
+}).loose();
+
+export const EMPTY_AGENT_ANALYTICS_RESPONSE: AgentAnalyticsResponse = {
+  window: { has_previous: false },
+  summary: EMPTY_AGENT_ANALYTICS_SUMMARY,
+  previous_summary: null,
+  daily: [],
+  agents: [],
+  sources: [],
+  runs: [],
+  pagination: { limit: 50, offset: 0, total: 0 },
+};
 
 // ---------------------------------------------------------------------------
 // Agent template catalog — `/api/agent-templates*` and the

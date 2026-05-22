@@ -59,7 +59,8 @@
     "empty_issues_new_button": "新建 issue",
     "tabs": {
       "issues": "Issues",
-      "chats": "Chats"
+      "chats": "Chats",
+      "analytics": "Analytics"
     },
     "toast_link_copied": "已复制链接",
     "toast_project_deleted": "已删除项目",
