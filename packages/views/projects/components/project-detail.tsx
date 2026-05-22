@@ -36,7 +36,6 @@ import { ListView } from "../../issues/components/list-view";
 import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@multica/ui/components/ui/resizable";
 import { Sheet, SheetContent } from "@multica/ui/components/ui/sheet";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
@@ -59,6 +58,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { EmojiPicker } from "@multica/ui/components/common/emoji-picker";
 import { PageHeader } from "../../layout/page-header";
+import { HeaderTabs } from "../../common/header-tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -601,7 +601,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0" defaultLayout={defaultLayout} onLayoutChanged={onLayoutChanged}>
       <ResizablePanel id="content" minSize="50%">
         <div className="flex h-full flex-col">
-          <PageHeader className="gap-2 bg-background text-sm">
+          <PageHeader className="h-auto min-h-12 flex-wrap gap-2 bg-background py-2 text-sm sm:h-12 sm:flex-nowrap sm:py-0">
             <div className="flex flex-1 items-center gap-1.5 min-w-0">
               <AppLink href={wsPaths.projects()} className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
                 {workspaceName ?? t(($) => $.detail.breadcrumb_fallback)}
@@ -609,13 +609,17 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <ChevronRight className="h-3 w-3 text-muted-foreground/50 shrink-0" />
               <span className="truncate">{project.title}</span>
             </div>
-            <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value === "chats" || value === "analytics" ? value : "issues")}>
-              <TabsList>
-                <TabsTrigger value="issues">{t(($) => $.detail.tabs.issues)}</TabsTrigger>
-                <TabsTrigger value="chats">{t(($) => $.detail.tabs.chats)}</TabsTrigger>
-                <TabsTrigger value="analytics">{t(($) => $.detail.tabs.analytics)}</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <HeaderTabs
+              ariaLabel={t(($) => $.detail.tabs.label)}
+              value={activeTab}
+              className="order-last w-full sm:order-none sm:w-[18rem]"
+              onValueChange={setActiveTab}
+              items={[
+                { value: "issues", label: t(($) => $.detail.tabs.issues) },
+                { value: "chats", label: t(($) => $.detail.tabs.chats) },
+                { value: "analytics", label: t(($) => $.detail.tabs.analytics) },
+              ]}
+            />
             <div className="flex items-center gap-1 shrink-0">
               <Button
                 variant="ghost"

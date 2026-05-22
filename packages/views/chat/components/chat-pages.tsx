@@ -79,9 +79,10 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
+import { Tabs, TabsContent } from "@multica/ui/components/ui/tabs";
 import { AppLink, useNavigation } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
+import { HeaderTabs } from "../../common/header-tabs";
 import { useT } from "../../i18n";
 import { TitleEditor } from "../../editor";
 import { ChatInput } from "./chat-input";
@@ -298,7 +299,7 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <PageHeader className="justify-between gap-3 px-5">
+      <PageHeader className="h-auto min-h-12 flex-wrap justify-between gap-3 px-5 py-2 sm:h-12 sm:flex-nowrap sm:py-0">
         <div className="min-w-0">
           <TitleEditor
             key={session?.id ?? sessionId}
@@ -311,18 +312,18 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
             <p className="truncate text-xs text-muted-foreground">{session.project_snapshot.title}</p>
           )}
         </div>
-        <Tabs value={tab} onValueChange={(value) => navigation.replace(wsPaths.chatSession(sessionId, parseChatTab(value)))}>
-          <TabsList>
-            <TabsTrigger value="chat">{t(($) => $.pages.session.tabs.chat)}</TabsTrigger>
-            <TabsTrigger value="issues">
-              <TabLabel label={t(($) => $.pages.session.tabs.issues)} count={issueCount} />
-            </TabsTrigger>
-            <TabsTrigger value="outputs">
-              <TabLabel label={t(($) => $.pages.session.tabs.outputs)} count={outputCount} />
-            </TabsTrigger>
-            <TabsTrigger value="analytics">{t(($) => $.pages.session.tabs.analytics)}</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <HeaderTabs
+          ariaLabel={t(($) => $.pages.session.tabs.label)}
+          value={tab}
+          className="w-full sm:w-[24rem]"
+          onValueChange={(value) => navigation.replace(wsPaths.chatSession(sessionId, value))}
+          items={[
+            { value: "chat", label: t(($) => $.pages.session.tabs.chat) },
+            { value: "issues", label: t(($) => $.pages.session.tabs.issues), count: issueCount },
+            { value: "outputs", label: t(($) => $.pages.session.tabs.outputs), count: outputCount },
+            { value: "analytics", label: t(($) => $.pages.session.tabs.analytics) },
+          ]}
+        />
       </PageHeader>
       <Tabs value={tab} className="min-h-0 flex-1">
         <TabsContent value="chat" className="flex min-h-0 flex-col">
@@ -664,19 +665,6 @@ function ChatOutputsPanel({ sessionId }: { sessionId: string }) {
         </div>
       )}
     </div>
-  );
-}
-
-function TabLabel({ label, count }: { label: string; count: number }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span>{label}</span>
-      {count > 0 && (
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] leading-none text-muted-foreground">
-          {count}
-        </span>
-      )}
-    </span>
   );
 }
 

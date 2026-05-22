@@ -1,8 +1,8 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { chatKeys } from "../chat/queries";
-import type { ChatDonePayload, ChatMessage, ChatPendingTask } from "../types";
-import { applyChatDoneToCache } from "./use-realtime-sync";
+import type { ChatDonePayload, ChatMessage, ChatPendingTask, ChatSession } from "../types";
+import { applyChatDoneToCache, applyChatSessionUpdatedToCache } from "./use-realtime-sync";
 
 const sessionId = "session-1";
 const taskId = "task-1";
@@ -36,6 +36,26 @@ function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload 
     content: "done",
     elapsed_ms: 1234,
     created_at: "2026-05-13T05:00:02Z",
+    ...overrides,
+  };
+}
+
+function chatSession(overrides: Partial<ChatSession> = {}): ChatSession {
+  return {
+    id: sessionId,
+    workspace_id: "ws-1",
+    agent_id: "agent-1",
+    creator_id: "user-1",
+    title: "Old project title",
+    status: "active",
+    default_repository_id: null,
+    project_id: "project-1",
+    project_context_kind: "project",
+    project_snapshot: null,
+    title_source: "first_message",
+    has_unread: false,
+    created_at: "2026-05-13T05:00:00Z",
+    updated_at: "2026-05-13T05:00:00Z",
     ...overrides,
   };
 }
@@ -113,5 +133,47 @@ describe("applyChatDoneToCache", () => {
       userMessage(),
     ]);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
+  });
+});
+
+describe("applyChatSessionUpdatedToCache", () => {
+  it("patches the single session and every filtered session list", () => {
+    const qc = createQueryClient();
+    const projectListKey = chatKeys.sessions("ws-1", {
+      status: "all",
+      scope: "project",
+      projectId: "project-1",
+    });
+    const looseListKey = chatKeys.sessions("ws-1", {
+      status: "all",
+      scope: "loose",
+    });
+    const other = chatSession({ id: "session-2", title: "Other chat" });
+
+    qc.setQueryData(chatKeys.session("ws-1", sessionId), chatSession());
+    qc.setQueryData(chatKeys.sessions("ws-1"), [chatSession(), other]);
+    qc.setQueryData(projectListKey, [chatSession()]);
+    qc.setQueryData(looseListKey, [other]);
+
+    applyChatSessionUpdatedToCache(qc, "ws-1", {
+      chat_session_id: sessionId,
+      title: "Tank 炮台指向",
+      updated_at: "2026-05-13T05:10:00Z",
+    });
+
+    expect(qc.getQueryData<ChatSession>(chatKeys.session("ws-1", sessionId))).toMatchObject({
+      title: "Tank 炮台指向",
+      updated_at: "2026-05-13T05:10:00Z",
+    });
+    expect(qc.getQueryData<ChatSession[]>(chatKeys.sessions("ws-1"))).toMatchObject([
+      { id: sessionId, title: "Tank 炮台指向" },
+      { id: "session-2", title: "Other chat" },
+    ]);
+    expect(qc.getQueryData<ChatSession[]>(projectListKey)).toMatchObject([
+      { id: sessionId, title: "Tank 炮台指向" },
+    ]);
+    expect(qc.getQueryData<ChatSession[]>(looseListKey)).toMatchObject([
+      { id: "session-2", title: "Other chat" },
+    ]);
   });
 });

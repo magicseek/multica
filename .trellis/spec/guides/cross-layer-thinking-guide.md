@@ -68,6 +68,25 @@ For each boundary:
 
 **Good**: Each layer only knows its neighbors
 
+### Mistake 4: Client-Seeded State Treated As Authoritative
+
+**Bad**: A client creates an entity with a temporary or guessed title, then the
+server refuses to replace it when the authoritative event arrives.
+
+**Good**: Store provenance with generated fields and let the server-owned event
+win exactly once. For chat sessions, `title_source` distinguishes user-renamed
+titles from first-message titles, agent summaries, and legacy seeds.
+
+Checklist:
+
+- [ ] Identify whether a field is a durable user choice or a provisional client seed.
+- [ ] Store provenance for generated fields (`*_source`, owner id, or
+  equivalent) before adding overwrite rules.
+- [ ] Patch every active cache shape that can display the field, including
+  filtered lists and detail queries.
+- [ ] Preserve explicit user edits even when backend summaries or first-message
+  derivation arrive later.
+
 ---
 
 ## Checklist for Cross-Layer Features

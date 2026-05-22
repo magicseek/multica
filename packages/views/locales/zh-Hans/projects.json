@@ -58,6 +58,7 @@
     "empty_issues_hint": "新建一个 issue，或把已有的 issue 关联到这个项目。",
     "empty_issues_new_button": "新建 issue",
     "tabs": {
+      "label": "项目分区",
       "issues": "Issues",
       "chats": "Chats",
       "analytics": "Analytics"

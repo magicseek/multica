@@ -1925,9 +1925,14 @@ UPDATE chat_session
 SET title = $2,
     title_source = 'first_message',
     updated_at = now()
-WHERE id = $1
-  AND btrim(title) = ''
-  AND title_source = 'legacy'
+WHERE chat_session.id = $1
+  AND title_source IN ('legacy', 'first_message')
+  AND (
+      SELECT count(*)
+      FROM chat_message
+      WHERE chat_message.chat_session_id = chat_session.id
+        AND chat_message.role = 'user'
+  ) = 1
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, default_repository_id, project_id, project_context_kind, project_snapshot, title_source
 `
 
@@ -2177,7 +2182,7 @@ func (q *Queries) UpdateChatSessionSession(ctx context.Context, arg UpdateChatSe
 
 const updateChatSessionTitle = `-- name: UpdateChatSessionTitle :one
 UPDATE chat_session SET title = $2, title_source = $3, updated_at = now()
-WHERE id = $1
+WHERE chat_session.id = $1
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, default_repository_id, project_id, project_context_kind, project_snapshot, title_source
 `
 

@@ -7,6 +7,7 @@
 ## Pre-Development Checklist
 
 - Read [Repository Contracts](./repository-contracts.md) before changing repository, binding, project-repository, chat repository, repository-operation, or task-output metadata behavior.
+- Read [Chat Contracts](./chat-contracts.md) before changing chat session creation, messages, title provenance, chat-session websocket events, or project-associated chat behavior.
 - Read [Agent Execution Protocol](./agent-execution-protocol.md) before changing opt-in task-agent execution protocol settings, API payloads, daemon claim data, or prompt injection gates.
 - Read [Daemon Runtime Contracts](./daemon-runtime-contracts.md) before changing daemon registration metadata, local health/bridge endpoints, runtime metadata gates, or native daemon helpers.
 - Read workflow specs under `../workflows/` before changing workflow definitions, revisions, bindings, overrides, or queue-time snapshots.
@@ -16,6 +17,7 @@
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Repository Contracts](./repository-contracts.md) | Contracts for first-class repositories, bindings, project references, chat defaults, daemon repository operations, and task output metadata | Filled |
+| [Chat Contracts](./chat-contracts.md) | Contracts for chat session creation, first-message titles, title provenance, and realtime cache visibility | Filled |
 | [Agent Execution Protocol](./agent-execution-protocol.md) | Contracts for opt-in task-agent execution protocol settings, API payloads, daemon claim data, and prompt injection gates | Filled |
 | [Daemon Runtime Contracts](./daemon-runtime-contracts.md) | Contracts for daemon registration metadata, local bridge endpoints, folder selection, and CLI version gates | Filled |
 

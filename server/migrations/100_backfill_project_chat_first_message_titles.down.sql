@@ -1,0 +1,2 @@
+-- Data repair only. The previous client-seeded Project titles cannot be
+-- reconstructed safely after being replaced by first-message titles.

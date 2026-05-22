@@ -66,6 +66,7 @@ import type {
   ChatIssuesUpdatedPayload,
   ChatMessage,
   ChatPendingTask,
+  ChatSession,
   InvitationCreatedPayload,
 } from "../types";
 
@@ -107,6 +108,38 @@ export function applyChatDoneToCache(
   // that took the fallback branch above.
   qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
   qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+}
+
+interface ChatSessionUpdatedCachePayload {
+  chat_session_id: string;
+  title?: string;
+  updated_at?: string;
+}
+
+export function applyChatSessionUpdatedToCache(
+  qc: QueryClient,
+  wsId: string,
+  payload: ChatSessionUpdatedCachePayload,
+) {
+  const patchSession = <T extends { id: string; title: string; updated_at: string }>(
+    session: T,
+  ): T =>
+    session.id === payload.chat_session_id
+      ? {
+          ...session,
+          title: payload.title ?? session.title,
+          updated_at: payload.updated_at ?? session.updated_at,
+        }
+      : session;
+
+  qc.setQueriesData<ChatSession[] | undefined>(
+    { queryKey: chatKeys.sessions(wsId) },
+    (old) => old?.map(patchSession),
+  );
+  qc.setQueryData<ChatSession | undefined>(
+    chatKeys.session(wsId, payload.chat_session_id),
+    (old) => (old ? patchSession(old) : old),
+  );
 }
 
 /**
@@ -782,19 +815,7 @@ export function useRealtimeSync(
       chatWsLogger.info("chat:session_updated (global)", payload);
       const id = getCurrentWsId();
       if (!id) return;
-      const patch = (
-        old?: { id: string; title: string; updated_at: string }[],
-      ) =>
-        old?.map((s) =>
-          s.id === payload.chat_session_id
-            ? {
-                ...s,
-                title: payload.title ?? s.title,
-                updated_at: payload.updated_at ?? s.updated_at,
-              }
-            : s,
-        );
-      qc.setQueryData(chatKeys.sessions(id), patch);
+      applyChatSessionUpdatedToCache(qc, id, payload);
       invalidateSessionLists();
     });
 

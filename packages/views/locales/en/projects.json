@@ -58,6 +58,7 @@
     "empty_issues_hint": "Create a new issue or assign existing ones to this project.",
     "empty_issues_new_button": "New Issue",
     "tabs": {
+      "label": "Project sections",
       "issues": "Issues",
       "chats": "Chats",
       "analytics": "Analytics"

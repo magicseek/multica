@@ -40,6 +40,27 @@ Questions to answer:
 
 <!-- How styles are applied (CSS modules, styled-components, Tailwind, etc.) -->
 
+### Header Segmented Tabs
+
+Header-level navigation tabs are a visual contract, not just content tabs.
+When a `PageHeader` owns a route or panel switcher, use the shared
+`HeaderTabs` component from `packages/views/common/header-tabs.tsx` instead
+of hand-assembling `TabsList` / `TabsTrigger` controls in the feature file.
+
+Required pattern for Project, Chat, and similar dense app headers:
+
+- Keep tab items equal width with a grid layout so label length and count
+  badges do not shift neighboring tabs.
+- Use one sliding active indicator with `transition-transform`; do not rely
+  only on swapping individual trigger backgrounds.
+- Keep labels truncated inside `min-w-0` tab buttons. Counts may be shown as
+  badges, but they must not participate in width decisions.
+- Give the tablist a localized `aria-label` and keep `role="tab"` /
+  `aria-selected` semantics intact.
+- Allow the header to wrap on narrow widths. The segmented control can become
+  full-width below the desktop breakpoint, but it should not squeeze the
+  title/breadcrumb until text overlaps.
+
 ### Dense Tables and Long Text
 
 When a table contains user- or agent-generated text, column containment is part
@@ -75,6 +96,9 @@ Required pattern for dense shared tables:
 
 <!-- Component-related mistakes your team has made -->
 
+- Reusing generic `TabsList` inside a header creates uneven tab widths and no
+  route-switching motion. Header tabs need a shared segmented-control surface
+  so Project and Chat stay visually consistent.
 - Long labels in auto-layout tables can overlap status badges or metadata
   columns. Treat truncation as a table-level layout decision, not just a text
   utility on the child node.

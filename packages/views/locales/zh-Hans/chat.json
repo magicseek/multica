@@ -146,6 +146,7 @@
         "skipped": "已跳过"
       },
       "tabs": {
+        "label": "对话分区",
         "chat": "Chat",
         "issues": "Issues",
         "outputs": "Outputs",

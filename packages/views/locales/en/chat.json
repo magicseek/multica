@@ -149,6 +149,7 @@
         "skipped": "Skipped"
       },
       "tabs": {
+        "label": "Chat sections",
         "chat": "Chat",
         "issues": "Issues",
         "outputs": "Outputs",

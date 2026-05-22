@@ -319,6 +319,81 @@ func TestSendChatMessage_DoesNotOverwriteUserTitle(t *testing.T) {
 	}
 }
 
+func TestSendChatMessage_CorrectsStaleFirstMessageTitleOnlyOnce(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatCorrectStaleTitleAgent", []byte("[]"))
+
+	req := newRequest("POST", "/api/chat/sessions", map[string]any{
+		"agent_id": agentID,
+		"title":    "Arcade tank game demo requirements and issue breakdown",
+	})
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.CreateChatSession(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateChatSession: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created ChatSessionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, created.ID)
+	})
+
+	firstReq := newRequest("POST", "/api/chat-sessions/"+created.ID+"/messages", map[string]any{
+		"content": "Tank 看上去可以移动，但是如何调整它炮台的指向？",
+	})
+	firstReq = withURLParam(firstReq, "sessionId", created.ID)
+	firstReq = withChatTestWorkspaceCtx(t, firstReq)
+	firstW := httptest.NewRecorder()
+	testHandler.SendChatMessage(firstW, firstReq)
+	if firstW.Code != http.StatusCreated {
+		t.Fatalf("first SendChatMessage: expected 201, got %d: %s", firstW.Code, firstW.Body.String())
+	}
+
+	var title string
+	var titleSource string
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT title, title_source FROM chat_session WHERE id = $1`,
+		created.ID,
+	).Scan(&title, &titleSource); err != nil {
+		t.Fatalf("query chat_session after first message: %v", err)
+	}
+	if title != "Tank 看上去可以移动，但是如何调整它炮台的指向？" {
+		t.Fatalf("title after first message = %q", title)
+	}
+	if titleSource != "first_message" {
+		t.Fatalf("title_source after first message = %q, want first_message", titleSource)
+	}
+
+	secondReq := newRequest("POST", "/api/chat-sessions/"+created.ID+"/messages", map[string]any{
+		"content": "第二轮消息不应该继续改标题",
+	})
+	secondReq = withURLParam(secondReq, "sessionId", created.ID)
+	secondReq = withChatTestWorkspaceCtx(t, secondReq)
+	secondW := httptest.NewRecorder()
+	testHandler.SendChatMessage(secondW, secondReq)
+	if secondW.Code != http.StatusCreated {
+		t.Fatalf("second SendChatMessage: expected 201, got %d: %s", secondW.Code, secondW.Body.String())
+	}
+
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT title, title_source FROM chat_session WHERE id = $1`,
+		created.ID,
+	).Scan(&title, &titleSource); err != nil {
+		t.Fatalf("query chat_session after second message: %v", err)
+	}
+	if title != "Tank 看上去可以移动，但是如何调整它炮台的指向？" {
+		t.Fatalf("title after second message = %q, want first-message title", title)
+	}
+	if titleSource != "first_message" {
+		t.Fatalf("title_source after second message = %q, want first_message", titleSource)
+	}
+}
+
 func TestCreateChatSession_ProjectAssociationCapturesSnapshotAndFilters(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatProjectAgent", []byte("[]"))
 	projectID := createHandlerTestProject(t, "Project Chat Context", "planned")
