@@ -3,6 +3,12 @@ package agent
 import (
 	"context"
 	"testing"
+	"time"
+)
+
+const (
+	fakeAgentProcessTimeout = 20 * time.Second
+	fakeAgentWaitTimeout    = 30 * time.Second
 )
 
 func TestNewReturnsClaudeBackend(t *testing.T) {

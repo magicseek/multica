@@ -245,6 +245,10 @@ func createConnectorActionTask(t *testing.T, agentID, projectID string) string {
 	`, testWorkspaceID, agentID, testUserID, projectID).Scan(&issueID); err != nil {
 		t.Fatalf("insert issue: %v", err)
 	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
 	var taskID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_task_queue (

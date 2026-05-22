@@ -561,9 +561,9 @@ func TestClaudeExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		t.Fatalf("new claude backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fakeAgentWaitTimeout)
 	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: fakeAgentProcessTimeout})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -590,7 +590,7 @@ func TestClaudeExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 		if !strings.Contains(result.Error, "claude stderr:") {
 			t.Fatalf("expected stderr label in error, got %q", result.Error)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(fakeAgentWaitTimeout):
 		t.Fatal("timeout waiting for result")
 	}
 }

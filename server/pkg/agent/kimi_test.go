@@ -65,7 +65,7 @@ func fakeKimiACPScript() string {
 #
 # Writes the full argv (one arg per line) to $KIMI_ARGS_FILE if that env
 # var is set, so tests can assert that the daemon invokes us with the
-# right flags (`+"`--yolo acp`"+`, not bare `+"`acp`"+`).
+# right flags (` + "`--yolo acp`" + `, not bare ` + "`acp`" + `).
 #
 # Then reads one JSON-RPC request per line from stdin, matches on the
 # method name, and writes back a canned response. Exits after set_model
@@ -110,12 +110,12 @@ func TestKimiBackendSetModelFailureFailsTask(t *testing.T) {
 		t.Fatalf("new kimi backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fakeAgentWaitTimeout)
 	defer cancel()
 
 	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
 		Model:   "bogus-model",
-		Timeout: 5 * time.Second,
+		Timeout: fakeAgentProcessTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -143,7 +143,7 @@ func TestKimiBackendSetModelFailureFailsTask(t *testing.T) {
 		if result.SessionID != "ses_fake" {
 			t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(fakeAgentWaitTimeout):
 		t.Fatal("timeout waiting for result")
 	}
 }
@@ -173,14 +173,14 @@ func TestKimiBackendInvokesACPSubcommand(t *testing.T) {
 		t.Fatalf("new kimi backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fakeAgentWaitTimeout)
 	defer cancel()
 
 	// Set Model so the fake binary exits on set_model and we don't
 	// have to wait for the prompt branch. We only care about argv here.
 	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
 		Model:   "bogus-model",
-		Timeout: 5 * time.Second,
+		Timeout: fakeAgentProcessTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)

@@ -246,6 +246,39 @@ WHERE id = (
 )
 RETURNING *;
 
+-- name: ClaimAgentTaskForRuntime :one
+-- Runtime-scoped variant of ClaimAgentTask for daemon polling. It preserves the
+-- same per-agent capacity/serialization semantics but only dispatches queued
+-- work assigned to the polling runtime, so stale queued rows for the same agent
+-- cannot mask a runnable runtime-bound task.
+UPDATE agent_task_queue
+SET status = 'dispatched', dispatched_at = now()
+WHERE id = (
+    SELECT atq.id FROM agent_task_queue atq
+    WHERE atq.agent_id = $1 AND atq.runtime_id = $2 AND atq.status = 'queued'
+      AND NOT EXISTS (
+          SELECT 1 FROM agent_task_queue active
+          WHERE active.agent_id = atq.agent_id
+            AND active.status IN ('dispatched', 'running', 'waiting')
+            AND (
+              (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
+              OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
+              OR (
+                atq.issue_id IS NULL
+                AND atq.chat_session_id IS NULL
+                AND atq.autopilot_run_id IS NULL
+                AND active.issue_id IS NULL
+                AND active.chat_session_id IS NULL
+                AND active.autopilot_run_id IS NULL
+              )
+            )
+      )
+    ORDER BY atq.priority DESC, atq.created_at ASC
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
 -- name: StartAgentTask :one
 UPDATE agent_task_queue
 SET status = 'running', started_at = now()

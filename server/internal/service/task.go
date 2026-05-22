@@ -872,6 +872,10 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 // ClaimTask atomically claims the next queued task for an agent,
 // respecting max_concurrent_tasks.
 func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
+	return s.claimTask(ctx, agentID, pgtype.UUID{})
+}
+
+func (s *TaskService) claimTask(ctx context.Context, agentID pgtype.UUID, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome                                                              = "unknown"
@@ -903,7 +907,15 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	}
 
 	t0 = time.Now()
-	task, err := s.Queries.ClaimAgentTask(ctx, agentID)
+	var task db.AgentTaskQueue
+	if runtimeID.Valid {
+		task, err = s.Queries.ClaimAgentTaskForRuntime(ctx, db.ClaimAgentTaskForRuntimeParams{
+			AgentID:   agentID,
+			RuntimeID: runtimeID,
+		})
+	} else {
+		task, err = s.Queries.ClaimAgentTask(ctx, agentID)
+	}
 	claimAgentMs = time.Since(t0).Milliseconds()
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1008,13 +1020,13 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		triedAgents[agentKey] = struct{}{}
 		tried++
 
-		task, err := s.ClaimTask(ctx, candidate.AgentID)
+		task, err := s.claimTask(ctx, candidate.AgentID, runtimeID)
 		if err != nil {
 			loopMs = time.Since(loopStart).Milliseconds()
 			outcome = "error_claim"
 			return nil, err
 		}
-		if task != nil && task.RuntimeID == runtimeID {
+		if task != nil {
 			claimed = task
 			break
 		}

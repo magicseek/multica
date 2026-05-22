@@ -1146,11 +1146,11 @@ func TestHermesBackendPromotesProviderErrorWithNonEmptyOutput(t *testing.T) {
 		t.Fatalf("new hermes backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fakeAgentWaitTimeout)
 	defer cancel()
 
 	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
-		Timeout: 5 * time.Second,
+		Timeout: fakeAgentProcessTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -1174,7 +1174,7 @@ func TestHermesBackendPromotesProviderErrorWithNonEmptyOutput(t *testing.T) {
 		if result.SessionID != "ses_429" {
 			t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(fakeAgentWaitTimeout):
 		t.Fatal("timeout waiting for result")
 	}
 }
@@ -1228,11 +1228,11 @@ func TestHermesBackendDoesNotPromoteOnTransientRetry(t *testing.T) {
 		t.Fatalf("new hermes backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), fakeAgentWaitTimeout)
 	defer cancel()
 
 	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
-		Timeout: 5 * time.Second,
+		Timeout: fakeAgentProcessTimeout,
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -1253,7 +1253,7 @@ func TestHermesBackendDoesNotPromoteOnTransientRetry(t *testing.T) {
 		if !strings.Contains(result.Output, "Here is the answer") {
 			t.Errorf("expected the successful agent turn to be in output, got %q", result.Output)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(fakeAgentWaitTimeout):
 		t.Fatal("timeout waiting for result")
 	}
 }
