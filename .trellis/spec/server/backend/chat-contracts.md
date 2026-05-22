@@ -14,7 +14,8 @@ contract that decides which actor may overwrite the current value:
   corrected only while the session has exactly one user message, which covers
   stale client seeds created before the authoritative send.
 - `agent_summary`: title produced by a structured chat summary. It may replace
-  generated titles but must not replace a user title.
+  generated titles after the chat has enough conversation history, but must not
+  replace a user title.
 - `user`: explicit rename through the chat session update API. No generated
   title path may overwrite it.
 
@@ -31,9 +32,33 @@ because it is non-empty. The server must derive the first-message title after
   session has exactly one user message.
 - Preserve user-renamed titles by filtering out `title_source = 'user'`.
 - Do not keep retitling the session on later user messages.
+- A structured chat summary must not overwrite a `first_message` title while
+  the session has zero or one user message. Single-message project chats use
+  the user's first request as the stable disambiguator between otherwise
+  similar Project chat sessions.
 - If old Project sessions used the Project title as a client seed, repair them
   only when `title_source = 'first_message'`, the stored title matches the
   project snapshot title, and a first user message exists.
+
+## Project Chat Issue Proposals
+
+Project chat proposal ingestion is server-authoritative. Daemon-scoped
+structured output directories prevent stale manifests, but the server must still
+treat uploaded proposal manifests as untrusted handoff data.
+
+- A fresh proposal manifest may supersede earlier pending proposals only inside
+  the same `chat_session_id`.
+- A Project chat proposal item whose normalized title already exists as a
+  non-cancelled Project issue is a duplicate and must be skipped.
+- A Project chat proposal item whose normalized title already exists as a
+  pending or created proposal item in a sibling Project chat is also a duplicate
+  and must be skipped.
+- If all items in an uploaded proposal are skipped as duplicates, do not create
+  an empty proposal row and do not supersede current same-chat pending
+  proposals.
+- Duplicate detection is a defense in depth for stale daemon binaries and
+  reused local workdirs. Do not remove it solely because the daemon now writes
+  chat-scoped manifests.
 
 ## Realtime Visibility
 
@@ -51,6 +76,10 @@ Clients must patch:
 - [ ] Handler tests cover empty/legacy first-message title creation.
 - [ ] Handler tests cover stale first-message title correction on first send.
 - [ ] Handler tests prove user-renamed titles are not overwritten.
+- [ ] Handler tests prove single-message first-message titles are not
+  overwritten by structured summaries.
+- [ ] Handler tests prove Project chat proposal ingestion skips duplicates from
+  existing Project issues and sibling Project chat proposals.
 - [ ] Realtime cache tests cover filtered sessions lists and single session
   details.
 - [ ] Data repair migrations do not rewrite `title_source = 'user'`.

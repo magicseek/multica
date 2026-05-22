@@ -1437,6 +1437,55 @@ func (q *Queries) ListPendingChatTasksByCreator(ctx context.Context, arg ListPen
 	return items, nil
 }
 
+const listProjectChatProposalDuplicateTitleKeys = `-- name: ListProjectChatProposalDuplicateTitleKeys :many
+SELECT DISTINCT title_key::text
+FROM (
+    SELECT lower(btrim(regexp_replace(issue.title, '[[:space:]]+', ' ', 'g'))) AS title_key
+    FROM issue
+    WHERE issue.workspace_id = $1
+      AND issue.project_id = $2
+      AND issue.status <> 'cancelled'
+    UNION
+    SELECT lower(btrim(regexp_replace(cipi.title, '[[:space:]]+', ' ', 'g'))) AS title_key
+    FROM chat_issue_proposal_item cipi
+    JOIN chat_issue_proposal cip ON cip.id = cipi.proposal_id
+    JOIN chat_session cs ON cs.id = cip.chat_session_id
+    WHERE cip.workspace_id = $1
+      AND cs.project_context_kind = 'project'
+      AND cs.project_id = $2
+      AND cip.chat_session_id <> $3
+      AND cip.status IN ('pending', 'accepted', 'partially_accepted')
+      AND cipi.status IN ('pending', 'created')
+) duplicate_titles
+WHERE title_key <> ''
+`
+
+type ListProjectChatProposalDuplicateTitleKeysParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+}
+
+func (q *Queries) ListProjectChatProposalDuplicateTitleKeys(ctx context.Context, arg ListProjectChatProposalDuplicateTitleKeysParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listProjectChatProposalDuplicateTitleKeys, arg.WorkspaceID, arg.ProjectID, arg.ChatSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var title_key string
+		if err := rows.Scan(&title_key); err != nil {
+			return nil, err
+		}
+		items = append(items, title_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentLooseChatSessionsByCreator = `-- name: ListRecentLooseChatSessionsByCreator :many
 SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.default_repository_id, cs.project_id, cs.project_context_kind, cs.project_snapshot, cs.title_source,
        (cs.unread_since IS NOT NULL)::bool AS has_unread
@@ -1885,8 +1934,17 @@ UPDATE chat_session
 SET title = $2,
     title_source = 'agent_summary',
     updated_at = now()
-WHERE id = $1
+WHERE chat_session.id = $1
   AND title_source <> 'user'
+  AND NOT (
+      title_source = 'first_message'
+      AND (
+          SELECT count(*)
+          FROM chat_message
+          WHERE chat_message.chat_session_id = chat_session.id
+            AND chat_message.role = 'user'
+      ) <= 1
+  )
 RETURNING id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, default_repository_id, project_id, project_context_kind, project_snapshot, title_source
 `
 

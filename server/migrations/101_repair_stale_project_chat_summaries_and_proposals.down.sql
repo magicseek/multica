@@ -1,0 +1,2 @@
+-- Data repair only. Removed stale duplicate proposals and restored
+-- first-message chat titles cannot be reconstructed safely.

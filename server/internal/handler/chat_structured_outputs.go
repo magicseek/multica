@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -148,6 +149,26 @@ func (h *Handler) processIssueProposalsManifest(r *http.Request, task db.AgentTa
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+
+	session, err := qtx.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+		ID:          task.ChatSessionID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		slog.Warn("issue proposals persist failed: load chat session", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	prepared, skippedDuplicateItems, err := h.filterDuplicateProjectChatProposalItems(r, qtx, workspaceUUID, session, prepared)
+	if err != nil {
+		slog.Warn("issue proposals duplicate filter failed", "task_id", uuidToString(task.ID), "error", err)
+		return
+	}
+	if skippedDuplicateItems > 0 {
+		slog.Info("issue proposals duplicate items skipped", "task_id", uuidToString(task.ID), "count", skippedDuplicateItems)
+	}
+	if len(prepared) == 0 {
+		return
+	}
 
 	existingItems, err := qtx.ListChatIssueProposalItemsForTaskForUpdate(r.Context(), db.ListChatIssueProposalItemsForTaskForUpdateParams{
 		ChatSessionID: task.ChatSessionID,
@@ -319,6 +340,57 @@ func (h *Handler) prepareChatIssueProposals(
 		})
 	}
 	return out, nil
+}
+
+func (h *Handler) filterDuplicateProjectChatProposalItems(
+	r *http.Request,
+	qtx *db.Queries,
+	workspaceID pgtype.UUID,
+	session db.ChatSession,
+	proposals []preparedChatIssueProposal,
+) ([]preparedChatIssueProposal, int, error) {
+	if session.ProjectContextKind != "project" || !session.ProjectID.Valid || len(proposals) == 0 {
+		return proposals, 0, nil
+	}
+
+	keys, err := qtx.ListProjectChatProposalDuplicateTitleKeys(r.Context(), db.ListProjectChatProposalDuplicateTitleKeysParams{
+		WorkspaceID:   workspaceID,
+		ProjectID:     session.ProjectID,
+		ChatSessionID: session.ID,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(keys) == 0 {
+		return proposals, 0, nil
+	}
+
+	duplicateTitles := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if key != "" {
+			duplicateTitles[key] = struct{}{}
+		}
+	}
+
+	filtered := make([]preparedChatIssueProposal, 0, len(proposals))
+	skipped := 0
+	for _, proposal := range proposals {
+		items := make([]preparedChatIssueProposalItem, 0, len(proposal.Items))
+		for _, item := range proposal.Items {
+			if _, exists := duplicateTitles[issueguard.NormalizeTitle(item.Title)]; exists {
+				skipped++
+				continue
+			}
+			item.Position = int32(len(items))
+			items = append(items, item)
+		}
+		if len(items) == 0 {
+			continue
+		}
+		proposal.Items = items
+		filtered = append(filtered, proposal)
+	}
+	return filtered, skipped, nil
 }
 
 func (h *Handler) prepareChatIssueProposalItem(

@@ -199,8 +199,17 @@ UPDATE chat_session
 SET title = $2,
     title_source = 'agent_summary',
     updated_at = now()
-WHERE id = $1
+WHERE chat_session.id = $1
   AND title_source <> 'user'
+  AND NOT (
+      title_source = 'first_message'
+      AND (
+          SELECT count(*)
+          FROM chat_message
+          WHERE chat_message.chat_session_id = chat_session.id
+            AND chat_message.role = 'user'
+      ) <= 1
+  )
 RETURNING *;
 
 -- name: UpdateChatSessionFields :one
@@ -408,6 +417,28 @@ WHERE cip.chat_session_id = $1
   AND cip.source_task_id = $2
 ORDER BY cip.created_at ASC, cipi.position ASC, cipi.created_at ASC
 FOR UPDATE OF cip, cipi;
+
+-- name: ListProjectChatProposalDuplicateTitleKeys :many
+SELECT DISTINCT title_key::text
+FROM (
+    SELECT lower(btrim(regexp_replace(issue.title, '[[:space:]]+', ' ', 'g'))) AS title_key
+    FROM issue
+    WHERE issue.workspace_id = $1
+      AND issue.project_id = $2
+      AND issue.status <> 'cancelled'
+    UNION
+    SELECT lower(btrim(regexp_replace(cipi.title, '[[:space:]]+', ' ', 'g'))) AS title_key
+    FROM chat_issue_proposal_item cipi
+    JOIN chat_issue_proposal cip ON cip.id = cipi.proposal_id
+    JOIN chat_session cs ON cs.id = cip.chat_session_id
+    WHERE cip.workspace_id = $1
+      AND cs.project_context_kind = 'project'
+      AND cs.project_id = $2
+      AND cip.chat_session_id <> $3
+      AND cip.status IN ('pending', 'accepted', 'partially_accepted')
+      AND cipi.status IN ('pending', 'created')
+) duplicate_titles
+WHERE title_key <> '';
 
 -- name: CreateChatIssueProposalItem :one
 INSERT INTO chat_issue_proposal_item (

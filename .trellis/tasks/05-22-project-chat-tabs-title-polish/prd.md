@@ -17,6 +17,8 @@ Fix two project-associated chat UX regressions:
 * Chat title generation must be server-authoritative on first user message so a stale client-created title can be corrected.
 * User-renamed chat titles must not be overwritten.
 * Later messages must not keep changing the title after the first user message.
+* Structured chat summaries must not overwrite single-message first-message titles, because that makes multiple Project chats collapse to the same agent-generated title.
+* Project chat issue proposals must be isolated by chat session and filtered against existing Project issues plus sibling Project chat proposals so reused workdir manifests cannot recreate the same issue breakdown in every new chat.
 
 ## Acceptance Criteria
 
@@ -25,6 +27,8 @@ Fix two project-associated chat UX regressions:
 * [x] A project chat session created with a stale title is renamed from the first actual user message on first send.
 * [x] User-renamed titles are preserved.
 * [x] Later messages do not retitle an existing first-message-titled session.
+* [x] Single-message first-message titles are preserved when a structured summary is uploaded.
+* [x] A duplicate Project chat proposal copied from an existing issue or sibling chat is skipped instead of creating another pending proposal.
 * [x] Focused backend tests and frontend typecheck/lint pass.
 
 ## Out of Scope

@@ -208,6 +208,14 @@ completion.
 - If a task agent does not write a fresh handoff file, the server should receive
   no data for that handoff type. It must not infer freshness from file presence
   alone in a reused directory.
+- Daemon filesystem isolation is necessary but not sufficient. The server must
+  still validate uploaded manifests against authoritative state because a
+  running desktop dev build may lag behind source changes and continue using
+  legacy root handoff paths.
+- For Project chat issue proposals, validate proposal item identity at the
+  Project boundary. A current-chat manifest is stale if its normalized item
+  titles already exist as non-cancelled Project issues or as proposal items in
+  sibling Project chats.
 
 ### Checklist: Before Adding Agent-Written Files
 
@@ -219,6 +227,10 @@ completion.
 - [ ] Add a regression that reuses a workdir containing stale handoff files and
   proves stale data is not uploaded.
 - [ ] Verify cleanup preserves durable `.multica/project/*` context.
+- [ ] Add a server-side regression for stale-but-valid manifests reaching the
+  API despite daemon isolation.
+- [ ] When validating a desktop dev build, verify the running daemon
+  `cli_version` and bundled CLI behavior, not only the Go source diff.
 
 ---
 

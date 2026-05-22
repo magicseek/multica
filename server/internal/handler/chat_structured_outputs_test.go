@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 var chatStructuredOutputAgentSeq atomic.Int64
@@ -529,6 +532,200 @@ func TestCompleteTask_ChatStructuredSummaryDoesNotOverwriteUserTitle(t *testing.
 	}
 	if title != "Initial chat title" || titleSource != "user" {
 		t.Fatalf("user title was overwritten: %q/%q", title, titleSource)
+	}
+}
+
+func TestCompleteTask_ChatStructuredSummaryDoesNotOverwriteSingleMessageFirstTitle(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	_, sessionID, taskID := createChatStructuredOutputTestTask(t, "first_message")
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE chat_session SET title = 'Tank turret question' WHERE id = $1
+	`, sessionID); err != nil {
+		t.Fatalf("set first-message title: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'user', 'Tank turret question', $2)
+	`, sessionID, taskID); err != nil {
+		t.Fatalf("insert user message: %v", err)
+	}
+	w := completeChatStructuredOutputTask(t, taskID, map[string]any{
+		"chat_summary": map[string]any{
+			"version": 1,
+			"title":   "Stale project planning summary",
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var title, titleSource string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT title, title_source FROM chat_session WHERE id = $1
+	`, sessionID).Scan(&title, &titleSource); err != nil {
+		t.Fatalf("query chat session title: %v", err)
+	}
+	if title != "Tank turret question" || titleSource != "first_message" {
+		t.Fatalf("single-message first title was overwritten: %q/%q", title, titleSource)
+	}
+}
+
+func TestCompleteTask_ProjectChatIssueProposalsSkipExistingProjectIssues(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ProjectDuplicateProposalAgent", []byte("[]"))
+	projectID := createHandlerTestProject(t, "Project duplicate proposals", "planned")
+	sessionID := createProjectChatSessionRow(t, agentID, projectID, "Question about controls", "fresh")
+	if _, err := testPool.Exec(ctx, `
+		UPDATE chat_session
+		SET title_source = 'first_message',
+		    project_context_kind = 'project'
+		WHERE id = $1
+	`, sessionID); err != nil {
+		t.Fatalf("set project chat title source: %v", err)
+	}
+	taskID := createChatStructuredOutputTestTaskForSession(t, agentID, sessionID)
+
+	issueNumber, err := testHandler.Queries.IncrementIssueCounter(ctx, parseUUID(testWorkspaceID))
+	if err != nil {
+		t.Fatalf("increment issue counter: %v", err)
+	}
+	issue, err := testHandler.Queries.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		Title:         "Bootstrap the playable arena shell",
+		Description:   pgtype.Text{String: "Already approved work", Valid: true},
+		Status:        "done",
+		Priority:      "high",
+		AssigneeType:  pgtype.Text{},
+		AssigneeID:    pgtype.UUID{},
+		CreatorType:   "member",
+		CreatorID:     parseUUID(testUserID),
+		ParentIssueID: pgtype.UUID{},
+		Position:      0,
+		DueDate:       pgtype.Timestamptz{},
+		Number:        issueNumber,
+		ProjectID:     parseUUID(projectID),
+		OriginType:    pgtype.Text{String: "chat_session", Valid: true},
+		OriginID:      parseUUID(sessionID),
+	})
+	if err != nil {
+		t.Fatalf("insert existing project issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	w := completeChatStructuredOutputTask(t, taskID, map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "Stale demo delivery",
+					"items": []map[string]any{
+						{
+							"title":       "Bootstrap the playable arena shell",
+							"description": "This duplicate came from a stale legacy manifest.",
+							"priority":    "high",
+						},
+					},
+				},
+			},
+		},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var proposalCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM chat_issue_proposal WHERE chat_session_id = $1
+	`, sessionID).Scan(&proposalCount); err != nil {
+		t.Fatalf("count proposals: %v", err)
+	}
+	if proposalCount != 0 {
+		t.Fatalf("proposal count = %d, want duplicate proposal skipped", proposalCount)
+	}
+}
+
+func TestCompleteTask_ProjectChatIssueProposalsSkipSiblingProjectProposalItems(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "ProjectSiblingDuplicateProposalAgent", []byte("[]"))
+	projectID := createHandlerTestProject(t, "Project sibling duplicate proposals", "planned")
+	firstSessionID := createProjectChatSessionRow(t, agentID, projectID, "Initial tank demo plan", "fresh")
+	secondSessionID := createProjectChatSessionRow(t, agentID, projectID, "Only adjust turret controls", "fresh")
+	firstTaskID := createChatStructuredOutputTestTaskForSession(t, agentID, firstSessionID)
+	secondTaskID := createChatStructuredOutputTestTaskForSession(t, agentID, secondSessionID)
+
+	firstPayload := map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "Initial demo delivery",
+					"items": []map[string]any{
+						{
+							"title":       "Bootstrap the playable arena shell",
+							"description": "Original first-chat proposal item.",
+							"priority":    "high",
+						},
+					},
+				},
+			},
+		},
+	}
+	w := completeChatStructuredOutputTask(t, firstTaskID, firstPayload)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask first: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	secondPayload := map[string]any{
+		"issue_proposals": map[string]any{
+			"version": 1,
+			"proposals": []map[string]any{
+				{
+					"title": "Stale copied demo delivery",
+					"items": []map[string]any{
+						{
+							"title":       "Bootstrap the playable arena shell",
+							"description": "This duplicate came from a stale sibling chat manifest.",
+							"priority":    "high",
+						},
+					},
+				},
+			},
+		},
+	}
+	w = completeChatStructuredOutputTask(t, secondTaskID, secondPayload)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask second: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var firstProposalCount, secondProposalCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM chat_issue_proposal WHERE chat_session_id = $1
+	`, firstSessionID).Scan(&firstProposalCount); err != nil {
+		t.Fatalf("count first proposals: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM chat_issue_proposal WHERE chat_session_id = $1
+	`, secondSessionID).Scan(&secondProposalCount); err != nil {
+		t.Fatalf("count second proposals: %v", err)
+	}
+	if firstProposalCount != 1 {
+		t.Fatalf("first proposal count = %d, want original proposal preserved", firstProposalCount)
+	}
+	if secondProposalCount != 0 {
+		t.Fatalf("second proposal count = %d, want sibling duplicate skipped", secondProposalCount)
 	}
 }
 

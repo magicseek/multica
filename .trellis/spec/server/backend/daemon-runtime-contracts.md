@@ -71,6 +71,14 @@ Quick-create CLI version gate:
 - Structured output manifest cleanup must not remove durable project context such as `.multica/project/resources.json` or other `.multica/project/*` files.
 - A task that does not write a fresh structured output manifest must complete with no structured outputs, rather than re-uploading a previous chat or task's proposals.
 - When a same-chat task writes a new valid issue proposal manifest, pending proposals from earlier tasks in the same `chat_session_id` may be marked `superseded` and their pending items marked `skipped`. Superseding must never cross chat sessions and must not alter proposals/items that a user already accepted, partially accepted, dismissed, created, or skipped.
+- The server must defend against stale desktop bundled CLI/daemon binaries that
+  still upload legacy root manifests. Project chat proposal ingestion must skip
+  item titles that already exist as non-cancelled Project issues or as pending
+  / created proposal items in sibling Project chats.
+- After changing daemon structured-output paths or cleanup behavior, rebuild
+  the desktop bundled CLI and restart the daemon used by the dev build. Verify
+  `daemon status --output json` reports the expected `cli_version`, and inspect
+  the bundled binary or runtime logs for the new structured-output contract.
 
 ### 4. Validation & Error Matrix
 
@@ -99,6 +107,12 @@ Quick-create CLI version gate:
 - Bad: a reused local workdir still contains `.multica/issue-proposals.json` from a prior chat and the daemon uploads it as the current chat's proposal set.
 - Bad: chat A and chat B share one local repository binding and chat A's pre-run cleanup deletes chat B's `.multica/chats/<chat_b>/issue-proposals.json`.
 - Bad: a new chat task in chat A supersedes pending proposals in chat B because both sessions share one source workdir.
+- Bad: the code changes the daemon to read `.multica/chats/<chat_session_id>/`,
+  but the running desktop dev build still uses an older bundled CLI that uploads
+  `.multica/issue-proposals.json`.
+- Bad: the server accepts a Project chat proposal item that duplicates an
+  already accepted issue from another chat because the daemon path was assumed
+  to be sufficient validation.
 
 ### 6. Tests Required
 
@@ -119,6 +133,11 @@ Quick-create CLI version gate:
 - Daemon structured output tests verify legacy non-chat stale task manifests are removed before reuse while `.multica/project/*` context is preserved.
 - Daemon structured output tests verify chat-scoped loading ignores legacy `.multica/issue-proposals.json` and sibling chat manifests, and chat-scoped cleanup removes only files inside the current `MULTICA_STRUCTURED_OUTPUT_DIR`.
 - Handler tests verify same-chat fresh proposal manifests supersede only earlier pending proposals in the same chat and preserve user-acted proposals/items.
+- Handler tests verify Project chat proposal manifests skip duplicates from
+  existing Project issues and sibling Project chat proposals, even if a stale
+  daemon uploads a valid-looking manifest for the current task.
+- Manual dev-build validation verifies the running daemon binary version after
+  daemon path changes, not just the source tree diff.
 
 ### 7. Wrong vs Correct
 
