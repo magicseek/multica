@@ -33,6 +33,18 @@ The first resource type ships ready to use:
 
 `default_branch_hint` is optional — if present, the daemon surfaces it in the meta-skill so the agent knows which branch to base its work on.
 
+## Optional connector-backed resources
+
+Private connector profiles can register additional project resource types. For example, the RingCentral connector profile adds:
+
+- `ringcentral_gitlab_repo`
+- `ringcentral_jira_project`
+- `ringcentral_jira_issue`
+- `ringcentral_wiki_space`
+- `ringcentral_wiki_page`
+
+These resources are scope pointers only. They do not contain user tokens. Agents use task-scoped `multica connector ...` commands, and the server authorizes each call against the task, delegated user, provider policy, and attached project resource. See [RingCentral connectors](/ringcentral-connectors) for setup and command details.
+
 ## Attaching repos at project creation
 
 In the **Web** or **Desktop** app, opening *New project* now shows a **Repos** pill alongside Status / Priority / Lead. Selecting workspace-bound repos (or pasting an ad-hoc URL) attaches them as `github_repo` resources the moment the project is created.

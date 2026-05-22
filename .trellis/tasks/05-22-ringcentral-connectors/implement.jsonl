@@ -70,3 +70,8 @@
 {"file":"packages/core/api/client.ts","reason":"Added connector credential API methods for settings UI configuration flows."}
 {"file":"packages/views/settings/components/integrations-tab.tsx","reason":"RingCentral provider cards now expose per-user token save/remove controls for configured providers."}
 {"file":"apps/docs/content/docs/environment-variables.mdx","reason":"Documented explicit connector profile and RingCentral endpoint/encryption environment variables."}
+{"file":"server/internal/connectors/client.go","reason":"Implemented the provider adapter boundary for server-mediated RingCentral GitLab, Jira, and Wiki clients."}
+{"file":"server/internal/handler/connector_actions.go","reason":"Implemented task-scoped connector action authorization and dispatch across provider/resource/credential/policy checks."}
+{"file":"server/cmd/multica/cmd_connector.go","reason":"Implemented CLI-first agent connector commands that rely on daemon workspace/agent/task identity."}
+{"file":"apps/docs/content/docs/ringcentral-connectors.mdx","reason":"Documented profile enablement, credentials, resources, command surface, and authorization model."}
+{"file":".trellis/spec/server/backend/connector-contracts.md","reason":"Captured reusable connector contracts for future optional external providers."}

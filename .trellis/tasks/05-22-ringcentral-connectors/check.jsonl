@@ -48,3 +48,6 @@
 {"file":"verification:server go test ./... -run '^$'","reason":"Passed compile-only backend verification across all Go packages."}
 {"file":"verification:connector focused tests","reason":"Passed connector provider, credential lifecycle, delegated-user, chat, and autopilot focused handler tests."}
 {"file":"verification:git diff --check","reason":"Passed whitespace conflict check."}
+{"file":"verification:pnpm typecheck","reason":"Passed after adding RingCentral connector docs and connector contract spec."}
+{"file":"verification:connector focused tests","reason":"Passed provider adapter, task-scoped action, CLI identity, project resource, credential lifecycle, and runtime resource focused tests before committing 6093b3e1."}
+{"file":"verification:cmd server compile","reason":"Passed cd server && go test ./cmd/server -run '^$' after connector routes were wired into the router."}

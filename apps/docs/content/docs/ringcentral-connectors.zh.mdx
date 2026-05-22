@@ -1,0 +1,143 @@
+---
+title: RingCentral 连接器
+description: 为私有部署启用 RingCentral GitLab、Jira、Wiki，让 agent 在任务范围内访问外部资源。
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+RingCentral 连接器是私有部署功能。默认 Multica 部署不会显示这些入口，只有 API server 以 `ringcentral` connector profile 启动后才会注册 provider。
+
+该 profile 注册三个可选 provider：
+
+| Provider | Project Resources | 能力 |
+|---|---|---|
+| RingCentral GitLab | `ringcentral_gitlab_repo` | 验证 token、列出 branch/MR、创建语义任务分支、通过 GitLab API 提交 file actions、创建 MR |
+| RingCentral Jira | `ringcentral_jira_project`, `ringcentral_jira_issue` | 验证 token、列出 project、搜索/读取 issue |
+| RingCentral Wiki | `ringcentral_wiki_space`, `ringcentral_wiki_page` | 验证 token、搜索/读取 space 和 page |
+
+<Callout type="warning">
+连接器凭证始终属于用户本人。Multica 只保存服务端加密后的密文，不返回原始 token，也不会把 RingCentral PAT 注入 agent 环境变量、任务 prompt、本地 git 配置或 `.multica/project/resources.json`。
+</Callout>
+
+## 启用 profile
+
+在 API server 上设置 connector profile 和所有部署级 endpoint：
+
+```dotenv
+MULTICA_CONNECTOR_PROFILES=ringcentral
+CONNECTOR_CREDENTIAL_ENCRYPTION_KEY=<32-byte base64/hex/raw key>
+RINGCENTRAL_GITLAB_API_BASE_URL=https://git.example.com/api/v4
+RINGCENTRAL_GITLAB_WEB_BASE_URL=https://git.example.com
+RINGCENTRAL_JIRA_BASE_URL=https://jira.example.com
+RINGCENTRAL_WIKI_BASE_URL=https://wiki.example.com
+```
+
+设置后重启 API。`CONNECTOR_CREDENTIAL_ENCRYPTION_KEY` 缺失或不是 32 字节时，服务端会 fail closed，不会暴露凭证存储能力。
+
+`MULTICA_CONNECTOR_PROFILES` 未包含 `ringcentral` 时，RingCentral provider registry 为空，Settings 不显示 RingCentral 区块，RingCentral project resource 类型会被拒绝，agent runtime guidance 也不会提到 RingCentral connector 命令。
+
+## 配置 Settings
+
+打开 **Settings -> Integrations**。
+
+Workspace owner/admin 可以：
+
+- 启用或禁用 workspace 内的各个 RingCentral provider。
+- 设置 RingCentral GitLab 的 remote write policy。GitLab 写操作需要 `merge_request_preparation`；写操作关闭时，读命令仍可使用。
+
+每个成员只能配置自己的凭证：
+
+- 在 provider card 中粘贴 token。
+- Multica 会先向上游服务验证，再保存。
+- 验证成功后，card 显示上游身份和验证时间。
+- 验证失败时，token 会被拒绝，不会存储。
+
+## 绑定项目资源
+
+RingCentral connector 命令由 Project Resource 限定范围。资源绑定在项目资源界面完成，不在 Settings 里完成。
+
+常用资源 payload：
+
+```json
+{
+  "resource_type": "ringcentral_gitlab_repo",
+  "resource_ref": {
+    "project_id": "group/repo",
+    "default_branch": "main"
+  }
+}
+```
+
+```json
+{
+  "resource_type": "ringcentral_jira_project",
+  "resource_ref": {
+    "project_key": "ABC"
+  }
+}
+```
+
+```json
+{
+  "resource_type": "ringcentral_wiki_space",
+  "resource_ref": {
+    "space_key": "ENG"
+  }
+}
+```
+
+固定的 Jira issue 和 Wiki page 资源分别使用 `issue_key` 和 `page_id`。
+
+## Agent 命令
+
+Agent 在 daemon 管理的任务里使用 `multica connector ...`。这些命令调用 Multica API，由服务端校验任务范围，再使用 delegated user 的加密凭证调用上游 provider。
+
+CLI 需要 daemon 提供 `MULTICA_WORKSPACE_ID`、`MULTICA_AGENT_ID`、`MULTICA_TASK_ID`。在普通人工终端里直接调用会被拒绝。
+
+GitLab：
+
+```bash
+multica connector gitlab branches <project-resource-id> --search release
+multica connector gitlab merge-requests <project-resource-id> --state opened
+multica connector gitlab create-branch <project-resource-id> --branch feat/ABC-123-work --ref main
+multica connector gitlab commit <project-resource-id> \
+  --branch feat/ABC-123-work \
+  --message "Update workflow docs" \
+  --actions-json '[{"action":"update","file_path":"README.md","content":"..."}]'
+multica connector gitlab create-mr <project-resource-id> \
+  --source-branch feat/ABC-123-work \
+  --target-branch main \
+  --title "Update workflow docs"
+```
+
+Jira：
+
+```bash
+multica connector jira search <project-resource-id> --jql 'status = "In Progress"'
+multica connector jira issue <project-resource-id> ABC-123
+```
+
+Wiki：
+
+```bash
+multica connector wiki search <project-resource-id> --cql 'title ~ "runbook"'
+multica connector wiki page <project-resource-id> 123456
+```
+
+GitLab 写操作只允许 attached repo、非 default/非 protected branch，以及这些语义任务分支前缀：`feat/`、`fix/`、`refactor/`、`docs/`、`test/`、`chore/`、`perf/`。
+
+Jira 和 Wiki 在 MVP 中只读。评论、状态变更、page 编辑等外部写操作暂不开放。
+
+## 授权模型
+
+每个 connector 命令都必须通过这些检查：
+
+- Provider 已由 RingCentral profile 注册，并在 workspace 中启用。
+- Daemon 请求带有 `X-Agent-ID` 和 `X-Task-ID`。
+- Task 属于该 agent，并处于 active 状态。
+- Task 在排队时已经捕获 connector delegated user。
+- 请求的 Project Resource 属于该 task 的 project，并且类型匹配 provider。
+- Delegated user 拥有该 provider 的有效凭证。
+- 请求的 capability 已启用，并且符合 workspace policy。
+
+如果上游返回认证失败，Multica 会把 delegated user 的凭证标记为 invalid，让后续任务看到可恢复的重新配置问题，而不是反复静默重试坏 token。
