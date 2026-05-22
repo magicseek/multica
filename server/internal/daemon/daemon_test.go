@@ -890,6 +890,28 @@ func (b *fakeBackend) Execute(_ context.Context, _ string, opts agent.ExecOption
 	return &agent.Session{Messages: msgCh, Result: resCh}, nil
 }
 
+type observableBackend struct{}
+
+func (observableBackend) Execute(_ context.Context, _ string, _ agent.ExecOptions) (*agent.Session, error) {
+	msgCh := make(chan agent.Message)
+	resCh := make(chan agent.Result, 1)
+	go func() {
+		msgCh <- agent.Message{Type: agent.MessageStatus, SessionID: "sess-observed"}
+		msgCh <- agent.Message{Type: agent.MessageThinking, Content: "thinking"}
+		msgCh <- agent.Message{Type: agent.MessageText, Content: "hello"}
+		msgCh <- agent.Message{Type: agent.MessageToolUse, Tool: "exec_command", CallID: "call-1", Input: map[string]any{"cmd": "pwd"}}
+		msgCh <- agent.Message{Type: agent.MessageToolResult, CallID: "call-1", Output: "workspace"}
+		close(msgCh)
+		time.Sleep(20 * time.Millisecond)
+		resCh <- agent.Result{
+			Status:      "completed",
+			Output:      "done",
+			Diagnostics: map[string]any{"usage_source": "event"},
+		}
+	}()
+	return &agent.Session{Messages: msgCh, Result: resCh}, nil
+}
+
 func newTestDaemon(t *testing.T) *Daemon {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1092,6 +1114,54 @@ func TestExecuteAndDrain_CodexInactivityReportsToolResultTranscript(t *testing.T
 			t.Fatalf("expected tool_use seq=1 and tool_result seq=2 in transcript, got %+v", reported)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestExecuteAndDrain_RecordsObservabilityDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	d := newTestDaemon(t)
+
+	result, tools, err := d.executeAndDrain(context.Background(), observableBackend{}, "prompt", agent.ExecOptions{}, slog.Default(), "task-observe")
+	if err != nil {
+		t.Fatalf("executeAndDrain: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("status = %q, want completed", result.Status)
+	}
+	if tools != 1 {
+		t.Fatalf("tools = %d, want 1", tools)
+	}
+	if result.Diagnostics["usage_source"] != "event" {
+		t.Fatalf("provider diagnostics were not preserved: %+v", result.Diagnostics)
+	}
+	assertPositiveDiagnostic(t, result.Diagnostics, diagFirstEventMs)
+	assertPositiveDiagnostic(t, result.Diagnostics, diagFirstTextMs)
+	assertPositiveDiagnostic(t, result.Diagnostics, diagFirstToolUseMs)
+	assertPositiveDiagnostic(t, result.Diagnostics, diagFirstToolResultMs)
+	assertDiagnostic(t, result.Diagnostics, diagTaskMessageThinkingCount, 1)
+	assertDiagnostic(t, result.Diagnostics, diagTaskMessageTextCount, 1)
+	assertDiagnostic(t, result.Diagnostics, diagTaskMessageToolUseCount, 1)
+	assertDiagnostic(t, result.Diagnostics, diagTaskMessageToolResultCount, 1)
+	assertDiagnostic(t, result.Diagnostics, diagAssistantTextBytes, int64(len("hello")))
+	assertDiagnostic(t, result.Diagnostics, diagThinkingBytes, int64(len("thinking")))
+	assertDiagnostic(t, result.Diagnostics, diagToolResultBytes, int64(len("workspace")))
+	if got := int64FromDiagnostic(result.Diagnostics, diagToolInputBytes); got <= 0 {
+		t.Fatalf("%s = %d, want positive (diagnostics=%+v)", diagToolInputBytes, got, result.Diagnostics)
+	}
+}
+
+func assertDiagnostic(t *testing.T, diag map[string]any, key string, want int64) {
+	t.Helper()
+	if got := int64FromDiagnostic(diag, key); got != want {
+		t.Fatalf("%s = %d, want %d (diagnostics=%+v)", key, got, want, diag)
+	}
+}
+
+func assertPositiveDiagnostic(t *testing.T, diag map[string]any, key string) {
+	t.Helper()
+	if got := int64FromDiagnostic(diag, key); got <= 0 {
+		t.Fatalf("%s = %d, want positive (diagnostics=%+v)", key, got, diag)
 	}
 }
 

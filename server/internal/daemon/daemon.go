@@ -2147,6 +2147,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.WorkspaceID == "" {
 		return TaskResult{}, fmt.Errorf("refusing to spawn agent: task has no workspace_id (task_id=%s)", task.ID)
 	}
+	daemonRunStart := time.Now()
 
 	// task.Repos is the authoritative repo list for this task — when the
 	// claimed task belongs to a project with github_repo resources the server
@@ -2225,6 +2226,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.
+	execEnvStart := time.Now()
 	var env *execenv.Environment
 	codexVersion := d.agentVersion("codex")
 	openclawBin := ""
@@ -2284,12 +2286,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
+	execEnvMs := time.Since(execEnvStart).Milliseconds()
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
+	runtimeConfigStart := time.Now()
 	runtimeBrief := execenv.BuildRuntimeBrief(provider, taskCtx)
 	if err := execenv.WriteRuntimeConfig(env.WorkDir, provider, runtimeBrief.Full); err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
+	runtimeConfigMs := time.Since(runtimeConfigStart).Milliseconds()
 	// NOTE: No cleanup — workdir is preserved for reuse by future tasks on
 	// the same (agent, issue) pair. The work_dir path is stored in DB on
 	// task completion and passed back via PriorWorkDir on the next claim.
@@ -2297,6 +2302,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	prompt := BuildPrompt(task, provider)
 	systemPrompt := runtimeSystemPrompt(provider, taskCtx)
 	usageMetadata := newTaskUsageMetadata(prompt, systemPrompt, runtimeBrief)
+	usageMetadata.recordContextProfile(task, taskCtx)
+	usageMetadata.ExecEnvMs = execEnvMs
+	usageMetadata.RuntimeConfigMs = runtimeConfigMs
 
 	// Pass the daemon's auth credentials and context so the spawned agent CLI
 	// can call the Multica API and the local daemon (e.g. `multica repo checkout`).
@@ -2398,6 +2406,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			runtimeEnvFile = runtimeEnvPath
 		}
 	}
+	backendCreateStart := time.Now()
 	backend, err := agent.New(provider, agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
@@ -2406,6 +2415,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}
+	usageMetadata.BackendCreateMs = time.Since(backendCreateStart).Milliseconds()
 
 	reused := task.PriorWorkDir != "" && env.WorkDir == task.PriorWorkDir
 	reusedEnvRoot := task.PriorWorkDir != "" && env.RootDir != predictedRoot
@@ -2520,8 +2530,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	usageMetadata.SessionID = result.SessionID
 	usageMetadata.ResumeFallback = resumeFallback
 	usageMetadata.ResumeHit = usageMetadata.ResumeAttempted && !resumeFallback && result.SessionID != "" && result.SessionID == task.PriorSessionID
+	usageMetadata.AgentRunMs = time.Since(taskStart).Milliseconds()
+	usageMetadata.DaemonRunMs = time.Since(daemonRunStart).Milliseconds()
+	usageMetadata.AgentResultOutputBytes = len([]byte(result.Output))
 	if len(result.Diagnostics) > 0 {
 		usageMetadata.AgentDiagnostics = result.Diagnostics
+		usageMetadata.recordAgentDiagnostics(result.Diagnostics)
 		if v, ok := result.Diagnostics["runner_reused"].(bool); ok {
 			usageMetadata.CodexRunnerReused = v
 		}
@@ -2677,9 +2691,124 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 }
 
+// agentDrainMetrics records low-overhead observations from the daemon-side
+// stream reader. It never feeds back into prompt construction or runtime
+// control, so it cannot affect agent behavior.
+type agentDrainMetrics struct {
+	startedAt         time.Time
+	firstEventMs      atomic.Int64
+	firstTextMs       atomic.Int64
+	firstToolUseMs    atomic.Int64
+	firstToolResultMs atomic.Int64
+	textCount         atomic.Int64
+	thinkingCount     atomic.Int64
+	toolUseCount      atomic.Int64
+	toolResultCount   atomic.Int64
+	errorCount        atomic.Int64
+	textBytes         atomic.Int64
+	thinkingBytes     atomic.Int64
+	toolInputBytes    atomic.Int64
+	toolResultBytes   atomic.Int64
+}
+
+func newAgentDrainMetrics(startedAt time.Time) *agentDrainMetrics {
+	return &agentDrainMetrics{startedAt: startedAt}
+}
+
+func (m *agentDrainMetrics) markFirst(target *atomic.Int64) {
+	elapsedMs := time.Since(m.startedAt).Milliseconds()
+	if elapsedMs <= 0 {
+		elapsedMs = 1
+	}
+	target.CompareAndSwap(0, elapsedMs)
+}
+
+func (m *agentDrainMetrics) markEvent() {
+	m.markFirst(&m.firstEventMs)
+}
+
+func (m *agentDrainMetrics) recordText(content string) {
+	m.markEvent()
+	m.markFirst(&m.firstTextMs)
+	m.textCount.Add(1)
+	m.textBytes.Add(int64(len([]byte(content))))
+}
+
+func (m *agentDrainMetrics) recordThinking(content string) {
+	m.markEvent()
+	m.thinkingCount.Add(1)
+	m.thinkingBytes.Add(int64(len([]byte(content))))
+}
+
+func (m *agentDrainMetrics) recordToolUse(input map[string]any) {
+	m.markEvent()
+	m.markFirst(&m.firstToolUseMs)
+	m.toolUseCount.Add(1)
+	if input != nil {
+		if data, err := json.Marshal(input); err == nil {
+			m.toolInputBytes.Add(int64(len(data)))
+		}
+	}
+}
+
+func (m *agentDrainMetrics) recordToolResult(output string) {
+	m.markEvent()
+	m.markFirst(&m.firstToolResultMs)
+	m.toolResultCount.Add(1)
+	m.toolResultBytes.Add(int64(len([]byte(output))))
+}
+
+func (m *agentDrainMetrics) recordError(content string) {
+	m.markEvent()
+	m.errorCount.Add(1)
+}
+
+func (m *agentDrainMetrics) diagnostics() map[string]any {
+	diag := map[string]any{}
+	addInt64 := func(key string, value int64) {
+		if value > 0 {
+			diag[key] = value
+		}
+	}
+	addInt64(diagFirstEventMs, m.firstEventMs.Load())
+	addInt64(diagFirstTextMs, m.firstTextMs.Load())
+	addInt64(diagFirstToolUseMs, m.firstToolUseMs.Load())
+	addInt64(diagFirstToolResultMs, m.firstToolResultMs.Load())
+	addInt64(diagTaskMessageTextCount, m.textCount.Load())
+	addInt64(diagTaskMessageThinkingCount, m.thinkingCount.Load())
+	addInt64(diagTaskMessageToolUseCount, m.toolUseCount.Load())
+	addInt64(diagTaskMessageToolResultCount, m.toolResultCount.Load())
+	addInt64(diagTaskMessageErrorCount, m.errorCount.Load())
+	addInt64(diagAssistantTextBytes, m.textBytes.Load())
+	addInt64(diagThinkingBytes, m.thinkingBytes.Load())
+	addInt64(diagToolInputBytes, m.toolInputBytes.Load())
+	addInt64(diagToolResultBytes, m.toolResultBytes.Load())
+	return diag
+}
+
+func withDrainDiagnostics(result agent.Result, diagnostics map[string]any) agent.Result {
+	if len(diagnostics) == 0 {
+		return result
+	}
+	if result.Diagnostics == nil {
+		result.Diagnostics = diagnostics
+		return result
+	}
+	merged := make(map[string]any, len(result.Diagnostics)+len(diagnostics))
+	for k, v := range result.Diagnostics {
+		merged[k] = v
+	}
+	for k, v := range diagnostics {
+		merged[k] = v
+	}
+	result.Diagnostics = merged
+	return result
+}
+
 // executeAndDrain runs a backend, drains its message stream (forwarding to the
 // server), and waits for the final result.
 func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, prompt string, opts agent.ExecOptions, taskLog *slog.Logger, taskID string) (agent.Result, int32, error) {
+	executeStartedAt := time.Now()
 	// Wrap the caller's ctx so the idle watchdog (below) can interrupt both
 	// the agent subprocess (via the ctx passed to backend.Execute) AND the
 	// drain loop with a single cancel. Without this layer the backend would
@@ -2692,6 +2821,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	if err != nil {
 		return agent.Result{}, 0, err
 	}
+	drainMetrics := newAgentDrainMetrics(executeStartedAt)
 
 	// Create an independent drain deadline so we don't block forever if the
 	// backend's internal timeout fails to produce a Result (e.g. scanner
@@ -2797,6 +2927,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				lastActivityAt.Store(time.Now().UnixNano())
 				switch msg.Type {
 				case agent.MessageStatus:
+					drainMetrics.markEvent()
 					// Persist the session/work_dir as soon as the backend
 					// reveals them. Without this, a daemon crash mid-run
 					// loses the resume pointer and the auto-retry fires
@@ -2813,6 +2944,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						}()
 					}
 				case agent.MessageToolUse:
+					drainMetrics.recordToolUse(msg.Input)
 					n := toolCount.Add(1)
 					inFlightTools.Add(1)
 					taskLog.Info(fmt.Sprintf("tool #%d: %s", n, msg.Tool))
@@ -2831,6 +2963,7 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					})
 					mu.Unlock()
 				case agent.MessageToolResult:
+					drainMetrics.recordToolResult(msg.Output)
 					// Decrement only when the count would stay >= 0. A stray
 					// tool_result with no matching tool_use (backend bug or
 					// reconnect mid-stream) shouldn't push the counter
@@ -2867,18 +3000,21 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 					mu.Unlock()
 				case agent.MessageThinking:
 					if msg.Content != "" {
+						drainMetrics.recordThinking(msg.Content)
 						mu.Lock()
 						pendingThinking.WriteString(msg.Content)
 						mu.Unlock()
 					}
 				case agent.MessageText:
 					if msg.Content != "" {
+						drainMetrics.recordText(msg.Content)
 						taskLog.Debug("agent", "text", truncateLog(msg.Content, 200))
 						mu.Lock()
 						pendingText.WriteString(msg.Content)
 						mu.Unlock()
 					}
 				case agent.MessageError:
+					drainMetrics.recordError(msg.Content)
 					taskLog.Error("agent error", "content", msg.Content)
 					s := seq.Add(1)
 					mu.Lock()
@@ -2911,17 +3047,17 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 				result.Error = idleWatchdogReason(idleWindow)
 			}
 		}
-		return result, toolCount.Load(), nil
+		return withDrainDiagnostics(result, drainMetrics.diagnostics()), toolCount.Load(), nil
 	case <-drainCtx.Done():
 		// Idle watchdog cancels via agentCancel(), which propagates here as
 		// context.Canceled. Check this BEFORE the generic cancelled/timeout
 		// classifiers so a watchdog-induced stop isn't misreported as
 		// "task cancelled by server".
 		if idleWatchdogFired.Load() {
-			return agent.Result{
+			return withDrainDiagnostics(agent.Result{
 				Status: "idle_watchdog",
 				Error:  idleWatchdogReason(idleWindow),
-			}, toolCount.Load(), nil
+			}, drainMetrics.diagnostics()), toolCount.Load(), nil
 		}
 		// Distinguish external cancellation (e.g. server-initiated cancel
 		// because the issue was reassigned, or the user invoked CancelTask)
@@ -2929,15 +3065,15 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// upstream runCtx fired runCancel(); context.DeadlineExceeded is the
 		// drain deadline expiring on its own.
 		if errors.Is(drainCtx.Err(), context.Canceled) {
-			return agent.Result{
+			return withDrainDiagnostics(agent.Result{
 				Status: "cancelled",
 				Error:  "task cancelled by upstream context (server cancel or daemon shutdown)",
-			}, toolCount.Load(), nil
+			}, drainMetrics.diagnostics()), toolCount.Load(), nil
 		}
-		return agent.Result{
+		return withDrainDiagnostics(agent.Result{
 			Status: "timeout",
 			Error:  "agent did not produce result within drain timeout",
-		}, toolCount.Load(), nil
+		}, drainMetrics.diagnostics()), toolCount.Load(), nil
 	}
 }
 
