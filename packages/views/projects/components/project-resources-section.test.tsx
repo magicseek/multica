@@ -39,6 +39,7 @@ function makeRepository(overrides: Partial<Repository>): Repository {
 }
 
 vi.mock("@tanstack/react-query", () => ({
+  queryOptions: <TOptions,>(options: TOptions) => options,
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const key = options.queryKey ?? [];
     if (key.includes("project-repositories")) {
@@ -57,6 +58,7 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/projects", () => ({
   projectResourcesOptions: () => ({ queryKey: ["resources"] }),
+  useCreateProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
