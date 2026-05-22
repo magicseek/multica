@@ -64,6 +64,10 @@ Quick-create CLI version gate:
 - Browser-only directory handles, selected folder names, and browser-relative paths are not valid `local_dir` binding paths.
 - A canceled folder picker is not an error and must not create a repository or binding.
 - Local bridge CORS is limited to localhost origins, production Multica origins, and explicit environment allowlists; include `Access-Control-Allow-Private-Network` for browser private-network preflights.
+- Reusable daemon workdirs may preserve source files, checkouts, and project context, but task-scoped structured output manifests are single-run handoff files.
+- Before spawning each task agent, the daemon must remove stale `.multica/chat-summary.json`, `.multica/issue-proposals.json`, and `.multica/outputs.json` from the selected workdir.
+- Structured output manifest cleanup must not remove durable project context such as `.multica/project/resources.json` or other `.multica/project/*` files.
+- A task that does not write a fresh structured output manifest must complete with no structured outputs, rather than re-uploading a previous chat or task's proposals.
 
 ### 4. Validation & Error Matrix
 
@@ -89,6 +93,7 @@ Quick-create CLI version gate:
 - Bad: frontend treats missing `cli_version` as OK while the server rejects it.
 - Bad: server bypasses `CheckMinCLIVersion` based on request origin, desktop app presence, or local environment variables.
 - Bad: `/folder/select` opens the native picker before checking `daemon_id`.
+- Bad: a reused local workdir still contains `.multica/issue-proposals.json` from a prior chat and the daemon uploads it as the current chat's proposal set.
 
 ### 6. Tests Required
 
@@ -106,6 +111,7 @@ Quick-create CLI version gate:
   - daemon id mismatch returns `409` and does not invoke the picker
   - cancel returns success with `canceled=true`
 - View tests verify a browser-only handle path is not submitted and a daemon/native path is submitted as an inline local binding.
+- Daemon structured output tests verify stale task manifests are removed before reuse while `.multica/project/*` context is preserved.
 
 ### 7. Wrong vs Correct
 

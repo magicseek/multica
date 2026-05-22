@@ -96,6 +96,48 @@ func TestLoadStructuredTaskOutputsReadsAllManifests(t *testing.T) {
 	}
 }
 
+func TestClearStaleStructuredTaskOutputManifestsRemovesOnlyTaskOutputs(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workDir, ".multica", "project"), 0o755); err != nil {
+		t.Fatalf("create manifest dirs: %v", err)
+	}
+	files := map[string]string{
+		TaskChatSummaryManifestRelativePath:           `{"version":1,"title":"Old chat"}`,
+		TaskIssueProposalsManifestRelativePath:        `{"version":1,"proposals":[{"title":"Old proposal"}]}`,
+		TaskOutputManifestRelativePath:                `{"outputs":[{"relative_path":"old.md","kind":"doc"}]}`,
+		".multica/project/resources.json":             `{"resources":[{"label":"Keep me"}]}`,
+		".multica/project/agent-runtime-context.json": `{"provider":"codex"}`,
+	}
+	for relativePath, content := range files {
+		if err := os.WriteFile(filepath.Join(workDir, relativePath), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relativePath, err)
+		}
+	}
+
+	clearStaleStructuredTaskOutputManifests(workDir, nil)
+
+	for _, relativePath := range []string{
+		TaskChatSummaryManifestRelativePath,
+		TaskIssueProposalsManifestRelativePath,
+		TaskOutputManifestRelativePath,
+	} {
+		if _, err := os.Stat(filepath.Join(workDir, relativePath)); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists or stat failed with unexpected error: %v", relativePath, err)
+		}
+	}
+	for _, relativePath := range []string{
+		".multica/project/resources.json",
+		".multica/project/agent-runtime-context.json",
+	} {
+		if _, err := os.Stat(filepath.Join(workDir, relativePath)); err != nil {
+			t.Fatalf("%s should be preserved: %v", relativePath, err)
+		}
+	}
+	if structured := loadStructuredTaskOutputs(workDir, nil); structured != nil {
+		t.Fatalf("structured outputs after cleanup = %+v, want nil", structured)
+	}
+}
+
 func TestLoadStructuredTaskOutputsIgnoresInvalidManifestIndividually(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, ".multica"), 0o755); err != nil {

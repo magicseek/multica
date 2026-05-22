@@ -2285,6 +2285,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer d.unmarkActiveEnvRoot(env.RootDir)
 	}
 
+	clearStaleStructuredTaskOutputManifests(env.WorkDir, taskLog)
 	taskCtx.Repositories = execenv.MaterializeLocalRepositoryBindings(env.WorkDir, taskCtx.Repositories, d.logger)
 	execEnvMs := time.Since(execEnvStart).Milliseconds()
 

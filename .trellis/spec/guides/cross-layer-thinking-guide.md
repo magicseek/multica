@@ -166,6 +166,35 @@ server-stored content that can be previewed, reviewed, approved, and diffed.
 
 ---
 
+## Reused Workdir Handoff Files
+
+Reusable daemon workdirs cross a filesystem, daemon, server, and UI boundary.
+Files that look local can become server state if the daemon uploads them on task
+completion.
+
+### Contract
+
+- Separate durable workspace state from single-run handoff files.
+- Durable project context can persist across runs, for example
+  `.multica/project/*`.
+- Structured task outputs such as `.multica/chat-summary.json`,
+  `.multica/issue-proposals.json`, and `.multica/outputs.json` are
+  single-run handoff files. They must be removed before each task agent starts
+  in a reused workdir.
+- If a task agent does not write a fresh handoff file, the server should receive
+  no data for that handoff type. It must not infer freshness from file presence
+  alone in a reused directory.
+
+### Checklist: Before Adding Agent-Written Files
+
+- [ ] Decide whether the file is durable context or a single-run handoff.
+- [ ] If it is a handoff, add pre-run cleanup in the daemon before agent spawn.
+- [ ] Add a regression that reuses a workdir containing stale handoff files and
+  proves stale data is not uploaded.
+- [ ] Verify cleanup preserves durable `.multica/project/*` context.
+
+---
+
 ## Cross-Platform Template Consistency
 
 In Trellis, command templates (e.g., `record-session.md`) exist in **multiple platforms** with identical or near-identical content. This is a cross-layer boundary.

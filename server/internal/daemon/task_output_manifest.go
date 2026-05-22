@@ -11,6 +11,23 @@ import (
 
 const maxTaskOutputManifestBytes int64 = 512 * 1024
 
+func clearStaleStructuredTaskOutputManifests(workDir string, taskLog *slog.Logger) {
+	if workDir == "" {
+		return
+	}
+	for _, relativePath := range []string{
+		TaskChatSummaryManifestRelativePath,
+		TaskIssueProposalsManifestRelativePath,
+		TaskOutputManifestRelativePath,
+	} {
+		if err := os.Remove(filepath.Join(workDir, relativePath)); err != nil && !os.IsNotExist(err) {
+			if taskLog != nil {
+				taskLog.Warn("stale structured output manifest cleanup failed", "path", relativePath, "error", err)
+			}
+		}
+	}
+}
+
 func loadTaskOutputManifest(workDir string) (*TaskOutputManifest, error) {
 	var manifest TaskOutputManifest
 	ok, err := loadTaskManifestFile(workDir, TaskOutputManifestRelativePath, "output manifest", &manifest)
