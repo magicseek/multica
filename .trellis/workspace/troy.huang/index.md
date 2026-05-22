@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
-- **Last Active**: 2026-05-22
+- **Total Sessions**: 6
+- **Last Active**: 2026-05-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~181 | Active |
+| `journal-1.md` | ~216 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-05-23 | RingCentral connector settings and endpoint defaults | `a16e9491`, `3d3abb12`, `a0d53cb7` | `feat/ringcentral-connectors` |
 | 5 | 2026-05-22 | RingCentral connector implementation and verification | `1951d8c8`, `6093b3e1`, `73716468`, `fca8f3b2`, `62ada118`, `d5d7c8fc` | `feat/ringcentral-connectors` |
 | 4 | 2026-05-17 | Editable agent workflows | `4730d164` | `trellis/agent-execution-protocol` |
 | 3 | 2026-05-17 | Trellis execution protocol template | `74ced6a2` | `trellis/agent-execution-protocol` |

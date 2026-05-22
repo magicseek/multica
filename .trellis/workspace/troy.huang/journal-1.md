@@ -179,3 +179,38 @@ Implemented and verified profile-gated RingCentral GitLab/Jira/Wiki connectors, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: RingCentral connector settings and endpoint defaults
+
+**Date**: 2026-05-23
+**Task**: RingCentral connector settings and endpoint defaults
+**Branch**: `feat/ringcentral-connectors`
+
+### Summary
+
+Refined the private RingCentral integrations settings UI into Multica-style rows and detail sections, moved token entry into the list, added official RingCentral service defaults, and added admin-owned workspace endpoint overrides that flow through credential validation and connector actions. Verified with Trellis checks, frontend tests/typecheck/lint, focused and package-level Go tests, and local Chrome visual screenshots.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a16e9491` | (see git log) |
+| `3d3abb12` | (see git log) |
+| `a0d53cb7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
