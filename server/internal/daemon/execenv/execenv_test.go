@@ -1641,6 +1641,27 @@ func TestInjectRuntimeConfigExecutionProtocolOptIn(t *testing.T) {
 		}
 	})
 
+	t.Run("agent handoff snapshot keeps conditional status guidance", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:                  "issue-1",
+			TriggerCommentID:         "comment-1",
+			TriggerAuthorType:        "agent",
+			ExecutionProtocolEnabled: true,
+			WorkflowRenderedMarkdown: "## Comment Snapshot\n\nReply to comment-1.\n",
+		})
+		for _, want := range []string{
+			"## Comment Snapshot",
+			"Agent Handoff Status",
+			"multica issue status issue-1 in_progress",
+			"multica issue status issue-1 in_review",
+		} {
+			if !strings.Contains(s, want) {
+				t.Fatalf("agent handoff snapshot missing %q\n---\n%s", want, s)
+			}
+		}
+	})
+
 	t.Run("enabled comment trigger keeps comment workflow", func(t *testing.T) {
 		t.Parallel()
 		s := readClaudeMD(t, TaskContextForEnv{
@@ -3461,6 +3482,42 @@ func TestInjectRuntimeConfigMentionLoopHardening(t *testing.T) {
 			if !strings.Contains(s, want) {
 				t.Errorf("comment-triggered CLAUDE.md missing %q", want)
 			}
+		}
+	})
+
+	t.Run("agent-authored-handoff-carries-conditional-status-guidance", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:           "issue-1",
+			TriggerCommentID:  "comment-1",
+			TriggerAuthorType: "agent",
+			TriggerAuthorName: "Atlas",
+		})
+		for _, want := range []string{
+			"triggering agent delegated concrete work",
+			"multica issue status issue-1 in_progress",
+			"multica issue status issue-1 in_review",
+			"leave the issue status unchanged",
+		} {
+			if !strings.Contains(s, want) {
+				t.Errorf("agent-authored comment workflow missing %q\n---\n%s", want, s)
+			}
+		}
+	})
+
+	t.Run("member-authored-comment-keeps-status-opt-in", func(t *testing.T) {
+		t.Parallel()
+		s := readClaudeMD(t, TaskContextForEnv{
+			IssueID:           "issue-1",
+			TriggerCommentID:  "comment-1",
+			TriggerAuthorType: "member",
+			TriggerAuthorName: "Alice",
+		})
+		if !strings.Contains(s, "Do NOT change the issue status unless the comment explicitly asks for it") {
+			t.Errorf("member-authored comment workflow missing status opt-in guard\n---\n%s", s)
+		}
+		if strings.Contains(s, "multica issue status issue-1 in_progress") {
+			t.Errorf("member-authored comment workflow should not include handoff status guidance\n---\n%s", s)
 		}
 	})
 }

@@ -448,6 +448,8 @@ func TestBuildPromptCommentTriggeredByAgent(t *testing.T) {
 		"Another agent (Atlas)",
 		"do not @mention the other agent as a sign-off",
 		"Silence is the preferred way",
+		"multica issue status issue-1 in_progress",
+		"multica issue status issue-1 in_review",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q\n---\n%s", want, prompt)
@@ -486,6 +488,9 @@ func TestBuildPromptCommentTriggeredByMember(t *testing.T) {
 	if !strings.Contains(prompt, "If you decide to reply") {
 		t.Fatalf("prompt should frame the reply command conditionally\n---\n%s", prompt)
 	}
+	if strings.Contains(prompt, "multica issue status issue-1 in_progress") {
+		t.Fatalf("member-triggered prompt should not add agent-handoff status guidance\n---\n%s", prompt)
+	}
 }
 
 func TestBuildPromptCommentTriggeredNoContent(t *testing.T) {
@@ -501,6 +506,16 @@ func TestBuildPromptCommentTriggeredNoContent(t *testing.T) {
 
 	if !strings.Contains(prompt, "multica issue get") {
 		t.Fatal("prompt missing CLI hint")
+	}
+
+	agentPrompt := BuildPrompt(Task{
+		IssueID:           "issue-1",
+		TriggerCommentID:  "comment-id",
+		TriggerAuthorType: "agent",
+		Agent:             &AgentData{Name: "Test"},
+	}, "claude")
+	if !strings.Contains(agentPrompt, "multica issue status issue-1 in_progress") {
+		t.Fatalf("agent-triggered prompt without content should keep handoff status guidance\n---\n%s", agentPrompt)
 	}
 }
 

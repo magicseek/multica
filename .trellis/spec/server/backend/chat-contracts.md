@@ -104,6 +104,11 @@ processing, and realtime cache invalidation.
   current user message. The daemon claim response must leave `chat_message`
   empty in that case and rely on `plan.transcript`, `plan.summary`, and
   consultation status instead.
+- Plan summaries and issue proposals are message-scoped artifacts when they
+  are linked by `chat_issue_proposal.source_chat_message_id` and
+  `source_plan_run_id`. The chat UI must render those artifacts inside the
+  associated assistant message row, aligned under that agent's header, not as
+  separate full-width rows.
 
 ### 4. Validation & Error Matrix
 
@@ -137,6 +142,8 @@ processing, and realtime cache invalidation.
 - Frontend/core tests cover Plan mode send variables, active Plan Run
   continuation, realtime invalidation, Plan Summary rendering, and consultation
   message attribution.
+- Frontend tests cover linked Plan Summary / proposal artifacts rendering
+  inside the assistant message row for the source message.
 
 ### 7. Wrong vs Correct
 
@@ -146,6 +153,114 @@ plan state from `chat:issue_proposals_updated`.
 Correct: snapshot `chat_plan_run.engine_version` at run creation, include that
 snapshot in every plan claim, and publish `chat:plan_runs_updated` for every
 Plan Run status or summary transition.
+
+## Directed Chat Routing
+
+Directed chat routing is the server-owned graph that decides which agent or
+squad should receive each human or agent chat turn. It must remain durable
+across API reads, daemon task completion, realtime updates, and Plan mode squad
+consultations.
+
+### 1. Scope / Trigger
+
+- Trigger: Chat messages can target one or more agents/squads using visible
+  mentions or active conversation state.
+- Scope: ordinary Chat Sessions and Chat Plan Runs. Do not infer routing only
+  from rendered text or client-local state.
+
+### 2. Signatures
+
+- `POST /api/chat/sessions/{sessionId}/messages` accepts user content and
+  returns `recipients`, `routing_warnings`, and optional `plan_run_id`.
+- `GET /api/chat/sessions/{sessionId}/messages` returns message author fields
+  plus the persisted recipient edges for each message.
+- DB source of truth: `chat_message.author_member_id`,
+  `chat_message.author_agent_id`, `chat_message_recipient`, and
+  `chat_session_directed_state`.
+- Task queue fan-out uses one `agent_task_queue` row per valid routed
+  recipient.
+
+### 3. Contracts
+
+- Human messages must set `author_member_id`; agent messages must set
+  `author_agent_id`.
+- A recipient edge records `recipient_type`, `recipient_id`, optional
+  `target_task_id`, optional `reply_to_message_id`, and status
+  (`queued`, `responded`, `blocked`, or `failed`).
+- Mention parsing is server-authoritative. Clients may render hints, but they
+  must tolerate backend `needs_target` responses.
+- A no-mention human reply continues the active directed state when there is a
+  single active target.
+- `@squad` routes execution to the squad lead while preserving the squad edge
+  as the user-visible target.
+- Plan squad consultations are lead scoped: only the selected squad helpers are
+  routable, helper replies must explicitly mention the lead to resume it, and
+  `chat_plan_run.consultation_wave_count` caps consultation waves.
+- Plan squad prompt contracts must include canonical helper mentions from
+  `plan.squad.helpers[].mention` and the canonical lead mention from
+  `plan.consultation.lead_mention`. The server must still tolerate plain
+  `@AgentName` mentions for the selected helpers and lead because model output
+  can omit markdown-link syntax during natural conversation.
+- Pending chat task responses and realtime `task:queued` / `task:dispatch`
+  events must include the running `agent_id`. Live UI rows render before a
+  final `chat_message` exists, so they cannot depend on persisted message
+  `author_agent_id` to show the correct actor.
+- A live pending-task row must be renderable even before any `task_message`
+  has streamed. The frontend derives the stage label from
+  `agent_task_queue.status` plus the live task-message stream, so the pending
+  task snapshot must remain available until the final assistant message for
+  that task is visible.
+
+### 4. Validation & Error Matrix
+
+- No mention and no active target -> `409 needs_target`.
+- No mention with multiple active targets -> `409 needs_target` with
+  candidates.
+- Mention outside the visible workspace actor set -> persist a blocked edge and
+  include `routing_warnings`.
+- Plan helper reply without a lead mention -> mark the helper consultation edge
+  failed; do not enqueue a lead continuation.
+- Plan helper reply mentioning the lead by canonical link or plain `@LeadName`
+  -> mark the consultation responded and enqueue a lead continuation.
+- Plan lead attempts to consult outside the selected squad -> block the edge
+  and include a warning.
+- Plan lead mentioning a selected helper by canonical link or plain
+  `@HelperName` -> enqueue that helper consultation.
+- Consultation wave count beyond the configured maximum -> skip helper fan-out
+  and record `consultation_limit_reached`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: human sends `@Lead` or `@Squad`, the server persists edges, enqueues
+  routed tasks, and message reads expose sender/recipient display metadata.
+- Base: legacy single-agent chat with no explicit mention continues to work
+  when the session has one active target.
+- Bad: client-only mention parsing enqueues a task without a durable edge; a
+  refresh then loses who was asked to respond.
+
+### 6. Tests Required
+
+- Handler tests cover explicit agent mentions, squad-to-lead routing, blocked
+  recipients, and `needs_target` ambiguity.
+- Handler tests cover message response metadata:
+  `author_member_id`, `sender`, `recipients`, and `routing_warnings`.
+- Service tests cover Plan squad helper gating, helper-to-lead mention
+  requirement, canonical and plain-name helper/lead mentions, lead resume, and
+  consultation wave limit.
+- Frontend/core tests cover API schema fields, realtime invalidation, sender
+  identity rendering, live pending task actor identity, directed recipient
+  labels, and `needs_target` UI copy.
+- Frontend tests cover the zero-output live task state: avatar/name and the
+  current stage label render in the same live agent row before timeline output
+  exists.
+
+### 7. Wrong vs Correct
+
+Wrong: treat the latest user message as the implicit target for every agent
+reply or Plan continuation.
+
+Correct: persist the directed target in `chat_session_directed_state` and
+recipient edges, then enqueue only the resolved recipient tasks.
 
 ## Realtime Visibility
 
@@ -171,6 +286,11 @@ Clients must patch:
   message when the queued task has no trigger message.
 - [ ] Handler/service tests prove plan run status and summary updates publish
   `chat:plan_runs_updated`.
+- [ ] Handler/service tests prove Plan squad consultation routing works with
+  canonical mentions and plain `@AgentName` mentions for selected helpers and
+  lead resume.
+- [ ] Frontend/core tests prove live pending chat tasks render the running
+  agent identity before the final persisted message exists.
 - [ ] Realtime cache tests cover filtered sessions lists and single session
   details.
 - [ ] Data repair migrations do not rewrite `title_source = 'user'`.

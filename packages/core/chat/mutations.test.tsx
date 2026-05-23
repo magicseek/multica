@@ -98,6 +98,7 @@ describe("useSendChatMessage", () => {
     pending.resolve({
       message_id: "message-1",
       task_id: "task-1",
+      agent_id: "agent-1",
       created_at: "2026-05-21T20:00:00Z",
     });
     await mutation;
@@ -113,6 +114,7 @@ describe("useSendChatMessage", () => {
       task_id: "task-1",
       status: "queued",
       created_at: "2026-05-21T20:00:00Z",
+      agent_id: "agent-1",
     });
     expect(qc.getQueryData(chatKeys.pendingTasks("ws-1"))).toEqual({
       tasks: [

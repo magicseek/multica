@@ -272,6 +272,31 @@ func WriteRuntimeConfig(workDir, provider, content string) error {
 	}
 }
 
+func appendCommentTriggeredStatusGuidance(b *strings.Builder, ctx TaskContextForEnv) {
+	if ctx.TriggerAuthorType != "agent" {
+		return
+	}
+	b.WriteString("\n## Agent Handoff Status\n\n")
+	fmt.Fprintf(b, "- If the triggering agent delegated concrete work and you do that work, run `multica issue status %s in_progress` before the work and `multica issue status %s in_review` after posting your result comment.\n", ctx.IssueID, ctx.IssueID)
+	b.WriteString("- If the triggering comment only needs a small answer, acknowledgment, or no action, leave the issue status unchanged.\n\n")
+}
+
+func appendCommentTriggeredStatusStep(b *strings.Builder, ctx TaskContextForEnv, step int) {
+	if ctx.TriggerAuthorType == "agent" {
+		fmt.Fprintf(b, "%d. If the triggering agent delegated concrete work and you will do that work, run `multica issue status %s in_progress` before starting. If this is only a narrow answer, acknowledgment, or no_action case, leave the issue status unchanged.\n", step, ctx.IssueID)
+		return
+	}
+	fmt.Fprintf(b, "%d. Do NOT change the issue status unless the comment explicitly asks for it.\n", step)
+}
+
+func appendCommentTriggeredCompletionStatusStep(b *strings.Builder, ctx TaskContextForEnv, step int) {
+	if ctx.TriggerAuthorType == "agent" {
+		fmt.Fprintf(b, "%d. If you performed concrete delegated work, run `multica issue status %s in_review` after posting your result comment. If you did not perform work, leave the issue status unchanged.\n\n", step, ctx.IssueID)
+		return
+	}
+	fmt.Fprintf(b, "%d. Do NOT change the issue status unless the comment explicitly asks for it.\n\n", step)
+}
+
 // buildMetaSkillContent generates the meta skill markdown that teaches the agent
 // about the Multica runtime environment and available CLI tools.
 func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
@@ -488,6 +513,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	} else if ctx.TriggerCommentID != "" {
 		if ctx.WorkflowRenderedMarkdown != "" {
 			b.WriteString(ctx.WorkflowRenderedMarkdown)
+			appendCommentTriggeredStatusGuidance(&b, ctx)
 		} else {
 			// Comment-triggered: focus on reading and replying
 			b.WriteString("**This task was triggered by a NEW comment.** Your primary job is to respond to THIS specific comment, even if you have handled similar requests before in this session.\n\n")
@@ -495,16 +521,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			fmt.Fprintf(&b, "2. Run `multica issue comment list %s --output json` to read the conversation (returns all comments, capped server-side at 2000)\n", ctx.IssueID)
 			b.WriteString("   - For incremental polling, use `--since <RFC3339-timestamp>` to fetch only comments newer than a known cursor\n")
 			fmt.Fprintf(&b, "3. Find the triggering comment (ID: `%s`) and understand what is being asked — do NOT confuse it with previous comments\n", ctx.TriggerCommentID)
+			appendCommentTriggeredStatusStep(&b, ctx, 4)
 			if ctx.IsSquadLeader {
-				b.WriteString("4. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 6 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
+				b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
 				fmt.Fprintf(&b, "   - **Squad leader rule:** If your evaluation outcome is `no_action`, call `multica squad activity %s no_action --reason \"...\"` and then EXIT IMMEDIATELY. DO NOT post any comment whose only purpose is to announce that you are taking no action, exiting silently, or acknowledging another agent. A comment like \"No action needed\" or \"Exiting silently\" is noise — the `squad activity` call already records your decision in the timeline.\n", ctx.IssueID)
 			} else {
-				b.WriteString("4. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 6 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and DO NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
+				b.WriteString("5. **Decide whether a reply is warranted.** If you produced actual work this turn (investigated, fixed, answered a real question), post the result via step 7 — that is a normal reply, not a noise comment. If the triggering comment was a pure acknowledgment / thanks / sign-off from another agent AND you produced no work this turn, do NOT post a reply — and DO NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is a valid and preferred way to end agent-to-agent conversations.\n")
 			}
-			b.WriteString("5. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
-			b.WriteString("6. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
+			b.WriteString("6. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
+			b.WriteString("7. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
 			b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID))
-			b.WriteString("7. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
+			appendCommentTriggeredCompletionStatusStep(&b, ctx, 8)
 		}
 	} else if shouldUseTaskExecutionProtocol(ctx) {
 		b.WriteString(renderTaskExecutionProtocol(ctx))

@@ -72,6 +72,7 @@ type ChatMessagePayload struct {
 	Content          string `json:"content"`
 	TaskID           string `json:"task_id,omitempty"`
 	AuthorType       string `json:"author_type,omitempty"`
+	AuthorMemberID   string `json:"author_member_id,omitempty"`
 	AuthorAgentID    string `json:"author_agent_id,omitempty"`
 	PlanRunID        string `json:"plan_run_id,omitempty"`
 	ConsultationID   string `json:"consultation_id,omitempty"`
@@ -90,6 +91,7 @@ type ChatDonePayload struct {
 	MessageID        string `json:"message_id,omitempty"`
 	Content          string `json:"content,omitempty"`
 	AuthorType       string `json:"author_type,omitempty"`
+	AuthorMemberID   string `json:"author_member_id,omitempty"`
 	AuthorAgentID    string `json:"author_agent_id,omitempty"`
 	PlanRunID        string `json:"plan_run_id,omitempty"`
 	ConsultationID   string `json:"consultation_id,omitempty"`

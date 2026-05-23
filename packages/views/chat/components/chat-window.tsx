@@ -533,6 +533,9 @@ export function ChatWindow() {
           messages={messages}
           pendingTask={pendingTask}
           availability={availability}
+          agents={agents}
+          currentUser={user}
+          sessionAgentId={activeAgent?.id}
         />
       ) : (
         <EmptyState

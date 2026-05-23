@@ -1,11 +1,12 @@
 "use client";
 
-import { Fragment, useMemo, useState, useRef, type ReactNode } from "react";
+import { useMemo, useState, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
+import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import {
   Collapsible,
   CollapsibleContent,
@@ -24,7 +25,7 @@ import { Markdown } from "@multica/views/common/markdown";
 import { copyMarkdown } from "../../editor";
 import { WorkflowRunViewer } from "../../workflows";
 import type { AgentAvailability } from "@multica/core/agents";
-import type { Agent, ChatMessage, ChatPendingTask, TaskMessagePayload, TaskFailureReason } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatPendingTask, Squad, TaskMessagePayload, TaskFailureReason, User } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import { TaskStatusPill } from "./task-status-pill";
@@ -43,8 +44,11 @@ interface ChatMessageListProps {
   pendingTask: ChatPendingTask | null | undefined;
   /** Resolved presence; pass `undefined` while loading to keep the pill copy neutral. */
   availability: AgentAvailability | undefined;
-  agents?: Pick<Agent, "id" | "name">[];
-  /** Optional per-message extension point for session-level artifacts such as issue proposals. */
+  agents?: (Pick<Agent, "id" | "name"> & { avatar_url?: string | null })[];
+  squads?: Pick<Squad, "id" | "name" | "avatar_url">[];
+  currentUser?: Pick<User, "id" | "name" | "avatar_url"> | null;
+  sessionAgentId?: string | null;
+  /** Optional per-message extension point rendered inside the message body. */
   renderAfterMessage?: (message: ChatMessage) => ReactNode;
 }
 
@@ -53,14 +57,21 @@ export function ChatMessageList({
   pendingTask,
   availability,
   agents,
+  squads,
+  currentUser,
+  sessionAgentId,
   renderAfterMessage,
 }: ChatMessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fadeStyle = useScrollFade(scrollRef);
   useAutoScroll(scrollRef);
-  const agentNameById = useMemo(
-    () => new Map((agents ?? []).map((agent) => [agent.id, agent.name])),
+  const agentById = useMemo(
+    () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
+  );
+  const squadById = useMemo(
+    () => new Map((squads ?? []).map((squad) => [squad.id, squad])),
+    [squads],
   );
 
   const pendingTaskId = pendingTask?.task_id ?? null;
@@ -81,8 +92,7 @@ export function ChatMessageList({
     enabled: showLiveTimeline,
   });
   const liveTimeline: ChatTimelineItem[] = (liveTaskMessages ?? []).map(toTimelineItem);
-  const hasLive = showLiveTimeline && liveTimeline.length > 0;
-  const showStatusPill = !!pendingTaskId && !pendingAlreadyPersisted && !!pendingTask;
+  const showLiveTaskRow = showLiveTimeline && !!pendingTask;
 
   return (
     <div ref={scrollRef} style={fadeStyle} className="flex-1 overflow-y-auto">
@@ -92,27 +102,84 @@ export function ChatMessageList({
        *  than issue-detail's px-8 because the chat window can be narrow. */}
       <div className="mx-auto w-full max-w-4xl px-5 py-4 space-y-4">
         {messages.map((msg) => (
-          <Fragment key={msg.id}>
-            <MessageBubble
-              message={msg}
-              isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
-              helperAgentName={msg.author_agent_id ? agentNameById.get(msg.author_agent_id) : undefined}
-            />
-            {renderAfterMessage?.(msg)}
-          </Fragment>
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isPending={!!pendingTaskId && msg.task_id === pendingTaskId}
+            agentById={agentById}
+            squadById={squadById}
+            currentUser={currentUser}
+            addon={renderAfterMessage?.(msg)}
+          />
         ))}
-        {hasLive && (
-          <div className="w-full space-y-1.5">
-            <TimelineView items={liveTimeline} isStreaming />
-          </div>
-        )}
-        {showStatusPill && pendingTask && (
-          <TaskStatusPill
+        {showLiveTaskRow && pendingTask && (
+          <LiveTaskMessage
+            items={liveTimeline}
             pendingTask={pendingTask}
             taskMessages={liveTaskMessages ?? []}
             availability={availability}
+            fallbackAgentId={sessionAgentId}
+            agentById={agentById}
+            squadById={squadById}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+function LiveTaskMessage({
+  items,
+  pendingTask,
+  taskMessages,
+  availability,
+  fallbackAgentId,
+  agentById,
+  squadById,
+}: {
+  items: ChatTimelineItem[];
+  pendingTask: ChatPendingTask;
+  taskMessages: readonly TaskMessagePayload[];
+  availability: AgentAvailability | undefined;
+  fallbackAgentId?: string | null;
+  agentById: Map<string, Pick<Agent, "id" | "name"> & { avatar_url?: string | null }>;
+  squadById: Map<string, Pick<Squad, "id" | "name" | "avatar_url">>;
+}) {
+  const agentId = pendingTask?.agent_id ?? fallbackAgentId ?? null;
+  const agent = agentId ? agentById.get(agentId) : null;
+  const sender: ResolvedMessageActor = {
+    type: "agent",
+    id: agentId ?? "agent",
+    name: agent?.name ?? "Agent",
+    avatarUrl: agent?.avatar_url ?? null,
+  };
+  return (
+    <div className="flex w-full items-start gap-3" data-testid="chat-live-task-row">
+      <ActorAvatarBase
+        name={sender.name}
+        initials={initialsForName(sender.name)}
+        avatarUrl={sender.avatarUrl}
+        isAgent
+        size={28}
+      />
+      <div className="min-w-0 flex-1 space-y-1">
+        <MessageHeader
+          sender={sender}
+          recipients={[]}
+          agentById={agentById}
+          squadById={squadById}
+        />
+        <div className="w-full space-y-1.5" data-testid="chat-live-task-body">
+          <TaskStatusPill
+            pendingTask={pendingTask}
+            taskMessages={taskMessages}
+            availability={availability}
+            className="px-0"
+          />
+          {items.length > 0 && (
+            <TimelineView items={items} isStreaming />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -161,29 +228,176 @@ function toTimelineItem(m: TaskMessagePayload): ChatTimelineItem {
 function MessageBubble({
   message,
   isPending,
-  helperAgentName,
+  agentById,
+  squadById,
+  currentUser,
+  addon,
 }: {
   message: ChatMessage;
   isPending: boolean;
-  helperAgentName?: string;
+  agentById: Map<string, Pick<Agent, "id" | "name"> & { avatar_url?: string | null }>;
+  squadById: Map<string, Pick<Squad, "id" | "name" | "avatar_url">>;
+  currentUser?: Pick<User, "id" | "name" | "avatar_url"> | null;
+  addon?: ReactNode;
 }) {
-  if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="rounded-2xl bg-muted px-3.5 py-2 text-sm max-w-[80%] break-words">
-          {/* User messages are authored as markdown in ContentEditor, so
-           * render them through the same pipeline as assistant replies.
-           * Neutralise prose's leading/trailing margin so single-line
-           * bubbles stay as compact as the plain-text version used to. */}
-          <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+  const sender = resolveMessageSender(message, currentUser, agentById);
+  const recipients = message.recipients ?? [];
+  const helperAgentName = message.author_agent_id
+    ? agentById.get(message.author_agent_id)?.name
+    : undefined;
+
+  return (
+    <div className="flex w-full items-start gap-3" data-testid="chat-message-row" data-message-id={message.id}>
+      <ActorAvatarBase
+        name={sender.name}
+        initials={initialsForName(sender.name)}
+        avatarUrl={sender.avatarUrl}
+        isAgent={sender.type === "agent"}
+        isSystem={sender.type === "system"}
+        isSquad={sender.type === "squad"}
+        size={28}
+      />
+      <div className="min-w-0 flex-1 space-y-1">
+        <MessageHeader
+          sender={sender}
+          recipients={recipients}
+          agentById={agentById}
+          squadById={squadById}
+        />
+        {message.role === "user" ? (
+          <div className="text-sm leading-relaxed prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
             <Markdown>{message.content}</Markdown>
           </div>
-        </div>
+        ) : (
+          <AssistantMessage
+            message={message}
+            isPending={isPending}
+            helperAgentName={helperAgentName}
+          />
+        )}
+        <RoutingWarnings warnings={message.routing_warnings ?? []} />
+        {addon}
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  return <AssistantMessage message={message} isPending={isPending} helperAgentName={helperAgentName} />;
+type ResolvedMessageActor = {
+  type: string;
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+};
+
+function resolveMessageSender(
+  message: ChatMessage,
+  currentUser: Pick<User, "id" | "name" | "avatar_url"> | null | undefined,
+  agentById: Map<string, Pick<Agent, "id" | "name"> & { avatar_url?: string | null }>,
+): ResolvedMessageActor {
+  const sender = message.sender;
+  if (sender?.type === "agent" && sender.id) {
+    const agent = agentById.get(sender.id);
+    return {
+      type: "agent",
+      id: sender.id,
+      name: agent?.name ?? "Agent",
+      avatarUrl: agent?.avatar_url ?? null,
+    };
+  }
+  if (message.author_agent_id) {
+    const agent = agentById.get(message.author_agent_id);
+    return {
+      type: "agent",
+      id: message.author_agent_id,
+      name: agent?.name ?? "Agent",
+      avatarUrl: agent?.avatar_url ?? null,
+    };
+  }
+  if (sender?.type === "system" || message.author_type === "system") {
+    return { type: "system", id: "system", name: "Multica" };
+  }
+  const memberId = sender?.type === "member" && sender.id
+    ? sender.id
+    : message.author_member_id ?? currentUser?.id ?? "member";
+  return {
+    type: "member",
+    id: memberId,
+    name: currentUser?.id === memberId ? currentUser.name : currentUser?.name ?? "You",
+    avatarUrl: currentUser?.id === memberId ? currentUser.avatar_url : null,
+  };
+}
+
+function MessageHeader({
+  sender,
+  recipients,
+  agentById,
+  squadById,
+}: {
+  sender: ResolvedMessageActor;
+  recipients: NonNullable<ChatMessage["recipients"]>;
+  agentById: Map<string, Pick<Agent, "id" | "name"> & { avatar_url?: string | null }>;
+  squadById: Map<string, Pick<Squad, "id" | "name" | "avatar_url">>;
+}) {
+  const routedRecipients = recipients.filter((recipient) => recipient.status !== "blocked");
+  return (
+    <div className="flex min-h-5 flex-wrap items-center gap-1.5 text-xs">
+      <span className="font-medium text-foreground">{sender.name}</span>
+      {routedRecipients.length > 0 && (
+        <>
+          <span className="text-muted-foreground">→</span>
+          <span className="truncate text-muted-foreground">
+            {routedRecipients
+              .map((recipient) => recipientLabel(recipient, agentById, squadById))
+              .join(", ")}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+function recipientLabel(
+  recipient: NonNullable<ChatMessage["recipients"]>[number],
+  agentById: Map<string, Pick<Agent, "id" | "name"> & { avatar_url?: string | null }>,
+  squadById: Map<string, Pick<Squad, "id" | "name" | "avatar_url">>,
+): string {
+  if (recipient.recipient_type === "agent") {
+    return agentById.get(recipient.recipient_id)?.name ?? "Agent";
+  }
+  if (recipient.recipient_type === "squad") {
+    return squadById.get(recipient.recipient_id)?.name ?? "Squad";
+  }
+  if (recipient.recipient_type === "member") {
+    return "Member";
+  }
+  return "Recipient";
+}
+
+function RoutingWarnings({ warnings }: { warnings: NonNullable<ChatMessage["routing_warnings"]> }) {
+  if (warnings.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      {warnings.map((warning) => (
+        <div
+          key={`${warning.recipient_id}:${warning.code}:${warning.message}`}
+          className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
+        >
+          <AlertCircle className="size-3 shrink-0" />
+          <span className="truncate">{warning.message || warning.code}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function initialsForName(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2) || "U";
 }
 
 function AssistantMessage({

@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/05-23-chat-plan-mode-polish-squad-routing/prd.md", "reason": "Acceptance criteria and decisions"}
+{"file": ".trellis/tasks/05-23-chat-plan-mode-polish-squad-routing/implementation-plan.md", "reason": "Verification plan"}
+{"file": ".trellis/spec/server/backend/chat-contracts.md", "reason": "Server chat quality contract"}
+{"file": ".trellis/spec/views/frontend/quality-guidelines.md", "reason": "Shared views quality guidelines"}
+{"file": ".trellis/spec/core/frontend/type-safety.md", "reason": "Core type safety guidelines"}
+{"file": "server/internal/handler/chat_plan_runs_test.go", "reason": "Existing Plan Run tests to extend"}
+{"file": "packages/views/chat/components/chat-pages.test.tsx", "reason": "Existing chat page tests to extend"}
+{"file": "packages/views/chat/components/chat-input.test.tsx", "reason": "Existing composer tests to extend"}
+{"file": ".trellis/tasks/05-23-chat-plan-graph-e2e-verification/prd.md", "reason": "Child task: end-to-end verification criteria"}

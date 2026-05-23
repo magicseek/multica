@@ -1,0 +1,18 @@
+{"file": ".trellis/tasks/05-23-chat-plan-mode-polish-squad-routing/prd.md", "reason": "Parent requirements and decisions"}
+{"file": ".trellis/tasks/05-23-chat-plan-mode-polish-squad-routing/implementation-plan.md", "reason": "Delivery plan and task decomposition"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Server backend guidelines"}
+{"file": ".trellis/spec/server/backend/chat-contracts.md", "reason": "Chat server contracts"}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Agent execution and task routing contracts"}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Shared views frontend guidelines"}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core frontend guidelines"}
+{"file": "server/internal/handler/chat.go", "reason": "Chat send/list entry points"}
+{"file": "server/internal/handler/chat_plan_runs.go", "reason": "Plan Run handlers"}
+{"file": "server/internal/service/task.go", "reason": "Task completion and consultation orchestration"}
+{"file": "packages/core/types/chat.ts", "reason": "Chat API types"}
+{"file": "packages/views/chat/components/chat-input.tsx", "reason": "Composer implementation"}
+{"file": "packages/views/chat/components/chat-pages.tsx", "reason": "Plan controls wiring"}
+{"file": "packages/views/chat/components/chat-message-list.tsx", "reason": "Message list rendering"}
+{"file": ".trellis/tasks/05-23-chat-directed-graph-storage-api/prd.md", "reason": "Child task: graph storage and API"}
+{"file": ".trellis/tasks/05-23-chat-directed-routing-squad-orchestration/prd.md", "reason": "Child task: routing and squad orchestration"}
+{"file": ".trellis/tasks/05-23-chat-message-identity-plan-footer-ui/prd.md", "reason": "Child task: chat UI and Plan footer"}
+{"file": ".trellis/tasks/05-23-plan-proposal-issue-drafts-approval/prd.md", "reason": "Child task: proposal drafts and approval"}

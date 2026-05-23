@@ -297,6 +297,11 @@ function CommentRow({
   return (
     <div className={`py-3${isTemp ? " opacity-60" : ""}`}>
       <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden="true"
+          data-comment-header-spacer=""
+          className="size-[18px] shrink-0"
+        />
         <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size={24} enableHoverCard showStatusDot />
         <span className="cursor-pointer text-sm font-medium">
           {getActorName(entry.actor_type, entry.actor_id)}
@@ -368,7 +373,7 @@ function CommentRow({
       {editing ? (
         <div
           {...dropZoneProps}
-          className="relative mt-1.5 pl-8"
+          className="relative mt-1.5 pl-10"
           onKeyDown={(e) => { if (e.key === "Escape") cancelEdit(); }}
         >
           <div className="text-sm leading-relaxed">
@@ -401,10 +406,10 @@ function CommentRow({
         </div>
       ) : (
         <>
-          <div className="mt-1.5 pl-8 text-sm leading-relaxed text-foreground/85">
+          <div className="mt-1.5 pl-10 text-sm leading-relaxed text-foreground/85">
             <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
           </div>
-          <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-8" />
+          <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
           {!isTemp && (
             <ReactionBar
               reactions={reactions}
@@ -412,7 +417,7 @@ function CommentRow({
               onToggle={(emoji) => onToggleReaction(entry.id, emoji)}
               getActorName={getActorName}
               hideAddButton={!isLongContent}
-              className="mt-1.5 pl-8"
+              className="mt-1.5 pl-10"
             />
           )}
         </>

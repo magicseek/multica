@@ -87,6 +87,59 @@ Checklist:
 - [ ] Preserve explicit user edits even when backend summaries or first-message
   derivation arrive later.
 
+### Mistake 5: Live State Missing Final-Render Identity
+
+**Bad**: A UI renders an in-flight task from a lightweight pending-state API
+and assumes the actor can be inferred from the session default. Multi-agent
+routes, squad consultations, and redirected tasks then stream without the
+correct avatar/name until the persisted message exists.
+
+**Good**: Treat live state as its own cross-layer contract. The queue row, API
+response, realtime events, core cache, and view component must carry the same
+actor identity needed to render the eventual persisted message.
+
+Checklist:
+
+- [ ] Identify whether the UI displays an entity before the final durable row
+  exists.
+- [ ] Include stable identity fields in the pending/live API response and
+  realtime event, not only in the final read model.
+- [ ] Prefer the live task actor over session defaults when rendering
+  multi-agent or consultation output.
+- [ ] Keep live progress/status copy attached to the same live entity row as
+  the actor identity. Do not render progress as a detached generic block.
+- [ ] Keep message-scoped artifacts attached to the source message row. If the
+  backend links an artifact with `source_message_id`, render it inside that
+  message's body, not as a sibling row in the surrounding list.
+- [ ] Add a regression that starts from live/pending state and verifies the
+  same actor affordance shown after persistence.
+
+### Mistake 6: Trigger Type Erases Work Semantics
+
+**Bad**: Treating every comment-triggered agent task as a lightweight reply.
+That is true for many human comments, but false for an agent-to-agent handoff:
+when one agent explicitly mentions another agent with concrete delegated work,
+the receiving agent is doing issue work and must get status guidance.
+
+**Good**: Carry trigger author identity across the claim response, daemon task
+model, prompt builder, and runtime config. Human-authored comment triggers
+remain status opt-in; agent-authored concrete handoffs get conditional
+`in_progress` before work and `in_review` after result comment guidance.
+
+Checklist:
+
+- [ ] Preserve `trigger_author_type` and `trigger_author_name` from the server
+  claim response through daemon prompt/runtime config generation.
+- [ ] Keep comment-triggered workflow exclusion from assignment execution
+  protocols, but add agent-handoff status guidance inside the comment workflow.
+- [ ] Cover both per-turn prompt text and injected runtime config; agents read
+  both surfaces depending on provider/session reuse.
+- [ ] Include the workflow-snapshot branch in tests so queued workflow content
+  does not accidentally suppress handoff status guidance.
+- [ ] Avoid server-side status guessing on task completion unless there is a
+  durable product signal for "concrete work was completed"; otherwise the
+  agent-facing workflow is the contract.
+
 ---
 
 ## Checklist for Cross-Layer Features

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -771,6 +772,7 @@ type SendChatMessageRequest struct {
 type SendChatMessageResponse struct {
 	MessageID string `json:"message_id"`
 	TaskID    string `json:"task_id"`
+	AgentID   string `json:"agent_id,omitempty"`
 	PlanRunID string `json:"plan_run_id,omitempty"`
 	// CreatedAt anchors the chat StatusPill timer the instant the user
 	// hits send. Without it the front-end falls back to its local clock
@@ -880,19 +882,31 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	routingDecision, err := h.resolveMemberChatRouting(r.Context(), r, userID, workspaceID, session, req.Content, isPlanMode, planRun, planRunActive, planActorType, planActorID, leadAgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve chat routing")
+		return
+	}
+	if routingDecision.NeedsTarget != nil {
+		writeJSON(w, http.StatusConflict, routingDecision.NeedsTarget)
+		return
+	}
+
 	// Create the user message first so the daemon can always find it.
 	var messagePlanRunID pgtype.UUID
 	if planRunActive {
 		messagePlanRunID = planRun.ID
 	}
 	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
-		ChatSessionID: session.ID,
-		Role:          "user",
-		Content:       req.Content,
-		AuthorType:    "member",
-		PlanRunID:     messagePlanRunID,
+		ChatSessionID:  session.ID,
+		Role:           "user",
+		Content:        req.Content,
+		AuthorType:     "member",
+		AuthorMemberID: parseUUID(userID),
+		PlanRunID:      messagePlanRunID,
 	})
 	if err != nil {
+		slog.Warn("failed to create user chat message", "session_id", sessionID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create chat message")
 		return
 	}
@@ -973,22 +987,49 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// Enqueue a chat task after the message exists, binding the queued work to
 	// this exact user message so daemon claim never has to guess under rapid
 	// back-to-back sends.
-	var task db.AgentTaskQueue
-	if isPlanMode {
-		task, err = h.TaskService.EnqueuePlanLeadTask(r.Context(), session, planRun, msg.ID)
-	} else {
-		task, err = h.TaskService.EnqueueChatTask(r.Context(), session, msg.ID)
+	tasks := make([]db.AgentTaskQueue, 0, len(routingDecision.Targets))
+	for i := range routingDecision.Targets {
+		target := routingDecision.Targets[i]
+		var targetTask db.AgentTaskQueue
+		if target.Status == chatRoutingStatusBlocked || !target.ResolvedAgentID.Valid {
+			if _, err := h.createChatRecipientEdge(r.Context(), session, msg.ID, target, pgtype.UUID{}); err != nil {
+				slog.Warn("failed to persist blocked chat recipient edge", "message_id", uuidToString(msg.ID), "error", err)
+			}
+			continue
+		}
+		if isPlanMode {
+			targetTask, err = h.TaskService.EnqueuePlanLeadTask(r.Context(), session, planRun, msg.ID)
+		} else {
+			targetTask, err = h.TaskService.EnqueueChatTaskForAgent(r.Context(), session, target.ResolvedAgentID, msg.ID, pgtype.UUID{}, pgtype.UUID{}, service.ChatTaskKindNormal)
+		}
+		if err != nil {
+			target.Status = "failed"
+			target.WarningCode = "enqueue_failed"
+			target.WarningMessage = err.Error()
+			if _, edgeErr := h.createChatRecipientEdge(r.Context(), session, msg.ID, target, pgtype.UUID{}); edgeErr != nil {
+				slog.Warn("failed to persist failed chat recipient edge", "message_id", uuidToString(msg.ID), "error", edgeErr)
+			}
+			slog.Warn("failed to enqueue routed chat task", "message_id", uuidToString(msg.ID), "recipient_type", target.RecipientType, "recipient_id", uuidToString(target.RecipientID), "error", err)
+			continue
+		}
+		if _, err := h.createChatRecipientEdge(r.Context(), session, msg.ID, target, targetTask.ID); err != nil {
+			slog.Warn("failed to persist chat recipient edge", "message_id", uuidToString(msg.ID), "task_id", uuidToString(targetTask.ID), "error", err)
+		}
+		routingDecision.Targets[i] = target
+		tasks = append(tasks, targetTask)
 	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task: "+err.Error())
+	if len(tasks) == 0 {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task")
 		return
 	}
+	task := tasks[0]
 	if _, err := h.Queries.SetChatMessageTaskID(r.Context(), db.SetChatMessageTaskIDParams{
 		ID:     msg.ID,
 		TaskID: task.ID,
 	}); err != nil {
 		slog.Warn("failed to bind chat message to task", "message_id", uuidToString(msg.ID), "task_id", uuidToString(task.ID), "error", err)
 	}
+	h.updateChatDirectedStateForTargets(r.Context(), session, msg.ID, routingDecision.Targets)
 
 	// Touch session updated_at.
 	if err := h.Queries.TouchChatSession(r.Context(), session.ID); err != nil {
@@ -1011,19 +1052,21 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// Broadcast the user message.
 	resolvedSessionID := uuidToString(session.ID)
 	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
-		ChatSessionID: resolvedSessionID,
-		MessageID:     uuidToString(msg.ID),
-		Role:          "user",
-		Content:       req.Content,
-		TaskID:        uuidToString(task.ID),
-		AuthorType:    msg.AuthorType,
-		PlanRunID:     uuidToString(msg.PlanRunID),
-		CreatedAt:     timestampToString(msg.CreatedAt),
+		ChatSessionID:  resolvedSessionID,
+		MessageID:      uuidToString(msg.ID),
+		Role:           "user",
+		Content:        req.Content,
+		TaskID:         uuidToString(task.ID),
+		AuthorType:     msg.AuthorType,
+		AuthorMemberID: uuidToString(msg.AuthorMemberID),
+		PlanRunID:      uuidToString(msg.PlanRunID),
+		CreatedAt:      timestampToString(msg.CreatedAt),
 	})
 
 	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
 		MessageID: uuidToString(msg.ID),
 		TaskID:    uuidToString(task.ID),
+		AgentID:   uuidToString(task.AgentID),
 		PlanRunID: uuidToString(planRun.ID),
 		CreatedAt: timestampToString(task.CreatedAt),
 	})
@@ -1059,16 +1102,22 @@ func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
 		return
 	}
+	recipients, err := h.Queries.ListChatMessageRecipientsBySession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat message recipients")
+		return
+	}
 
 	messageIDs := make([]pgtype.UUID, len(messages))
 	for i, m := range messages {
 		messageIDs[i] = m.ID
 	}
 	groupedAtt := h.groupChatMessageAttachments(r.Context(), workspaceID, messageIDs)
+	groupedRecipients := groupChatMessageRecipients(recipients)
 
 	resp := make([]ChatMessageResponse, len(messages))
 	for i, m := range messages {
-		resp[i] = chatMessageToResponse(m, groupedAtt[uuidToString(m.ID)])
+		resp[i] = chatMessageToResponse(m, groupedAtt[uuidToString(m.ID)], groupedRecipients[uuidToString(m.ID)], session.CreatorID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1083,6 +1132,7 @@ type PendingChatTaskResponse struct {
 	TaskID    string `json:"task_id,omitempty"`
 	Status    string `json:"status,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
 }
 
 // MarkChatSessionRead clears the session's unread_since (→ has_unread=false)
@@ -1218,6 +1268,7 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 		TaskID:    uuidToString(task.ID),
 		Status:    task.Status,
 		CreatedAt: timestampToString(task.CreatedAt),
+		AgentID:   uuidToString(task.AgentID),
 	})
 }
 
@@ -1448,16 +1499,21 @@ type ChatIssueProposalItemResponse struct {
 }
 
 type ChatMessageResponse struct {
-	ID             string  `json:"id"`
-	ChatSessionID  string  `json:"chat_session_id"`
-	Role           string  `json:"role"`
-	Content        string  `json:"content"`
-	TaskID         *string `json:"task_id"`
-	AuthorType     string  `json:"author_type"`
-	AuthorAgentID  *string `json:"author_agent_id"`
-	PlanRunID      *string `json:"plan_run_id"`
-	ConsultationID *string `json:"consultation_id"`
-	CreatedAt      string  `json:"created_at"`
+	ID               string                         `json:"id"`
+	ChatSessionID    string                         `json:"chat_session_id"`
+	Role             string                         `json:"role"`
+	Content          string                         `json:"content"`
+	TaskID           *string                        `json:"task_id"`
+	AuthorType       string                         `json:"author_type"`
+	AuthorMemberID   *string                        `json:"author_member_id"`
+	AuthorAgentID    *string                        `json:"author_agent_id"`
+	PlanRunID        *string                        `json:"plan_run_id"`
+	ConsultationID   *string                        `json:"consultation_id"`
+	ReplyToMessageID *string                        `json:"reply_to_message_id"`
+	Sender           ChatMessageActorResponse       `json:"sender"`
+	Recipients       []ChatMessageRecipientResponse `json:"recipients"`
+	RoutingWarnings  []ChatRoutingWarningResponse   `json:"routing_warnings"`
+	CreatedAt        string                         `json:"created_at"`
 	// FailureReason flags an assistant row synthesized by FailTask's chat
 	// fallback. Front-end uses it to switch to the destructive bubble.
 	FailureReason *string `json:"failure_reason"`
@@ -1470,6 +1526,32 @@ type ChatMessageResponse struct {
 	// agent can `multica attachment download <id>` rather than guessing
 	// from a markdown URL that may expire.
 	Attachments []AttachmentResponse `json:"attachments,omitempty"`
+}
+
+type ChatMessageActorResponse struct {
+	Type string  `json:"type"`
+	ID   *string `json:"id,omitempty"`
+}
+
+type ChatMessageRecipientResponse struct {
+	ID              string  `json:"id"`
+	MessageID       string  `json:"message_id"`
+	RecipientType   string  `json:"recipient_type"`
+	RecipientID     string  `json:"recipient_id"`
+	ResolvedAgentID *string `json:"resolved_agent_id"`
+	Source          string  `json:"source"`
+	Status          string  `json:"status"`
+	TaskID          *string `json:"task_id"`
+	WarningCode     string  `json:"warning_code"`
+	WarningMessage  string  `json:"warning_message"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+type ChatRoutingWarningResponse struct {
+	RecipientID string `json:"recipient_id"`
+	Code        string `json:"code"`
+	Message     string `json:"message"`
 }
 
 func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
@@ -1680,20 +1762,92 @@ func jsonArrayOrEmpty(raw []byte) json.RawMessage {
 	return json.RawMessage(raw)
 }
 
-func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) ChatMessageResponse {
+func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse, recipients []db.ChatMessageRecipient, fallbackMemberID pgtype.UUID) ChatMessageResponse {
+	recipientResponses := chatMessageRecipientResponses(recipients)
 	return ChatMessageResponse{
-		ID:             uuidToString(m.ID),
-		ChatSessionID:  uuidToString(m.ChatSessionID),
-		Role:           m.Role,
-		Content:        m.Content,
-		TaskID:         uuidToPtr(m.TaskID),
-		AuthorType:     m.AuthorType,
-		AuthorAgentID:  uuidToPtr(m.AuthorAgentID),
-		PlanRunID:      uuidToPtr(m.PlanRunID),
-		ConsultationID: uuidToPtr(m.ConsultationID),
-		CreatedAt:      timestampToString(m.CreatedAt),
-		FailureReason:  textToPtr(m.FailureReason),
-		ElapsedMs:      int8ToPtr(m.ElapsedMs),
-		Attachments:    attachments,
+		ID:               uuidToString(m.ID),
+		ChatSessionID:    uuidToString(m.ChatSessionID),
+		Role:             m.Role,
+		Content:          m.Content,
+		TaskID:           uuidToPtr(m.TaskID),
+		AuthorType:       m.AuthorType,
+		AuthorMemberID:   uuidToPtr(m.AuthorMemberID),
+		AuthorAgentID:    uuidToPtr(m.AuthorAgentID),
+		PlanRunID:        uuidToPtr(m.PlanRunID),
+		ConsultationID:   uuidToPtr(m.ConsultationID),
+		ReplyToMessageID: uuidToPtr(m.ReplyToMessageID),
+		Sender:           chatMessageSenderResponse(m, fallbackMemberID),
+		Recipients:       recipientResponses,
+		RoutingWarnings:  chatRoutingWarningResponses(recipientResponses),
+		CreatedAt:        timestampToString(m.CreatedAt),
+		FailureReason:    textToPtr(m.FailureReason),
+		ElapsedMs:        int8ToPtr(m.ElapsedMs),
+		Attachments:      attachments,
 	}
+}
+
+func chatMessageSenderResponse(m db.ChatMessage, fallbackMemberID pgtype.UUID) ChatMessageActorResponse {
+	switch m.AuthorType {
+	case "agent":
+		return ChatMessageActorResponse{Type: "agent", ID: uuidToPtr(m.AuthorAgentID)}
+	case "system":
+		return ChatMessageActorResponse{Type: "system"}
+	default:
+		memberID := m.AuthorMemberID
+		if !memberID.Valid {
+			memberID = fallbackMemberID
+		}
+		return ChatMessageActorResponse{Type: "member", ID: uuidToPtr(memberID)}
+	}
+}
+
+func groupChatMessageRecipients(rows []db.ChatMessageRecipient) map[string][]db.ChatMessageRecipient {
+	grouped := make(map[string][]db.ChatMessageRecipient)
+	for _, row := range rows {
+		messageID := uuidToString(row.MessageID)
+		if messageID == "" {
+			continue
+		}
+		grouped[messageID] = append(grouped[messageID], row)
+	}
+	return grouped
+}
+
+func chatMessageRecipientResponses(rows []db.ChatMessageRecipient) []ChatMessageRecipientResponse {
+	if len(rows) == 0 {
+		return []ChatMessageRecipientResponse{}
+	}
+	out := make([]ChatMessageRecipientResponse, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ChatMessageRecipientResponse{
+			ID:              uuidToString(row.ID),
+			MessageID:       uuidToString(row.MessageID),
+			RecipientType:   row.RecipientType,
+			RecipientID:     uuidToString(row.RecipientID),
+			ResolvedAgentID: uuidToPtr(row.ResolvedAgentID),
+			Source:          row.Source,
+			Status:          row.Status,
+			TaskID:          uuidToPtr(row.TaskID),
+			WarningCode:     row.WarningCode,
+			WarningMessage:  row.WarningMessage,
+			CreatedAt:       timestampToString(row.CreatedAt),
+			UpdatedAt:       timestampToString(row.UpdatedAt),
+		})
+	}
+	return out
+}
+
+func chatRoutingWarningResponses(recipients []ChatMessageRecipientResponse) []ChatRoutingWarningResponse {
+	warnings := make([]ChatRoutingWarningResponse, 0)
+	for _, recipient := range recipients {
+		if recipient.WarningCode == "" && recipient.WarningMessage == "" {
+			continue
+		}
+		warnings = append(warnings, ChatRoutingWarningResponse{
+			RecipientID: recipient.ID,
+			Code:        recipient.WarningCode,
+			Message:     recipient.WarningMessage,
+		})
+	}
+	return warnings
 }

@@ -138,6 +138,7 @@ describe("ApiClient", () => {
         JSON.stringify({
           message_id: "msg-1",
           task_id: "task-1",
+          agent_id: "agent-1",
           plan_run_id: "plan-1",
           created_at: "2026-05-23T00:00:00Z",
         }),
@@ -155,6 +156,7 @@ describe("ApiClient", () => {
     });
 
     expect(response.plan_run_id).toBe("plan-1");
+    expect(response.agent_id).toBe("agent-1");
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.test/api/chat/sessions/session-1/messages",
       expect.objectContaining({
@@ -184,8 +186,33 @@ describe("ApiClient", () => {
               task_id: "task-1",
               author_type: "agent",
               author_agent_id: "agent-helper",
+              author_member_id: null,
               plan_run_id: "plan-1",
               consultation_id: "consult-1",
+              sender: { type: "agent", id: "agent-helper" },
+              recipients: [
+                {
+                  id: "edge-1",
+                  message_id: "msg-1",
+                  recipient_type: "agent",
+                  recipient_id: "agent-lead",
+                  resolved_agent_id: "agent-lead",
+                  source: "explicit_mention",
+                  status: "blocked",
+                  task_id: null,
+                  warning_code: "out_of_scope",
+                  warning_message: "Recipient is outside the selected squad.",
+                  created_at: "2026-05-23T00:00:00Z",
+                  updated_at: "2026-05-23T00:00:01Z",
+                },
+              ],
+              routing_warnings: [
+                {
+                  recipient_id: "edge-1",
+                  code: "out_of_scope",
+                  message: "Recipient is outside the selected squad.",
+                },
+              ],
               created_at: "2026-05-23T00:00:00Z",
             },
           ]),
@@ -199,6 +226,21 @@ describe("ApiClient", () => {
 
     expect(messages[0]).toMatchObject({
       author_agent_id: "agent-helper",
+      sender: { type: "agent", id: "agent-helper" },
+      recipients: [
+        expect.objectContaining({
+          recipient_type: "agent",
+          recipient_id: "agent-lead",
+          status: "blocked",
+        }),
+      ],
+      routing_warnings: [
+        {
+          recipient_id: "edge-1",
+          code: "out_of_scope",
+          message: "Recipient is outside the selected squad.",
+        },
+      ],
       plan_run_id: "plan-1",
       consultation_id: "consult-1",
     });

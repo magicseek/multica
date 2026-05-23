@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -23,6 +25,57 @@ import (
 func withChatTestWorkspaceCtx(t *testing.T, req *http.Request) *http.Request {
 	t.Helper()
 	return withChatTestWorkspaceCtxAs(t, req, testUserID)
+}
+
+func TestChatMessageToResponseIncludesGraphMetadata(t *testing.T) {
+	messageID := parseUUID("11111111-1111-1111-1111-111111111111")
+	sessionID := parseUUID("22222222-2222-2222-2222-222222222222")
+	memberID := parseUUID("33333333-3333-3333-3333-333333333333")
+	agentID := parseUUID("44444444-4444-4444-4444-444444444444")
+	recipientID := parseUUID("55555555-5555-5555-5555-555555555555")
+	edgeID := parseUUID("66666666-6666-6666-6666-666666666666")
+	createdAt := pgtype.Timestamptz{Time: time.Date(2026, 5, 23, 3, 4, 5, 0, time.UTC), Valid: true}
+
+	resp := chatMessageToResponse(
+		db.ChatMessage{
+			ID:             messageID,
+			ChatSessionID:  sessionID,
+			Role:           "user",
+			Content:        "hello",
+			AuthorType:     "member",
+			AuthorMemberID: memberID,
+			CreatedAt:      createdAt,
+		},
+		nil,
+		[]db.ChatMessageRecipient{{
+			ID:              edgeID,
+			ChatSessionID:   sessionID,
+			MessageID:       messageID,
+			RecipientType:   "squad",
+			RecipientID:     recipientID,
+			ResolvedAgentID: agentID,
+			Source:          "explicit_mention",
+			Status:          "blocked",
+			WarningCode:     "out_of_scope",
+			WarningMessage:  "Recipient is outside the selected squad.",
+			CreatedAt:       createdAt,
+			UpdatedAt:       createdAt,
+		}},
+		memberID,
+	)
+
+	if resp.Sender.Type != "member" || resp.Sender.ID == nil || *resp.Sender.ID != "33333333-3333-3333-3333-333333333333" {
+		t.Fatalf("unexpected sender: %#v", resp.Sender)
+	}
+	if len(resp.Recipients) != 1 {
+		t.Fatalf("expected one recipient edge, got %d", len(resp.Recipients))
+	}
+	if resp.Recipients[0].RecipientType != "squad" || resp.Recipients[0].ResolvedAgentID == nil || *resp.Recipients[0].ResolvedAgentID != "44444444-4444-4444-4444-444444444444" {
+		t.Fatalf("unexpected recipient edge: %#v", resp.Recipients[0])
+	}
+	if len(resp.RoutingWarnings) != 1 || resp.RoutingWarnings[0].Code != "out_of_scope" {
+		t.Fatalf("unexpected routing warnings: %#v", resp.RoutingWarnings)
+	}
 }
 
 func withChatTestWorkspaceCtxAs(t *testing.T, req *http.Request, userID string) *http.Request {
@@ -150,6 +203,127 @@ func TestSendChatMessage_BindsTaskToUserMessage(t *testing.T) {
 	}
 	if triggerMessageID != sendResp.MessageID {
 		t.Fatalf("task.trigger_chat_message_id = %s, want %s", triggerMessageID, sendResp.MessageID)
+	}
+}
+
+func TestSendChatMessage_ExplicitAgentMentionsFanOutAndBlockAmbiguousContinuation(t *testing.T) {
+	ctx := context.Background()
+	sessionAgentID := createHandlerTestAgent(t, "Chat Mention Session Agent", []byte("[]"))
+	agentAID := createHandlerTestAgent(t, "Chat Mention Agent A", []byte("[]"))
+	agentBID := createHandlerTestAgent(t, "Chat Mention Agent B", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, sessionAgentID)
+
+	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "Please compare [@A](mention://agent/" + agentAID + ") and [@B](mention://agent/" + agentBID + ")",
+	})
+	req = withURLParam(req, "sessionId", sessionID)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.SendChatMessage(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("SendChatMessage: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp SendChatMessageResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode send: %v", err)
+	}
+
+	var edgeCount, taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM chat_message_recipient
+		WHERE message_id = $1
+		  AND recipient_type = 'agent'
+		  AND status = 'routed'
+		  AND resolved_agent_id IN ($2, $3)
+	`, resp.MessageID, agentAID, agentBID).Scan(&edgeCount); err != nil {
+		t.Fatalf("count recipient edges: %v", err)
+	}
+	if edgeCount != 2 {
+		t.Fatalf("expected 2 routed recipient edges, got %d", edgeCount)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE trigger_chat_message_id = $1
+		  AND agent_id IN ($2, $3)
+	`, resp.MessageID, agentAID, agentBID).Scan(&taskCount); err != nil {
+		t.Fatalf("count mention tasks: %v", err)
+	}
+	if taskCount != 2 {
+		t.Fatalf("expected 2 mention tasks, got %d", taskCount)
+	}
+
+	var directedState string
+	if err := testPool.QueryRow(ctx, `
+		SELECT state
+		FROM chat_session_directed_state
+		WHERE chat_session_id = $1
+	`, sessionID).Scan(&directedState); err != nil {
+		t.Fatalf("load directed state: %v", err)
+	}
+	if directedState != "ambiguous" {
+		t.Fatalf("directed state = %q, want ambiguous", directedState)
+	}
+
+	followReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "Here is the follow-up without a target",
+	})
+	followReq = withURLParam(followReq, "sessionId", sessionID)
+	followReq = withChatTestWorkspaceCtx(t, followReq)
+	followW := httptest.NewRecorder()
+	testHandler.SendChatMessage(followW, followReq)
+	if followW.Code != http.StatusConflict {
+		t.Fatalf("ambiguous follow-up: expected 409, got %d: %s", followW.Code, followW.Body.String())
+	}
+	if !strings.Contains(followW.Body.String(), "needs_target") {
+		t.Fatalf("ambiguous follow-up response missing needs_target: %s", followW.Body.String())
+	}
+}
+
+func TestSendChatMessage_NoMentionContinuationUsesActiveRecipient(t *testing.T) {
+	ctx := context.Background()
+	sessionAgentID := createHandlerTestAgent(t, "Chat Continuation Session Agent", []byte("[]"))
+	targetAgentID := createHandlerTestAgent(t, "Chat Continuation Target Agent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, sessionAgentID)
+
+	firstReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "Ask [@Target](mention://agent/" + targetAgentID + ") first",
+	})
+	firstReq = withURLParam(firstReq, "sessionId", sessionID)
+	firstReq = withChatTestWorkspaceCtx(t, firstReq)
+	firstW := httptest.NewRecorder()
+	testHandler.SendChatMessage(firstW, firstReq)
+	if firstW.Code != http.StatusCreated {
+		t.Fatalf("first SendChatMessage: expected 201, got %d: %s", firstW.Code, firstW.Body.String())
+	}
+
+	secondReq := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
+		"content": "Continue with the same target",
+	})
+	secondReq = withURLParam(secondReq, "sessionId", sessionID)
+	secondReq = withChatTestWorkspaceCtx(t, secondReq)
+	secondW := httptest.NewRecorder()
+	testHandler.SendChatMessage(secondW, secondReq)
+	if secondW.Code != http.StatusCreated {
+		t.Fatalf("second SendChatMessage: expected 201, got %d: %s", secondW.Code, secondW.Body.String())
+	}
+	var second SendChatMessageResponse
+	if err := json.Unmarshal(secondW.Body.Bytes(), &second); err != nil {
+		t.Fatalf("decode second send: %v", err)
+	}
+
+	var taskAgentID, edgeSource string
+	if err := testPool.QueryRow(ctx, `
+		SELECT atq.agent_id::text, cmr.source
+		FROM agent_task_queue atq
+		JOIN chat_message_recipient cmr ON cmr.task_id = atq.id
+		WHERE atq.id = $1
+	`, second.TaskID).Scan(&taskAgentID, &edgeSource); err != nil {
+		t.Fatalf("load continuation routing: %v", err)
+	}
+	if taskAgentID != targetAgentID || edgeSource != "continuation" {
+		t.Fatalf("continuation routed to %s via %s, want %s via continuation", taskAgentID, edgeSource, targetAgentID)
 	}
 }
 

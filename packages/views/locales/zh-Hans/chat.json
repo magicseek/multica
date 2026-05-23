@@ -72,6 +72,7 @@
       "archived": "已归档",
       "send": "发送",
       "send_failed": "发送失败",
+      "needs_target": "请 mention 一个智能体或 squad 来继续这个多智能体对话。",
       "placeholder": "回复此对话",
       "archived_placeholder": "此会话已归档",
       "empty_chat_title": "暂无消息",

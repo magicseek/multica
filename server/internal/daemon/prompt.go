@@ -148,6 +148,9 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
 		}
 	}
+	if task.TriggerAuthorType == "agent" {
+		fmt.Fprintf(&b, "If this is a concrete handoff from another agent and you actually do the work, manage the issue status: run `multica issue status %s in_progress` before starting, then run `multica issue status %s in_review` after posting your result comment. If the comment only needs a small answer, acknowledgment, or no action, leave the issue status unchanged.\n\n", task.IssueID, task.IssueID)
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n\n", task.IssueID)
 	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))

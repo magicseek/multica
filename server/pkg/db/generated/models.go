@@ -217,6 +217,24 @@ type ChatMessage struct {
 	PlanRunID        pgtype.UUID        `json:"plan_run_id"`
 	ConsultationID   pgtype.UUID        `json:"consultation_id"`
 	ReplyToMessageID pgtype.UUID        `json:"reply_to_message_id"`
+	AuthorMemberID   pgtype.UUID        `json:"author_member_id"`
+}
+
+type ChatMessageRecipient struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	MessageID       pgtype.UUID        `json:"message_id"`
+	RecipientType   string             `json:"recipient_type"`
+	RecipientID     pgtype.UUID        `json:"recipient_id"`
+	ResolvedAgentID pgtype.UUID        `json:"resolved_agent_id"`
+	Source          string             `json:"source"`
+	Status          string             `json:"status"`
+	TaskID          pgtype.UUID        `json:"task_id"`
+	WarningCode     string             `json:"warning_code"`
+	WarningMessage  string             `json:"warning_message"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ChatPlanConsultation struct {
@@ -235,24 +253,25 @@ type ChatPlanConsultation struct {
 }
 
 type ChatPlanRun struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	ChatSessionID    pgtype.UUID        `json:"chat_session_id"`
-	CreatorUserID    pgtype.UUID        `json:"creator_user_id"`
-	ActorType        string             `json:"actor_type"`
-	ActorID          pgtype.UUID        `json:"actor_id"`
-	LeadAgentID      pgtype.UUID        `json:"lead_agent_id"`
-	PlanEngine       string             `json:"plan_engine"`
-	EngineVersion    string             `json:"engine_version"`
-	Status           string             `json:"status"`
-	InitialMessageID pgtype.UUID        `json:"initial_message_id"`
-	LatestMessageID  pgtype.UUID        `json:"latest_message_id"`
-	Summary          []byte             `json:"summary"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
-	CancelledAt      pgtype.Timestamptz `json:"cancelled_at"`
-	FailedAt         pgtype.Timestamptz `json:"failed_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ChatSessionID         pgtype.UUID        `json:"chat_session_id"`
+	CreatorUserID         pgtype.UUID        `json:"creator_user_id"`
+	ActorType             string             `json:"actor_type"`
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	LeadAgentID           pgtype.UUID        `json:"lead_agent_id"`
+	PlanEngine            string             `json:"plan_engine"`
+	EngineVersion         string             `json:"engine_version"`
+	Status                string             `json:"status"`
+	InitialMessageID      pgtype.UUID        `json:"initial_message_id"`
+	LatestMessageID       pgtype.UUID        `json:"latest_message_id"`
+	Summary               []byte             `json:"summary"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	CancelledAt           pgtype.Timestamptz `json:"cancelled_at"`
+	FailedAt              pgtype.Timestamptz `json:"failed_at"`
+	ConsultationWaveCount int32              `json:"consultation_wave_count"`
 }
 
 type ChatSession struct {
@@ -273,6 +292,18 @@ type ChatSession struct {
 	ProjectContextKind  string             `json:"project_context_kind"`
 	ProjectSnapshot     []byte             `json:"project_snapshot"`
 	TitleSource         string             `json:"title_source"`
+}
+
+type ChatSessionDirectedState struct {
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	State               string             `json:"state"`
+	ActiveRecipientType pgtype.Text        `json:"active_recipient_type"`
+	ActiveRecipientID   pgtype.UUID        `json:"active_recipient_id"`
+	ActiveMessageID     pgtype.UUID        `json:"active_message_id"`
+	CandidateRecipients []byte             `json:"candidate_recipients"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Comment struct {

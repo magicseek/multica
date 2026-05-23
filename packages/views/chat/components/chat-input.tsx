@@ -44,6 +44,8 @@ interface ChatInputProps {
   /** Rendered inside the rounded container, above the editor — attached
    *  context cards, drafts, etc. */
   topSlot?: ReactNode;
+  /** Rendered on the bottom edge inside the rounded container. */
+  footerSlot?: ReactNode;
   /** Route-owned pages pass explicit draft identity so URL state, not the
    *  legacy floating chat store, decides which session is being composed. */
   draftKeyOverride?: string;
@@ -61,6 +63,7 @@ export function ChatInput({
   leftAdornment,
   rightAdornment,
   topSlot,
+  footerSlot,
   draftKeyOverride,
   editorKeyOverride,
 }: ChatInputProps) {
@@ -211,7 +214,8 @@ export function ChatInput({
       <div
         {...(uploadEnabled ? dropZoneProps : {})}
         className={cn(
-          "relative mx-auto flex min-h-16 max-h-40 w-full max-w-4xl flex-col rounded-lg bg-card pb-9 border-1 border-border transition-colors focus-within:border-brand",
+          "relative mx-auto flex min-h-16 max-h-40 w-full max-w-4xl flex-col rounded-lg bg-card border-1 border-border transition-colors focus-within:border-brand",
+          footerSlot ? "pb-0" : "pb-9",
           // Visual + interaction lock when there's no agent. We don't
           // toggle ContentEditor's editable mode (Tiptap can't switch
           // cleanly post-mount, and the prop has been removed); instead
@@ -247,6 +251,11 @@ export function ChatInput({
             // continues a bullet list, leaving users stuck after one item.
           />
         </div>
+        {footerSlot && (
+          <div className="min-h-9 border-t px-2 py-1.5 pr-24">
+            {footerSlot}
+          </div>
+        )}
         {leftAdornment && (
           <div className="absolute bottom-1.5 left-2 flex items-center">
             {leftAdornment}

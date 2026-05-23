@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -56,6 +58,8 @@ const (
 	ChatTaskKindNormal           = "normal"
 	ChatTaskKindPlanLead         = "plan_lead"
 	ChatTaskKindPlanConsultation = "plan_consultation"
+
+	maxChatPlanConsultationWaves = 5
 )
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
@@ -1295,6 +1299,15 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 						"error", err,
 					)
 				}
+				if !task.ChatPlanRunID.Valid {
+					if err := s.handleOrdinaryChatTaskCompleted(ctx, task, row, body); err != nil {
+						slog.Warn("chat routing completion handling failed",
+							"task_id", util.UUIDToString(task.ID),
+							"chat_session_id", util.UUIDToString(task.ChatSessionID),
+							"error", err,
+						)
+					}
+				}
 			}
 		}
 		s.broadcastChatDone(ctx, task, assistantMsg)
@@ -1771,7 +1784,14 @@ func (s *TaskService) handleChatPlanTaskCompleted(ctx context.Context, task db.A
 		if err != nil {
 			return err
 		}
-		if agentMentioned(output, run.LeadAgentID) {
+		if s.agentMentioned(ctx, output, run.LeadAgentID) {
+			if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, assistantMsg.ID, "agent", run.LeadAgentID, run.LeadAgentID, "explicit_mention", "routed", pgtype.UUID{}, "", ""); err != nil {
+				slog.Warn("chat plan helper lead edge create failed",
+					"chat_plan_run_id", util.UUIDToString(run.ID),
+					"message_id", util.UUIDToString(assistantMsg.ID),
+					"error", err,
+				)
+			}
 			if _, err := s.Queries.MarkChatPlanConsultationResponded(ctx, db.MarkChatPlanConsultationRespondedParams{
 				ID:                task.ChatPlanConsultationID,
 				ResponseMessageID: assistantMsg.ID,
@@ -1783,9 +1803,19 @@ func (s *TaskService) handleChatPlanTaskCompleted(ctx context.Context, task db.A
 			Status: "failed",
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("mark consultation missing lead mention: %w", err)
+		} else {
+			if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, assistantMsg.ID, "agent", run.LeadAgentID, run.LeadAgentID, "explicit_mention", "blocked", pgtype.UUID{}, "missing_lead_mention", "Helper reply must mention the lead agent before control returns to the lead."); err != nil {
+				slog.Warn("chat plan missing lead edge create failed",
+					"chat_plan_run_id", util.UUIDToString(run.ID),
+					"message_id", util.UUIDToString(assistantMsg.ID),
+					"error", err,
+				)
+			}
+			s.broadcastChatPlanRunsUpdated(ctx, run)
+			return nil
 		}
 		s.broadcastChatPlanRunsUpdated(ctx, run)
-		return s.resumePlanLeadIfConsultationsClosed(ctx, task.ChatPlanRunID, pgtype.UUID{})
+		return s.resumePlanLeadIfConsultationsClosed(ctx, task.ChatPlanRunID, assistantMsg.ID)
 	}
 	if task.ChatTaskKind != ChatTaskKindPlanLead {
 		return nil
@@ -1816,20 +1846,31 @@ func (s *TaskService) enqueueConsultationsFromLeadMessage(ctx context.Context, t
 	if len(eligible) == 0 {
 		return nil
 	}
-	existing, err := s.Queries.ListChatPlanConsultationsByRun(ctx, run.ID)
-	if err != nil {
-		return err
-	}
-	if len(existing) > 0 {
-		return nil
-	}
 
-	mentioned := parseAgentMentions(output)
+	mentioned := s.planLeadMentionedHelpers(ctx, output, eligible)
 	createdAny := false
 	closedAny := false
+	limitReached := run.ConsultationWaveCount >= maxChatPlanConsultationWaves
 	for _, agentID := range mentioned {
 		key := util.UUIDToString(agentID)
 		if _, ok := eligible[key]; !ok {
+			if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, assistantMsg.ID, "agent", agentID, agentID, "explicit_mention", "blocked", pgtype.UUID{}, "out_of_scope", "Lead can only consult agents in the selected squad."); err != nil {
+				slog.Warn("chat plan out-of-scope edge create failed",
+					"plan_run_id", util.UUIDToString(run.ID),
+					"target_agent_id", key,
+					"error", err,
+				)
+			}
+			continue
+		}
+		if limitReached {
+			if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, assistantMsg.ID, "agent", agentID, agentID, "explicit_mention", "skipped", pgtype.UUID{}, "consultation_limit_reached", "Plan squad consultation is limited to 5 waves; the lead should summarize the current consensus."); err != nil {
+				slog.Warn("chat plan limit edge create failed",
+					"plan_run_id", util.UUIDToString(run.ID),
+					"target_agent_id", key,
+					"error", err,
+				)
+			}
 			continue
 		}
 		consultation, err := s.Queries.CreateChatPlanConsultation(ctx, db.CreateChatPlanConsultationParams{
@@ -1869,6 +1910,14 @@ func (s *TaskService) enqueueConsultationsFromLeadMessage(ctx context.Context, t
 			closedAny = true
 			continue
 		}
+		if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, assistantMsg.ID, "agent", agentID, agentID, "explicit_mention", "routed", helperTask.ID, "", ""); err != nil {
+			slog.Warn("chat plan helper edge create failed",
+				"plan_run_id", util.UUIDToString(run.ID),
+				"consultation_id", util.UUIDToString(consultation.ID),
+				"task_id", util.UUIDToString(helperTask.ID),
+				"error", err,
+			)
+		}
 		if _, err := s.Queries.SetChatPlanConsultationTask(ctx, db.SetChatPlanConsultationTaskParams{
 			ID:     consultation.ID,
 			TaskID: helperTask.ID,
@@ -1883,7 +1932,11 @@ func (s *TaskService) enqueueConsultationsFromLeadMessage(ctx context.Context, t
 		createdAny = true
 	}
 	if createdAny {
-		updated, err := s.Queries.UpdateChatPlanRunStatus(ctx, db.UpdateChatPlanRunStatusParams{
+		updated, err := s.Queries.IncrementChatPlanRunConsultationWaveCount(ctx, run.ID)
+		if err != nil {
+			return fmt.Errorf("increment plan consultation wave count: %w", err)
+		}
+		updated, err = s.Queries.UpdateChatPlanRunStatus(ctx, db.UpdateChatPlanRunStatusParams{
 			ID:     run.ID,
 			Status: "consulting",
 		})
@@ -1959,6 +2012,280 @@ func agentMentioned(content string, agentID pgtype.UUID) bool {
 	return false
 }
 
+func (s *TaskService) agentMentioned(ctx context.Context, content string, agentID pgtype.UUID) bool {
+	if agentMentioned(content, agentID) {
+		return true
+	}
+	if !agentID.Valid || !strings.Contains(content, "@") {
+		return false
+	}
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil || agent.ArchivedAt.Valid {
+		return false
+	}
+	return hasPlainAgentMention(content, agent.Name)
+}
+
+func (s *TaskService) planLeadMentionedHelpers(ctx context.Context, content string, eligible map[string]pgtype.UUID) []pgtype.UUID {
+	mentioned := parseAgentMentions(content)
+	if len(eligible) == 0 || !strings.Contains(content, "@") {
+		return mentioned
+	}
+	seen := make(map[string]struct{}, len(mentioned)+len(eligible))
+	for _, agentID := range mentioned {
+		seen[util.UUIDToString(agentID)] = struct{}{}
+	}
+	for key, agentID := range eligible {
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		agent, err := s.Queries.GetAgent(ctx, agentID)
+		if err != nil || agent.ArchivedAt.Valid {
+			continue
+		}
+		if hasPlainAgentMention(content, agent.Name) {
+			mentioned = append(mentioned, agentID)
+			seen[key] = struct{}{}
+		}
+	}
+	return mentioned
+}
+
+func hasPlainAgentMention(content, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	needle := "@" + strings.ToLower(name)
+	haystack := strings.ToLower(content)
+	for start := 0; start < len(haystack); {
+		idx := strings.Index(haystack[start:], needle)
+		if idx < 0 {
+			return false
+		}
+		pos := start + idx
+		if pos > 0 {
+			before, _ := utf8.DecodeLastRuneInString(haystack[:pos])
+			if isPlainMentionNameContinue(before) {
+				start = pos + 1
+				continue
+			}
+		}
+		after := pos + len(needle)
+		if after >= len(haystack) {
+			return true
+		}
+		r, _ := utf8.DecodeRuneInString(haystack[after:])
+		if !isPlainMentionNameContinue(r) {
+			return true
+		}
+		start = after
+	}
+	return false
+}
+
+func isPlainMentionNameContinue(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'
+}
+
+type chatDirectedStateCandidate struct {
+	RecipientType   string  `json:"recipient_type"`
+	RecipientID     string  `json:"recipient_id"`
+	ResolvedAgentID *string `json:"resolved_agent_id,omitempty"`
+}
+
+type serviceChatRoutingTarget struct {
+	RecipientType   string
+	RecipientID     pgtype.UUID
+	ResolvedAgentID pgtype.UUID
+	Status          string
+	WarningCode     string
+	WarningMessage  string
+}
+
+func (s *TaskService) handleOrdinaryChatTaskCompleted(ctx context.Context, task db.AgentTaskQueue, assistantMsg db.ChatMessage, output string) error {
+	session, err := s.Queries.GetChatSession(ctx, task.ChatSessionID)
+	if err != nil {
+		return err
+	}
+	targets := s.resolveOrdinaryChatAgentMentions(ctx, session.WorkspaceID, task.AgentID, output)
+	if len(targets) == 0 {
+		return s.upsertChatDirectedActive(ctx, session, assistantMsg.ID, task.AgentID)
+	}
+
+	routable := make([]serviceChatRoutingTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.Status != "routed" || !target.ResolvedAgentID.Valid {
+			if err := s.createChatRoutingEdge(ctx, session.WorkspaceID, session.ID, assistantMsg.ID, target.RecipientType, target.RecipientID, target.ResolvedAgentID, "explicit_mention", target.Status, pgtype.UUID{}, target.WarningCode, target.WarningMessage); err != nil {
+				slog.Warn("ordinary chat blocked edge create failed",
+					"message_id", util.UUIDToString(assistantMsg.ID),
+					"recipient_id", util.UUIDToString(target.RecipientID),
+					"error", err,
+				)
+			}
+			continue
+		}
+		child, err := s.EnqueueChatTaskForAgent(ctx, session, target.ResolvedAgentID, assistantMsg.ID, pgtype.UUID{}, pgtype.UUID{}, ChatTaskKindNormal)
+		if err != nil {
+			if edgeErr := s.createChatRoutingEdge(ctx, session.WorkspaceID, session.ID, assistantMsg.ID, target.RecipientType, target.RecipientID, target.ResolvedAgentID, "explicit_mention", "failed", pgtype.UUID{}, "enqueue_failed", err.Error()); edgeErr != nil {
+				slog.Warn("ordinary chat failed edge create failed",
+					"message_id", util.UUIDToString(assistantMsg.ID),
+					"recipient_id", util.UUIDToString(target.RecipientID),
+					"error", edgeErr,
+				)
+			}
+			continue
+		}
+		if err := s.createChatRoutingEdge(ctx, session.WorkspaceID, session.ID, assistantMsg.ID, target.RecipientType, target.RecipientID, target.ResolvedAgentID, "explicit_mention", "routed", child.ID, "", ""); err != nil {
+			slog.Warn("ordinary chat edge create failed",
+				"message_id", util.UUIDToString(assistantMsg.ID),
+				"task_id", util.UUIDToString(child.ID),
+				"error", err,
+			)
+		}
+		routable = append(routable, target)
+	}
+
+	switch len(routable) {
+	case 0:
+		return s.upsertChatDirectedActive(ctx, session, assistantMsg.ID, task.AgentID)
+	case 1:
+		return s.upsertChatDirectedActive(ctx, session, assistantMsg.ID, routable[0].ResolvedAgentID)
+	default:
+		return s.upsertChatDirectedAmbiguous(ctx, session, assistantMsg.ID, routable)
+	}
+}
+
+func (s *TaskService) resolveOrdinaryChatAgentMentions(ctx context.Context, workspaceID, authorAgentID pgtype.UUID, output string) []serviceChatRoutingTarget {
+	mentions := util.ParseMentions(output)
+	targets := make([]serviceChatRoutingTarget, 0, len(mentions))
+	for _, mention := range mentions {
+		if mention.Type != "agent" && mention.Type != "squad" {
+			continue
+		}
+		recipientID, err := util.ParseUUID(mention.ID)
+		if err != nil {
+			continue
+		}
+		target := serviceChatRoutingTarget{
+			RecipientType: mention.Type,
+			RecipientID:   recipientID,
+			Status:        "routed",
+		}
+		switch mention.Type {
+		case "agent":
+			if util.UUIDToString(recipientID) == util.UUIDToString(authorAgentID) {
+				target.ResolvedAgentID = recipientID
+				target.Status = "skipped"
+				target.WarningCode = "self_mention"
+				target.WarningMessage = "Agent mention points back to the same agent."
+				targets = append(targets, target)
+				continue
+			}
+			agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+				ID:          recipientID,
+				WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				target.Status = "blocked"
+				target.WarningCode = "recipient_not_found"
+				target.WarningMessage = "Mentioned agent was not found in this workspace."
+			} else if agent.ArchivedAt.Valid {
+				target.Status = "blocked"
+				target.WarningCode = "recipient_archived"
+				target.WarningMessage = "Mentioned agent is archived."
+			} else {
+				target.ResolvedAgentID = recipientID
+			}
+		case "squad":
+			squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+				ID:          recipientID,
+				WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				target.Status = "blocked"
+				target.WarningCode = "recipient_not_found"
+				target.WarningMessage = "Mentioned squad was not found in this workspace."
+			} else if squad.ArchivedAt.Valid {
+				target.Status = "blocked"
+				target.WarningCode = "recipient_archived"
+				target.WarningMessage = "Mentioned squad is archived."
+			} else if util.UUIDToString(squad.LeaderID) == util.UUIDToString(authorAgentID) {
+				target.ResolvedAgentID = squad.LeaderID
+				target.Status = "skipped"
+				target.WarningCode = "self_mention"
+				target.WarningMessage = "Squad mention resolves back to the same lead agent."
+			} else {
+				target.ResolvedAgentID = squad.LeaderID
+			}
+		}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+func (s *TaskService) createChatRoutingEdge(ctx context.Context, workspaceID, chatSessionID, messageID pgtype.UUID, recipientType string, recipientID, resolvedAgentID pgtype.UUID, source, status string, taskID pgtype.UUID, warningCode, warningMessage string) error {
+	if source == "" {
+		source = "explicit_mention"
+	}
+	if status == "" {
+		status = "routed"
+	}
+	_, err := s.Queries.CreateChatMessageRecipient(ctx, db.CreateChatMessageRecipientParams{
+		WorkspaceID:     workspaceID,
+		ChatSessionID:   chatSessionID,
+		MessageID:       messageID,
+		RecipientType:   recipientType,
+		RecipientID:     recipientID,
+		ResolvedAgentID: resolvedAgentID,
+		Source:          source,
+		Status:          status,
+		RecipientTaskID: taskID,
+		WarningCode:     warningCode,
+		WarningMessage:  warningMessage,
+	})
+	return err
+}
+
+func (s *TaskService) upsertChatDirectedActive(ctx context.Context, session db.ChatSession, messageID, activeAgentID pgtype.UUID) error {
+	_, err := s.Queries.UpsertChatSessionDirectedState(ctx, db.UpsertChatSessionDirectedStateParams{
+		ChatSessionID:       session.ID,
+		WorkspaceID:         session.WorkspaceID,
+		State:               "active",
+		ActiveRecipientType: pgtype.Text{String: "agent", Valid: true},
+		ActiveRecipientID:   activeAgentID,
+		ActiveMessageID:     messageID,
+		CandidateRecipients: []byte("[]"),
+	})
+	return err
+}
+
+func (s *TaskService) upsertChatDirectedAmbiguous(ctx context.Context, session db.ChatSession, messageID pgtype.UUID, targets []serviceChatRoutingTarget) error {
+	candidates := make([]chatDirectedStateCandidate, 0, len(targets))
+	for _, target := range targets {
+		candidate := chatDirectedStateCandidate{
+			RecipientType: target.RecipientType,
+			RecipientID:   util.UUIDToString(target.RecipientID),
+		}
+		if target.ResolvedAgentID.Valid {
+			resolved := util.UUIDToString(target.ResolvedAgentID)
+			candidate.ResolvedAgentID = &resolved
+		}
+		candidates = append(candidates, candidate)
+	}
+	raw, _ := json.Marshal(candidates)
+	_, err := s.Queries.UpsertChatSessionDirectedState(ctx, db.UpsertChatSessionDirectedStateParams{
+		ChatSessionID:       session.ID,
+		WorkspaceID:         session.WorkspaceID,
+		State:               "ambiguous",
+		ActiveRecipientType: pgtype.Text{},
+		ActiveRecipientID:   pgtype.UUID{},
+		ActiveMessageID:     messageID,
+		CandidateRecipients: raw,
+	})
+	return err
+}
+
 func (s *TaskService) handleChatPlanConsultationFailed(ctx context.Context, task db.AgentTaskQueue) {
 	reason := "failed"
 	if task.FailureReason.Valid && task.FailureReason.String == "timeout" {
@@ -2013,8 +2340,27 @@ func (s *TaskService) resumePlanLeadIfConsultationsClosed(ctx context.Context, p
 		return err
 	}
 	s.broadcastChatPlanRunsUpdated(ctx, updated)
-	_, err = s.EnqueuePlanLeadTask(ctx, session, updated, triggerMessageID)
-	return err
+	task, err := s.EnqueuePlanLeadTask(ctx, session, updated, triggerMessageID)
+	if err != nil {
+		return err
+	}
+	if triggerMessageID.Valid {
+		if err := s.createChatRoutingEdge(ctx, run.WorkspaceID, run.ChatSessionID, triggerMessageID, "agent", run.LeadAgentID, run.LeadAgentID, "explicit_mention", "routed", task.ID, "", ""); err != nil {
+			slog.Warn("chat plan lead resume edge create failed",
+				"chat_plan_run_id", util.UUIDToString(run.ID),
+				"trigger_message_id", util.UUIDToString(triggerMessageID),
+				"task_id", util.UUIDToString(task.ID),
+				"error", err,
+			)
+		}
+	}
+	if err := s.upsertChatDirectedActive(ctx, session, triggerMessageID, run.LeadAgentID); err != nil {
+		slog.Warn("chat plan lead directed state update failed",
+			"chat_plan_run_id", util.UUIDToString(run.ID),
+			"error", err,
+		)
+	}
+	return nil
 }
 
 func (s *TaskService) broadcastChatPlanRunsUpdated(ctx context.Context, run db.ChatPlanRun) {
@@ -2302,6 +2648,7 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 		payload.MessageID = util.UUIDToString(msg.ID)
 		payload.Content = msg.Content
 		payload.AuthorType = msg.AuthorType
+		payload.AuthorMemberID = util.UUIDToString(msg.AuthorMemberID)
 		payload.AuthorAgentID = util.UUIDToString(msg.AuthorAgentID)
 		payload.PlanRunID = util.UUIDToString(msg.PlanRunID)
 		payload.ConsultationID = util.UUIDToString(msg.ConsultationID)

@@ -126,6 +126,14 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
 }
 
 describe("ChatInput attachment wiring", () => {
+  it("renders footer controls on the lower edge inside the composer", () => {
+    renderInput({ footerSlot: <div data-testid="plan-footer">Plan footer</div> });
+
+    const footer = screen.getByTestId("plan-footer");
+    expect(footer.closest(".border-t")).toBeInTheDocument();
+    expect(footer.closest(".rounded-lg")).toBeInTheDocument();
+  });
+
   it("routes dropped files through the editor's upload handler", async () => {
     const { onUploadFile } = renderInput();
     expect(dropHandlers.onDrop).not.toBeNull();

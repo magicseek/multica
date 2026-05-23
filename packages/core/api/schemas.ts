@@ -1373,6 +1373,7 @@ export const ChatPlanRunSchema = z.object({
   initial_message_id: z.string().nullable().default(null),
   latest_message_id: z.string().nullable().default(null),
   summary: PlanSummarySchema.nullable().default(null),
+  consultation_wave_count: z.number().optional(),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
   completed_at: z.string().nullable().optional(),
@@ -1404,6 +1405,7 @@ export const EMPTY_CHAT_PLAN_RUN: ChatPlanRun = {
   initial_message_id: null,
   latest_message_id: null,
   summary: null,
+  consultation_wave_count: 0,
   created_at: "",
   updated_at: "",
 };
@@ -1426,6 +1428,32 @@ export const ChatPlanConsultationSchema = z.object({
 export const ChatPlanConsultationListSchema = z.array(ChatPlanConsultationSchema);
 export const EMPTY_CHAT_PLAN_CONSULTATIONS: ChatPlanConsultation[] = [];
 
+export const ChatMessageActorSchema = z.object({
+  type: z.string().default("member"),
+  id: z.string().nullable().optional(),
+}).loose();
+
+export const ChatMessageRecipientSchema = z.object({
+  id: z.string(),
+  message_id: z.string().default(""),
+  recipient_type: z.string().default("agent"),
+  recipient_id: z.string().default(""),
+  resolved_agent_id: z.string().nullable().default(null),
+  source: z.string().default("explicit_mention"),
+  status: z.string().default("pending"),
+  task_id: z.string().nullable().default(null),
+  warning_code: z.string().default(""),
+  warning_message: z.string().default(""),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const ChatRoutingWarningSchema = z.object({
+  recipient_id: z.string().default(""),
+  code: z.string().default(""),
+  message: z.string().default(""),
+}).loose();
+
 export const ChatMessageSchema = z.object({
   id: z.string(),
   chat_session_id: z.string().default(""),
@@ -1433,10 +1461,14 @@ export const ChatMessageSchema = z.object({
   content: z.string().default(""),
   task_id: z.string().nullable().default(null),
   author_type: z.string().nullable().optional(),
+  author_member_id: z.string().nullable().optional(),
   author_agent_id: z.string().nullable().optional(),
   plan_run_id: z.string().nullable().optional(),
   consultation_id: z.string().nullable().optional(),
   reply_to_message_id: z.string().nullable().optional(),
+  sender: ChatMessageActorSchema.optional(),
+  recipients: z.array(ChatMessageRecipientSchema).default([]),
+  routing_warnings: z.array(ChatRoutingWarningSchema).default([]),
   created_at: z.string().default(""),
   attachments: z.array(AttachmentSchema).optional(),
   failure_reason: z.string().nullable().optional(),
@@ -1545,6 +1577,7 @@ export const EMPTY_CHAT_SESSION_ISSUES_RESPONSE: ChatSessionIssuesResponse = {
 export const SendChatMessageResponseSchema = z.object({
   message_id: z.string().default(""),
   task_id: z.string().default(""),
+  agent_id: z.string().nullable().optional(),
   plan_run_id: z.string().nullable().optional(),
   created_at: z.string().default(""),
 }).loose();
@@ -1552,6 +1585,7 @@ export const SendChatMessageResponseSchema = z.object({
 export const EMPTY_SEND_CHAT_MESSAGE_RESPONSE: SendChatMessageResponse = {
   message_id: "",
   task_id: "",
+  agent_id: null,
   plan_run_id: null,
   created_at: "",
 };

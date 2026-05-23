@@ -15,6 +15,7 @@ interface Props {
   taskMessages: readonly TaskMessagePayload[];
   /** Resolved presence; pass `undefined` to suppress availability hints. */
   availability: AgentAvailability | undefined;
+  className?: string;
 }
 
 interface Stage {
@@ -123,6 +124,7 @@ export function TaskStatusPill({
   pendingTask,
   taskMessages,
   availability,
+  className,
 }: Props) {
   const resolveStage = useResolveStage();
   // Anchor: locked on first render. Once set we never reassign — otherwise
@@ -155,7 +157,7 @@ export function TaskStatusPill({
 
   return (
     <div
-      className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
+      className={cn("flex items-center gap-1.5 px-1 text-xs text-muted-foreground", className)}
       aria-live="polite"
     >
       {!stage.static && (

@@ -42,21 +42,22 @@ type ListPlanEnginesResponse struct {
 }
 
 type ChatPlanRunResponse struct {
-	ID               string          `json:"id"`
-	WorkspaceID      string          `json:"workspace_id"`
-	ChatSessionID    string          `json:"chat_session_id"`
-	CreatorUserID    string          `json:"creator_user_id"`
-	ActorType        string          `json:"actor_type"`
-	ActorID          string          `json:"actor_id"`
-	LeadAgentID      string          `json:"lead_agent_id"`
-	PlanEngine       string          `json:"plan_engine"`
-	EngineVersion    string          `json:"engine_version"`
-	Status           string          `json:"status"`
-	InitialMessageID *string         `json:"initial_message_id"`
-	LatestMessageID  *string         `json:"latest_message_id"`
-	Summary          json.RawMessage `json:"summary"`
-	CreatedAt        string          `json:"created_at"`
-	UpdatedAt        string          `json:"updated_at"`
+	ID                    string          `json:"id"`
+	WorkspaceID           string          `json:"workspace_id"`
+	ChatSessionID         string          `json:"chat_session_id"`
+	CreatorUserID         string          `json:"creator_user_id"`
+	ActorType             string          `json:"actor_type"`
+	ActorID               string          `json:"actor_id"`
+	LeadAgentID           string          `json:"lead_agent_id"`
+	PlanEngine            string          `json:"plan_engine"`
+	EngineVersion         string          `json:"engine_version"`
+	Status                string          `json:"status"`
+	InitialMessageID      *string         `json:"initial_message_id"`
+	LatestMessageID       *string         `json:"latest_message_id"`
+	Summary               json.RawMessage `json:"summary"`
+	CreatedAt             string          `json:"created_at"`
+	UpdatedAt             string          `json:"updated_at"`
+	ConsultationWaveCount int32           `json:"consultation_wave_count"`
 }
 
 type ChatPlanConsultationResponse struct {
@@ -73,20 +74,21 @@ type ChatPlanConsultationResponse struct {
 }
 
 type ChatPlanTaskData struct {
-	RunID           string                         `json:"run_id"`
-	ActorType       string                         `json:"actor_type"`
-	ActorID         string                         `json:"actor_id"`
-	LeadAgentID     string                         `json:"lead_agent_id"`
-	Status          string                         `json:"status"`
-	TaskKind        string                         `json:"task_kind"`
-	PlanEngine      ChatPlanEngineTaskData         `json:"plan_engine"`
-	Summary         json.RawMessage                `json:"summary"`
-	Transcript      []ChatPlanTranscriptMessage    `json:"transcript"`
-	Consultations   []ChatPlanConsultationResponse `json:"consultations,omitempty"`
-	Squad           *ChatPlanSquadTaskData         `json:"squad,omitempty"`
-	Consultation    *ChatPlanConsultationTaskData  `json:"consultation,omitempty"`
-	ProposalPath    string                         `json:"proposal_path"`
-	PlanSummaryPath string                         `json:"plan_summary_path"`
+	RunID                 string                         `json:"run_id"`
+	ActorType             string                         `json:"actor_type"`
+	ActorID               string                         `json:"actor_id"`
+	LeadAgentID           string                         `json:"lead_agent_id"`
+	Status                string                         `json:"status"`
+	TaskKind              string                         `json:"task_kind"`
+	ConsultationWaveCount int32                          `json:"consultation_wave_count"`
+	PlanEngine            ChatPlanEngineTaskData         `json:"plan_engine"`
+	Summary               json.RawMessage                `json:"summary"`
+	Transcript            []ChatPlanTranscriptMessage    `json:"transcript"`
+	Consultations         []ChatPlanConsultationResponse `json:"consultations,omitempty"`
+	Squad                 *ChatPlanSquadTaskData         `json:"squad,omitempty"`
+	Consultation          *ChatPlanConsultationTaskData  `json:"consultation,omitempty"`
+	ProposalPath          string                         `json:"proposal_path"`
+	PlanSummaryPath       string                         `json:"plan_summary_path"`
 }
 
 type ChatPlanEngineTaskData struct {
@@ -144,6 +146,7 @@ func planEngineDefinitions() []planEngineDefinition {
 - Challenge vague goals, hidden constraints, unclear acceptance criteria, and missing ownership.
 - Track confirmed requirements, rejected options, consensus notes, and open questions in the plan summary manifest.
 - Do not produce issue proposals until the plan is specific enough for an implementer to execute without guessing.
+- For squad plans, consult helpers by emitting the exact helper mention from plan.squad.helpers[].mention. Helper replies must mention the lead using plan.consultation.lead_mention before control returns to the lead.
 - When ready, write reviewable issue proposals instead of creating issues directly.`),
 		},
 		{
@@ -156,6 +159,7 @@ func planEngineDefinitions() []planEngineDefinition {
 - Group ideas by user value and implementation dependency.
 - Converge only after comparing tradeoffs and eliminating weak options.
 - Keep the plan summary current with options kept, options rejected, consensus notes, and open questions.
+- For squad plans, consult helpers by emitting the exact helper mention from plan.squad.helpers[].mention. Helper replies must mention the lead using plan.consultation.lead_mention before control returns to the lead.
 - When ready, propose a concise issue set that preserves optionality where useful but avoids vague catch-all tasks.`),
 		},
 		{
@@ -168,6 +172,7 @@ func planEngineDefinitions() []planEngineDefinition {
 - Call out weak assumptions directly and ask for the smallest missing fact that would change the plan.
 - Distinguish must-have work from nice-to-have polish.
 - Record product consensus, rejected bets, and unresolved risks in the plan summary manifest.
+- For squad plans, consult helpers by emitting the exact helper mention from plan.squad.helpers[].mention. Helper replies must mention the lead using plan.consultation.lead_mention before control returns to the lead.
 - When ready, propose issues that preserve the strategic intent and include clear acceptance criteria.`),
 		},
 	}
@@ -350,21 +355,22 @@ func (h *Handler) resolvePlanActorForSend(w http.ResponseWriter, r *http.Request
 
 func chatPlanRunToResponse(row db.ChatPlanRun) ChatPlanRunResponse {
 	return ChatPlanRunResponse{
-		ID:               uuidToString(row.ID),
-		WorkspaceID:      uuidToString(row.WorkspaceID),
-		ChatSessionID:    uuidToString(row.ChatSessionID),
-		CreatorUserID:    uuidToString(row.CreatorUserID),
-		ActorType:        row.ActorType,
-		ActorID:          uuidToString(row.ActorID),
-		LeadAgentID:      uuidToString(row.LeadAgentID),
-		PlanEngine:       row.PlanEngine,
-		EngineVersion:    row.EngineVersion,
-		Status:           row.Status,
-		InitialMessageID: uuidToPtr(row.InitialMessageID),
-		LatestMessageID:  uuidToPtr(row.LatestMessageID),
-		Summary:          planJSONRawOrEmpty(row.Summary),
-		CreatedAt:        timestampToString(row.CreatedAt),
-		UpdatedAt:        timestampToString(row.UpdatedAt),
+		ID:                    uuidToString(row.ID),
+		WorkspaceID:           uuidToString(row.WorkspaceID),
+		ChatSessionID:         uuidToString(row.ChatSessionID),
+		CreatorUserID:         uuidToString(row.CreatorUserID),
+		ActorType:             row.ActorType,
+		ActorID:               uuidToString(row.ActorID),
+		LeadAgentID:           uuidToString(row.LeadAgentID),
+		PlanEngine:            row.PlanEngine,
+		EngineVersion:         row.EngineVersion,
+		Status:                row.Status,
+		InitialMessageID:      uuidToPtr(row.InitialMessageID),
+		LatestMessageID:       uuidToPtr(row.LatestMessageID),
+		Summary:               planJSONRawOrEmpty(row.Summary),
+		CreatedAt:             timestampToString(row.CreatedAt),
+		UpdatedAt:             timestampToString(row.UpdatedAt),
+		ConsultationWaveCount: row.ConsultationWaveCount,
 	}
 }
 
@@ -415,16 +421,17 @@ func (h *Handler) populatePlanClaimContext(ctx context.Context, resp *AgentTaskR
 		taskKind = service.ChatTaskKindPlanLead
 	}
 	plan := &ChatPlanTaskData{
-		RunID:           uuidToString(run.ID),
-		ActorType:       run.ActorType,
-		ActorID:         uuidToString(run.ActorID),
-		LeadAgentID:     uuidToString(run.LeadAgentID),
-		Status:          run.Status,
-		TaskKind:        taskKind,
-		PlanEngine:      engineData,
-		Summary:         planJSONRawOrEmpty(run.Summary),
-		ProposalPath:    ".multica/chats/" + uuidToString(session.ID) + "/issue-proposals.json",
-		PlanSummaryPath: ".multica/chats/" + uuidToString(session.ID) + "/plan-summary.json",
+		RunID:                 uuidToString(run.ID),
+		ActorType:             run.ActorType,
+		ActorID:               uuidToString(run.ActorID),
+		LeadAgentID:           uuidToString(run.LeadAgentID),
+		Status:                run.Status,
+		TaskKind:              taskKind,
+		ConsultationWaveCount: run.ConsultationWaveCount,
+		PlanEngine:            engineData,
+		Summary:               planJSONRawOrEmpty(run.Summary),
+		ProposalPath:          ".multica/chats/" + uuidToString(session.ID) + "/issue-proposals.json",
+		PlanSummaryPath:       ".multica/chats/" + uuidToString(session.ID) + "/plan-summary.json",
 	}
 	plan.Transcript = h.planTranscript(ctx, run.ID, session.ID)
 	if consults, err := h.Queries.ListChatPlanConsultationsByRun(ctx, run.ID); err == nil {

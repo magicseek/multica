@@ -136,11 +136,12 @@ export function useSendChatMessage(options: UseSendChatMessageOptions) {
               : m
           )),
         );
-        qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
-          task_id: result.task_id,
-          status: "queued",
-          created_at: result.created_at,
-        });
+      qc.setQueryData<ChatPendingTask>(chatKeys.pendingTask(sessionId), {
+        task_id: result.task_id,
+        status: "queued",
+        created_at: result.created_at,
+        ...(result.agent_id ? { agent_id: result.agent_id } : {}),
+      });
         patchPendingChatTaskAggregate(qc, wsId, {
           task_id: result.task_id,
           status: "queued",

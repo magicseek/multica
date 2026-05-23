@@ -63,6 +63,13 @@
 - Frontend controls send explicit enabled + slug values through create/update requests; do not copy server state into Zustand.
 - Duplicate/create flows preserve an explicit enabled value and known slug from the source agent.
 - Claim responses copy the fresh DB values into `task.agent.execution_protocol_enabled` and `task.agent.execution_protocol_slug`; the daemon must not do an extra query to decide prompt behavior.
+- Comment-triggered tasks keep the specialized comment workflow, but an
+  agent-authored trigger is also a possible handoff. The daemon prompt and
+  runtime config must carry `trigger_author_type` into `TaskContextForEnv` and
+  tell the receiving agent to move the issue to `in_progress` when it accepts
+  concrete delegated work, then to `in_review` after posting the result. Human
+  comment triggers remain status opt-in: do not change issue status unless the
+  comment explicitly asks.
 - Prompt injection is allowed only when all are true:
   - `ExecutionProtocolEnabled == true`
   - `IssueID != ""`
@@ -91,8 +98,15 @@
 - Good: create agent with `execution_protocol_enabled=true` and `execution_protocol_slug="trellis-task"`, claim an assignment task, and assert daemon context receives both values.
 - Base: existing agent with omitted field runs legacy assignment workflow.
 - Base: enabled agent handles a comment-triggered task and renders the comment workflow only.
+- Good: agent A comments with a concrete `@agent B` handoff; agent B's claim
+  context identifies the trigger author as `agent`, and both per-turn prompt
+  and runtime config include conditional `in_progress` / `in_review` status
+  commands.
 - Bad: adding a frontend protocol picker without backend round-trip tests.
 - Bad: gating only on the agent setting and injecting protocol before specialized task branches.
+- Bad: treating every comment-triggered task as a pure reply. That prevents
+  agent-to-agent delegated work from advancing issue status even after the
+  receiving agent finishes the task.
 - Bad: storing the flag in a client-side Zustand store instead of API state.
 - Bad: introducing AETHER as a built-in option when the product requirement is Trellis plus standard assignment only.
 
@@ -111,6 +125,8 @@
   - enabled ordinary assignment renders `## Task Execution Protocol`
   - enabled `trellis-task` ordinary assignment renders `## Trellis Task Protocol`
   - enabled comment/chat/autopilot/quick-create/squad paths do not render the protocol
+  - agent-authored comment triggers include conditional handoff status
+    guidance, including when a workflow snapshot is present
 - Frontend tests:
   - create dialog submits enabled + slug from the protocol picker
   - duplicate mode initializes from the source agent value

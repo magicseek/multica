@@ -96,14 +96,17 @@ export function applyChatDoneToCache(
           role: "assistant",
           content,
           task_id: taskId,
-          author_type: payload.author_type ?? undefined,
-          author_agent_id: payload.author_agent_id ?? undefined,
-          plan_run_id: payload.plan_run_id ?? undefined,
-          consultation_id: payload.consultation_id ?? undefined,
-          reply_to_message_id: payload.reply_to_message_id ?? undefined,
           created_at: payload.created_at ?? new Date().toISOString(),
           elapsed_ms: payload.elapsed_ms ?? null,
         };
+        if (payload.author_type != null) assistant.author_type = payload.author_type;
+        if (payload.author_member_id != null) assistant.author_member_id = payload.author_member_id;
+        if (payload.author_agent_id != null) assistant.author_agent_id = payload.author_agent_id;
+        if (payload.plan_run_id != null) assistant.plan_run_id = payload.plan_run_id;
+        if (payload.consultation_id != null) assistant.consultation_id = payload.consultation_id;
+        if (payload.reply_to_message_id != null) assistant.reply_to_message_id = payload.reply_to_message_id;
+        if (payload.recipients) assistant.recipients = payload.recipients;
+        if (payload.routing_warnings) assistant.routing_warnings = payload.routing_warnings;
         return [...old, assistant];
       },
     );
@@ -731,6 +734,7 @@ export function useRealtimeSync(
           ...(old ?? {}),
           task_id: payload.task_id,
           status: "queued",
+          agent_id: payload.agent_id,
         }),
       );
       invalidatePendingAggregate();
@@ -749,7 +753,7 @@ export function useRealtimeSync(
         chatKeys.pendingTask(payload.chat_session_id),
         (old) => {
           if (!old || old.task_id !== payload.task_id) return old;
-          return { ...old, status: "running" };
+          return { ...old, status: "running", agent_id: payload.agent_id ?? old.agent_id };
         },
       );
     });

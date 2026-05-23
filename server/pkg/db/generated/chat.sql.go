@@ -34,7 +34,7 @@ SET status = 'cancelled',
 WHERE id = $1
   AND workspace_id = $2
   AND status IN ('brainstorming', 'consulting', 'ready_for_approval')
-RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 `
 
 type CancelChatPlanRunParams struct {
@@ -64,6 +64,7 @@ func (q *Queries) CancelChatPlanRun(ctx context.Context, arg CancelChatPlanRunPa
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -217,6 +218,7 @@ INSERT INTO chat_message (
     failure_reason,
     elapsed_ms,
     author_type,
+    author_member_id,
     author_agent_id,
     plan_run_id,
     consultation_id,
@@ -233,9 +235,10 @@ VALUES (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id
 `
 
 type CreateChatMessageParams struct {
@@ -246,6 +249,7 @@ type CreateChatMessageParams struct {
 	FailureReason    pgtype.Text `json:"failure_reason"`
 	ElapsedMs        pgtype.Int8 `json:"elapsed_ms"`
 	AuthorType       interface{} `json:"author_type"`
+	AuthorMemberID   pgtype.UUID `json:"author_member_id"`
 	AuthorAgentID    pgtype.UUID `json:"author_agent_id"`
 	PlanRunID        pgtype.UUID `json:"plan_run_id"`
 	ConsultationID   pgtype.UUID `json:"consultation_id"`
@@ -261,6 +265,7 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		arg.FailureReason,
 		arg.ElapsedMs,
 		arg.AuthorType,
+		arg.AuthorMemberID,
 		arg.AuthorAgentID,
 		arg.PlanRunID,
 		arg.ConsultationID,
@@ -281,6 +286,92 @@ func (q *Queries) CreateChatMessage(ctx context.Context, arg CreateChatMessagePa
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
+	)
+	return i, err
+}
+
+const createChatMessageRecipient = `-- name: CreateChatMessageRecipient :one
+INSERT INTO chat_message_recipient (
+    workspace_id,
+    chat_session_id,
+    message_id,
+    recipient_type,
+    recipient_id,
+    resolved_agent_id,
+    source,
+    status,
+    task_id,
+    warning_code,
+    warning_message
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    COALESCE($7, 'explicit_mention'),
+    COALESCE($8, 'pending'),
+    $9,
+    COALESCE($10, ''),
+    COALESCE($11, '')
+)
+ON CONFLICT (message_id, recipient_type, recipient_id, source)
+DO UPDATE SET
+    resolved_agent_id = COALESCE(EXCLUDED.resolved_agent_id, chat_message_recipient.resolved_agent_id),
+    status = EXCLUDED.status,
+    task_id = COALESCE(EXCLUDED.task_id, chat_message_recipient.task_id),
+    warning_code = EXCLUDED.warning_code,
+    warning_message = EXCLUDED.warning_message,
+    updated_at = now()
+RETURNING id, workspace_id, chat_session_id, message_id, recipient_type, recipient_id, resolved_agent_id, source, status, task_id, warning_code, warning_message, created_at, updated_at
+`
+
+type CreateChatMessageRecipientParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	ChatSessionID   pgtype.UUID `json:"chat_session_id"`
+	MessageID       pgtype.UUID `json:"message_id"`
+	RecipientType   string      `json:"recipient_type"`
+	RecipientID     pgtype.UUID `json:"recipient_id"`
+	ResolvedAgentID pgtype.UUID `json:"resolved_agent_id"`
+	Source          interface{} `json:"source"`
+	Status          interface{} `json:"status"`
+	RecipientTaskID pgtype.UUID `json:"recipient_task_id"`
+	WarningCode     interface{} `json:"warning_code"`
+	WarningMessage  interface{} `json:"warning_message"`
+}
+
+func (q *Queries) CreateChatMessageRecipient(ctx context.Context, arg CreateChatMessageRecipientParams) (ChatMessageRecipient, error) {
+	row := q.db.QueryRow(ctx, createChatMessageRecipient,
+		arg.WorkspaceID,
+		arg.ChatSessionID,
+		arg.MessageID,
+		arg.RecipientType,
+		arg.RecipientID,
+		arg.ResolvedAgentID,
+		arg.Source,
+		arg.Status,
+		arg.RecipientTaskID,
+		arg.WarningCode,
+		arg.WarningMessage,
+	)
+	var i ChatMessageRecipient
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.MessageID,
+		&i.RecipientType,
+		&i.RecipientID,
+		&i.ResolvedAgentID,
+		&i.Source,
+		&i.Status,
+		&i.TaskID,
+		&i.WarningCode,
+		&i.WarningMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -362,7 +453,7 @@ INSERT INTO chat_plan_run (
     $9,
     $9
 )
-RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 `
 
 type CreateChatPlanRunParams struct {
@@ -409,6 +500,7 @@ func (q *Queries) CreateChatPlanRun(ctx context.Context, arg CreateChatPlanRunPa
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -598,7 +690,7 @@ func (q *Queries) DeleteChatIssueProposalsForTask(ctx context.Context, arg Delet
 }
 
 const getActiveChatPlanRunBySession = `-- name: GetActiveChatPlanRunBySession :one
-SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 FROM chat_plan_run
 WHERE chat_session_id = $1
   AND workspace_id = $2
@@ -634,12 +726,13 @@ func (q *Queries) GetActiveChatPlanRunBySession(ctx context.Context, arg GetActi
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
 
 const getAssistantChatMessageByTask = `-- name: GetAssistantChatMessageByTask :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id FROM chat_message
 WHERE chat_session_id = $1
   AND task_id = $2
   AND role = 'assistant'
@@ -669,6 +762,7 @@ func (q *Queries) GetAssistantChatMessageByTask(ctx context.Context, arg GetAssi
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
 	)
 	return i, err
 }
@@ -700,7 +794,7 @@ func (q *Queries) GetChatIssueProposal(ctx context.Context, id pgtype.UUID) (Cha
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id FROM chat_message
 WHERE id = $1
 `
 
@@ -721,12 +815,13 @@ func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessa
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
 	)
 	return i, err
 }
 
 const getChatMessageInSession = `-- name: GetChatMessageInSession :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id FROM chat_message
 WHERE id = $1 AND chat_session_id = $2
 `
 
@@ -752,6 +847,7 @@ func (q *Queries) GetChatMessageInSession(ctx context.Context, arg GetChatMessag
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
 	)
 	return i, err
 }
@@ -783,7 +879,7 @@ func (q *Queries) GetChatPlanConsultation(ctx context.Context, id pgtype.UUID) (
 }
 
 const getChatPlanRun = `-- name: GetChatPlanRun :one
-SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 FROM chat_plan_run
 WHERE id = $1
 `
@@ -810,12 +906,13 @@ func (q *Queries) GetChatPlanRun(ctx context.Context, id pgtype.UUID) (ChatPlanR
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
 
 const getChatPlanRunInSession = `-- name: GetChatPlanRunInSession :one
-SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 FROM chat_plan_run
 WHERE id = $1
   AND chat_session_id = $2
@@ -850,6 +947,7 @@ func (q *Queries) GetChatPlanRunInSession(ctx context.Context, arg GetChatPlanRu
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -880,6 +978,29 @@ func (q *Queries) GetChatSession(ctx context.Context, id pgtype.UUID) (ChatSessi
 		&i.ProjectContextKind,
 		&i.ProjectSnapshot,
 		&i.TitleSource,
+	)
+	return i, err
+}
+
+const getChatSessionDirectedState = `-- name: GetChatSessionDirectedState :one
+SELECT chat_session_id, workspace_id, state, active_recipient_type, active_recipient_id, active_message_id, candidate_recipients, created_at, updated_at
+FROM chat_session_directed_state
+WHERE chat_session_id = $1
+`
+
+func (q *Queries) GetChatSessionDirectedState(ctx context.Context, chatSessionID pgtype.UUID) (ChatSessionDirectedState, error) {
+	row := q.db.QueryRow(ctx, getChatSessionDirectedState, chatSessionID)
+	var i ChatSessionDirectedState
+	err := row.Scan(
+		&i.ChatSessionID,
+		&i.WorkspaceID,
+		&i.State,
+		&i.ActiveRecipientType,
+		&i.ActiveRecipientID,
+		&i.ActiveMessageID,
+		&i.CandidateRecipients,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -947,7 +1068,7 @@ func (q *Queries) GetLastChatTaskSession(ctx context.Context, chatSessionID pgty
 }
 
 const getPendingChatTask = `-- name: GetPendingChatTask :one
-SELECT id, status, created_at FROM agent_task_queue
+SELECT id, status, created_at, agent_id FROM agent_task_queue
 WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC
 LIMIT 1
@@ -957,6 +1078,7 @@ type GetPendingChatTaskRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
 }
 
 // Returns the most recent in-flight task for a chat session, if any.
@@ -967,7 +1089,47 @@ type GetPendingChatTaskRow struct {
 func (q *Queries) GetPendingChatTask(ctx context.Context, chatSessionID pgtype.UUID) (GetPendingChatTaskRow, error) {
 	row := q.db.QueryRow(ctx, getPendingChatTask, chatSessionID)
 	var i GetPendingChatTaskRow
-	err := row.Scan(&i.ID, &i.Status, &i.CreatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.AgentID,
+	)
+	return i, err
+}
+
+const incrementChatPlanRunConsultationWaveCount = `-- name: IncrementChatPlanRunConsultationWaveCount :one
+UPDATE chat_plan_run
+SET consultation_wave_count = consultation_wave_count + 1,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
+`
+
+func (q *Queries) IncrementChatPlanRunConsultationWaveCount(ctx context.Context, id pgtype.UUID) (ChatPlanRun, error) {
+	row := q.db.QueryRow(ctx, incrementChatPlanRunConsultationWaveCount, id)
+	var i ChatPlanRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ChatSessionID,
+		&i.CreatorUserID,
+		&i.ActorType,
+		&i.ActorID,
+		&i.LeadAgentID,
+		&i.PlanEngine,
+		&i.EngineVersion,
+		&i.Status,
+		&i.InitialMessageID,
+		&i.LatestMessageID,
+		&i.Summary,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+		&i.ConsultationWaveCount,
+	)
 	return i, err
 }
 
@@ -1362,8 +1524,92 @@ func (q *Queries) ListChatIssueProposalsBySession(ctx context.Context, arg ListC
 	return items, nil
 }
 
+const listChatMessageRecipientsByMessages = `-- name: ListChatMessageRecipientsByMessages :many
+SELECT id, workspace_id, chat_session_id, message_id, recipient_type, recipient_id, resolved_agent_id, source, status, task_id, warning_code, warning_message, created_at, updated_at
+FROM chat_message_recipient
+WHERE message_id = ANY($1::uuid[])
+ORDER BY created_at ASC, id ASC
+`
+
+func (q *Queries) ListChatMessageRecipientsByMessages(ctx context.Context, dollar_1 []pgtype.UUID) ([]ChatMessageRecipient, error) {
+	rows, err := q.db.Query(ctx, listChatMessageRecipientsByMessages, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatMessageRecipient{}
+	for rows.Next() {
+		var i ChatMessageRecipient
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatSessionID,
+			&i.MessageID,
+			&i.RecipientType,
+			&i.RecipientID,
+			&i.ResolvedAgentID,
+			&i.Source,
+			&i.Status,
+			&i.TaskID,
+			&i.WarningCode,
+			&i.WarningMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatMessageRecipientsBySession = `-- name: ListChatMessageRecipientsBySession :many
+SELECT id, workspace_id, chat_session_id, message_id, recipient_type, recipient_id, resolved_agent_id, source, status, task_id, warning_code, warning_message, created_at, updated_at
+FROM chat_message_recipient
+WHERE chat_session_id = $1
+ORDER BY created_at ASC, id ASC
+`
+
+func (q *Queries) ListChatMessageRecipientsBySession(ctx context.Context, chatSessionID pgtype.UUID) ([]ChatMessageRecipient, error) {
+	rows, err := q.db.Query(ctx, listChatMessageRecipientsBySession, chatSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatMessageRecipient{}
+	for rows.Next() {
+		var i ChatMessageRecipient
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatSessionID,
+			&i.MessageID,
+			&i.RecipientType,
+			&i.RecipientID,
+			&i.ResolvedAgentID,
+			&i.Source,
+			&i.Status,
+			&i.TaskID,
+			&i.WarningCode,
+			&i.WarningMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id FROM chat_message
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC
 `
@@ -1391,6 +1637,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, chatSessionID pgtype.UUI
 			&i.PlanRunID,
 			&i.ConsultationID,
 			&i.ReplyToMessageID,
+			&i.AuthorMemberID,
 		); err != nil {
 			return nil, err
 		}
@@ -1443,7 +1690,7 @@ func (q *Queries) ListChatPlanConsultationsByRun(ctx context.Context, planRunID 
 }
 
 const listChatPlanRunsBySession = `-- name: ListChatPlanRunsBySession :many
-SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+SELECT id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 FROM chat_plan_run
 WHERE chat_session_id = $1
   AND workspace_id = $2
@@ -1483,6 +1730,7 @@ func (q *Queries) ListChatPlanRunsBySession(ctx context.Context, arg ListChatPla
 			&i.CompletedAt,
 			&i.CancelledAt,
 			&i.FailedAt,
+			&i.ConsultationWaveCount,
 		); err != nil {
 			return nil, err
 		}
@@ -2520,7 +2768,7 @@ const setChatMessagePlanRun = `-- name: SetChatMessagePlanRun :one
 UPDATE chat_message
 SET plan_run_id = $2
 WHERE id = $1
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id
 `
 
 type SetChatMessagePlanRunParams struct {
@@ -2545,6 +2793,7 @@ func (q *Queries) SetChatMessagePlanRun(ctx context.Context, arg SetChatMessageP
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
 	)
 	return i, err
 }
@@ -2553,7 +2802,7 @@ const setChatMessageTaskID = `-- name: SetChatMessageTaskID :one
 UPDATE chat_message
 SET task_id = $2
 WHERE id = $1
-RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id
+RETURNING id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms, author_type, author_agent_id, plan_run_id, consultation_id, reply_to_message_id, author_member_id
 `
 
 type SetChatMessageTaskIDParams struct {
@@ -2578,6 +2827,7 @@ func (q *Queries) SetChatMessageTaskID(ctx context.Context, arg SetChatMessageTa
 		&i.PlanRunID,
 		&i.ConsultationID,
 		&i.ReplyToMessageID,
+		&i.AuthorMemberID,
 	)
 	return i, err
 }
@@ -2850,7 +3100,7 @@ SET latest_message_id = $2,
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 `
 
 type UpdateChatPlanRunLatestMessageParams struct {
@@ -2880,6 +3130,7 @@ func (q *Queries) UpdateChatPlanRunLatestMessage(ctx context.Context, arg Update
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -2892,7 +3143,7 @@ SET status = $2,
     cancelled_at = CASE WHEN $2 = 'cancelled' THEN now() ELSE cancelled_at END,
     failed_at = CASE WHEN $2 = 'failed' THEN now() ELSE failed_at END
 WHERE id = $1
-RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 `
 
 type UpdateChatPlanRunStatusParams struct {
@@ -2922,6 +3173,7 @@ func (q *Queries) UpdateChatPlanRunStatus(ctx context.Context, arg UpdateChatPla
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -2931,7 +3183,7 @@ UPDATE chat_plan_run
 SET summary = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at
+RETURNING id, workspace_id, chat_session_id, creator_user_id, actor_type, actor_id, lead_agent_id, plan_engine, engine_version, status, initial_message_id, latest_message_id, summary, created_at, updated_at, completed_at, cancelled_at, failed_at, consultation_wave_count
 `
 
 type UpdateChatPlanRunSummaryParams struct {
@@ -2961,6 +3213,7 @@ func (q *Queries) UpdateChatPlanRunSummary(ctx context.Context, arg UpdateChatPl
 		&i.CompletedAt,
 		&i.CancelledAt,
 		&i.FailedAt,
+		&i.ConsultationWaveCount,
 	)
 	return i, err
 }
@@ -3082,6 +3335,70 @@ func (q *Queries) UpdateChatSessionTitle(ctx context.Context, arg UpdateChatSess
 		&i.ProjectContextKind,
 		&i.ProjectSnapshot,
 		&i.TitleSource,
+	)
+	return i, err
+}
+
+const upsertChatSessionDirectedState = `-- name: UpsertChatSessionDirectedState :one
+INSERT INTO chat_session_directed_state (
+    chat_session_id,
+    workspace_id,
+    state,
+    active_recipient_type,
+    active_recipient_id,
+    active_message_id,
+    candidate_recipients
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    COALESCE($7, '[]'::jsonb)
+)
+ON CONFLICT (chat_session_id)
+DO UPDATE SET
+    state = EXCLUDED.state,
+    active_recipient_type = EXCLUDED.active_recipient_type,
+    active_recipient_id = EXCLUDED.active_recipient_id,
+    active_message_id = EXCLUDED.active_message_id,
+    candidate_recipients = EXCLUDED.candidate_recipients,
+    updated_at = now()
+RETURNING chat_session_id, workspace_id, state, active_recipient_type, active_recipient_id, active_message_id, candidate_recipients, created_at, updated_at
+`
+
+type UpsertChatSessionDirectedStateParams struct {
+	ChatSessionID       pgtype.UUID `json:"chat_session_id"`
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	State               string      `json:"state"`
+	ActiveRecipientType pgtype.Text `json:"active_recipient_type"`
+	ActiveRecipientID   pgtype.UUID `json:"active_recipient_id"`
+	ActiveMessageID     pgtype.UUID `json:"active_message_id"`
+	CandidateRecipients interface{} `json:"candidate_recipients"`
+}
+
+func (q *Queries) UpsertChatSessionDirectedState(ctx context.Context, arg UpsertChatSessionDirectedStateParams) (ChatSessionDirectedState, error) {
+	row := q.db.QueryRow(ctx, upsertChatSessionDirectedState,
+		arg.ChatSessionID,
+		arg.WorkspaceID,
+		arg.State,
+		arg.ActiveRecipientType,
+		arg.ActiveRecipientID,
+		arg.ActiveMessageID,
+		arg.CandidateRecipients,
+	)
+	var i ChatSessionDirectedState
+	err := row.Scan(
+		&i.ChatSessionID,
+		&i.WorkspaceID,
+		&i.State,
+		&i.ActiveRecipientType,
+		&i.ActiveRecipientID,
+		&i.ActiveMessageID,
+		&i.CandidateRecipients,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

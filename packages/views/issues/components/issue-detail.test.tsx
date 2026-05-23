@@ -723,6 +723,43 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("I can help with this")).toBeInTheDocument();
   });
 
+  it("keeps nested agent reply avatars aligned with the thread header gutter", async () => {
+    mockApiObj.listTimeline.mockResolvedValue([
+      {
+        type: "comment",
+        id: "agent-root",
+        actor_type: "agent",
+        actor_id: "agent-1",
+        content: "[@Agent 2](mention://agent/agent-2) please take this",
+        parent_id: null,
+        created_at: "2026-01-17T00:00:00Z",
+        updated_at: "2026-01-17T00:00:00Z",
+        comment_type: "comment",
+      },
+      {
+        type: "comment",
+        id: "agent-reply",
+        actor_type: "agent",
+        actor_id: "agent-2",
+        content: "Completed the delegated work",
+        parent_id: "agent-root",
+        created_at: "2026-01-17T01:00:00Z",
+        updated_at: "2026-01-17T01:00:00Z",
+        comment_type: "comment",
+      },
+    ] as TimelineEntry[]);
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("Completed the delegated work")).toBeInTheDocument();
+    });
+
+    const replyNode = document.getElementById("comment-agent-reply");
+    expect(replyNode).not.toBeNull();
+    expect(replyNode?.querySelector("[data-comment-header-spacer]")).not.toBeNull();
+  });
+
   it("collapses non-trailing activity blocks and expands the last one by default", async () => {
     // Timeline shape:
     //   [activities: status_changed, priority_changed] ← block A (older)

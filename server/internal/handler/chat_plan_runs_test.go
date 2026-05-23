@@ -507,6 +507,253 @@ func TestClaimTask_PlanLeadContinuationDoesNotReuseLatestUserMessage(t *testing.
 	}
 }
 
+func TestChatPlanSquadHelperLeadMentionResumesLead(t *testing.T) {
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Plan Loop Leader", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Plan Loop Helper", []byte("[]"))
+	squadID := createPlanRunTestSquad(t, leaderID, helperID)
+	sessionID := createHandlerTestChatSession(t, leaderID)
+
+	sendResp := sendPlanMessageForTest(t, sessionID, map[string]any{
+		"content":         "Plan with the squad",
+		"mode":            "plan",
+		"plan_actor_type": "squad",
+		"plan_actor_id":   squadID,
+	})
+
+	completeTaskForPlanTest(t, sendResp.TaskID, "Please review [@Helper](mention://agent/"+helperID+")")
+
+	var helperTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task_id::text
+		FROM chat_plan_consultation
+		WHERE plan_run_id = $1
+		  AND target_agent_id = $2
+	`, sendResp.PlanRunID, helperID).Scan(&helperTaskID); err != nil {
+		t.Fatalf("load helper consultation task: %v", err)
+	}
+	if helperTaskID == "" {
+		t.Fatal("expected helper consultation task")
+	}
+
+	completeTaskForPlanTest(t, helperTaskID, "I agree with the direction. [@Leader](mention://agent/"+leaderID+")")
+
+	var status string
+	var responseMessageID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, response_message_id::text
+		FROM chat_plan_consultation
+		WHERE task_id = $1
+	`, helperTaskID).Scan(&status, &responseMessageID); err != nil {
+		t.Fatalf("load responded consultation: %v", err)
+	}
+	if status != "responded" || responseMessageID == "" {
+		t.Fatalf("consultation status/response = %s/%s, want responded with response", status, responseMessageID)
+	}
+
+	var leadContinuationCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE chat_plan_run_id = $1
+		  AND chat_task_kind = 'plan_lead'
+		  AND trigger_chat_message_id = $2
+		  AND agent_id = $3
+	`, sendResp.PlanRunID, responseMessageID, leaderID).Scan(&leadContinuationCount); err != nil {
+		t.Fatalf("count lead continuation tasks: %v", err)
+	}
+	if leadContinuationCount != 1 {
+		t.Fatalf("expected one lead continuation task, got %d", leadContinuationCount)
+	}
+
+	var waveCount int
+	if err := testPool.QueryRow(ctx, `SELECT consultation_wave_count FROM chat_plan_run WHERE id = $1`, sendResp.PlanRunID).Scan(&waveCount); err != nil {
+		t.Fatalf("load wave count: %v", err)
+	}
+	if waveCount != 1 {
+		t.Fatalf("consultation_wave_count = %d, want 1", waveCount)
+	}
+}
+
+func TestChatPlanSquadPlainHelperMentionEnqueuesConsultation(t *testing.T) {
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Orion", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Atlas", []byte("[]"))
+	squadID := createPlanRunTestSquad(t, leaderID, helperID)
+	sessionID := createHandlerTestChatSession(t, leaderID)
+
+	sendResp := sendPlanMessageForTest(t, sessionID, map[string]any{
+		"content":         "Plan with named squad agents",
+		"mode":            "plan",
+		"plan_actor_type": "squad",
+		"plan_actor_id":   squadID,
+	})
+
+	completeTaskForPlanTest(t, sendResp.TaskID, "@Atlas please challenge the rollout plan.")
+
+	var helperTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task_id::text
+		FROM chat_plan_consultation
+		WHERE plan_run_id = $1
+		  AND target_agent_id = $2
+	`, sendResp.PlanRunID, helperID).Scan(&helperTaskID); err != nil {
+		t.Fatalf("load helper consultation task: %v", err)
+	}
+	if helperTaskID == "" {
+		t.Fatal("expected plain @Atlas mention to enqueue helper consultation")
+	}
+}
+
+func TestChatPlanSquadPlainLeadMentionResumesLead(t *testing.T) {
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Orion", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Atlas", []byte("[]"))
+	squadID := createPlanRunTestSquad(t, leaderID, helperID)
+	sessionID := createHandlerTestChatSession(t, leaderID)
+
+	sendResp := sendPlanMessageForTest(t, sessionID, map[string]any{
+		"content":         "Plan with named lead reply",
+		"mode":            "plan",
+		"plan_actor_type": "squad",
+		"plan_actor_id":   squadID,
+	})
+	completeTaskForPlanTest(t, sendResp.TaskID, "@Atlas please review this direction.")
+
+	var helperTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task_id::text
+		FROM chat_plan_consultation
+		WHERE plan_run_id = $1
+		  AND target_agent_id = $2
+	`, sendResp.PlanRunID, helperID).Scan(&helperTaskID); err != nil {
+		t.Fatalf("load helper consultation task: %v", err)
+	}
+	completeTaskForPlanTest(t, helperTaskID, "I agree with the approach. @Orion")
+
+	var status string
+	var responseMessageID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, response_message_id::text
+		FROM chat_plan_consultation
+		WHERE task_id = $1
+	`, helperTaskID).Scan(&status, &responseMessageID); err != nil {
+		t.Fatalf("load responded consultation: %v", err)
+	}
+	if status != "responded" || responseMessageID == "" {
+		t.Fatalf("consultation status/response = %s/%s, want responded with response", status, responseMessageID)
+	}
+
+	var leadContinuationCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE chat_plan_run_id = $1
+		  AND chat_task_kind = 'plan_lead'
+		  AND trigger_chat_message_id = $2
+		  AND agent_id = $3
+	`, sendResp.PlanRunID, responseMessageID, leaderID).Scan(&leadContinuationCount); err != nil {
+		t.Fatalf("count lead continuation tasks: %v", err)
+	}
+	if leadContinuationCount != 1 {
+		t.Fatalf("expected one lead continuation task, got %d", leadContinuationCount)
+	}
+}
+
+func TestChatPlanSquadHelperMissingLeadMentionDoesNotResumeLead(t *testing.T) {
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Plan Missing Lead Leader", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Plan Missing Lead Helper", []byte("[]"))
+	squadID := createPlanRunTestSquad(t, leaderID, helperID)
+	sessionID := createHandlerTestChatSession(t, leaderID)
+
+	sendResp := sendPlanMessageForTest(t, sessionID, map[string]any{
+		"content":         "Plan with a missing mention helper",
+		"mode":            "plan",
+		"plan_actor_type": "squad",
+		"plan_actor_id":   squadID,
+	})
+	completeTaskForPlanTest(t, sendResp.TaskID, "Please review [@Helper](mention://agent/"+helperID+")")
+
+	var helperTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task_id::text
+		FROM chat_plan_consultation
+		WHERE plan_run_id = $1
+		  AND target_agent_id = $2
+	`, sendResp.PlanRunID, helperID).Scan(&helperTaskID); err != nil {
+		t.Fatalf("load helper consultation task: %v", err)
+	}
+	completeTaskForPlanTest(t, helperTaskID, "I agree, but I forgot the explicit lead mention.")
+
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM chat_plan_consultation WHERE task_id = $1`, helperTaskID).Scan(&status); err != nil {
+		t.Fatalf("load consultation status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("consultation status = %q, want failed", status)
+	}
+
+	var leadContinuationCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE chat_plan_run_id = $1
+		  AND chat_task_kind = 'plan_lead'
+		  AND trigger_chat_message_id IS NOT NULL
+		  AND trigger_chat_message_id <> $2
+	`, sendResp.PlanRunID, sendResp.MessageID).Scan(&leadContinuationCount); err != nil {
+		t.Fatalf("count lead continuations: %v", err)
+	}
+	if leadContinuationCount != 0 {
+		t.Fatalf("expected no lead continuation when helper omits lead mention, got %d", leadContinuationCount)
+	}
+}
+
+func TestChatPlanSquadConsultationLimitSkipsSixthWave(t *testing.T) {
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Plan Limit Leader", []byte("[]"))
+	helperID := createHandlerTestAgent(t, "Plan Limit Helper", []byte("[]"))
+	squadID := createPlanRunTestSquad(t, leaderID, helperID)
+	sessionID := createHandlerTestChatSession(t, leaderID)
+
+	sendResp := sendPlanMessageForTest(t, sessionID, map[string]any{
+		"content":         "Plan with consultation limit",
+		"mode":            "plan",
+		"plan_actor_type": "squad",
+		"plan_actor_id":   squadID,
+	})
+	if _, err := testPool.Exec(ctx, `UPDATE chat_plan_run SET consultation_wave_count = 5 WHERE id = $1`, sendResp.PlanRunID); err != nil {
+		t.Fatalf("seed wave count: %v", err)
+	}
+
+	completeTaskForPlanTest(t, sendResp.TaskID, "One more review [@Helper](mention://agent/"+helperID+")")
+
+	var consultationCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM chat_plan_consultation WHERE plan_run_id = $1`, sendResp.PlanRunID).Scan(&consultationCount); err != nil {
+		t.Fatalf("count consultations: %v", err)
+	}
+	if consultationCount != 0 {
+		t.Fatalf("expected no sixth-wave consultation, got %d", consultationCount)
+	}
+
+	var warningCode string
+	if err := testPool.QueryRow(ctx, `
+		SELECT warning_code
+		FROM chat_message_recipient
+		WHERE chat_session_id = $1
+		  AND recipient_id = $2
+		  AND status = 'skipped'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, sessionID, helperID).Scan(&warningCode); err != nil {
+		t.Fatalf("load skipped edge: %v", err)
+	}
+	if warningCode != "consultation_limit_reached" {
+		t.Fatalf("warning_code = %q, want consultation_limit_reached", warningCode)
+	}
+}
+
 func sendPlanMessageForTest(t *testing.T, sessionID string, body map[string]any) SendChatMessageResponse {
 	t.Helper()
 	req := newRequest(http.MethodPost, "/api/chat-sessions/"+sessionID+"/messages", body)
@@ -525,4 +772,45 @@ func sendPlanMessageForTest(t *testing.T, sessionID string, body map[string]any)
 		t.Fatalf("expected message_id and task_id: %+v", resp)
 	}
 	return resp
+}
+
+func createPlanRunTestSquad(t *testing.T, leaderID string, helperIDs ...string) string {
+	t.Helper()
+	ctx := context.Background()
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Plan Squad "+t.Name(), leaderID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	for _, helperID := range helperIDs {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO squad_member (squad_id, member_type, member_id, role)
+			VALUES ($1, 'agent', $2, 'helper')
+		`, squadID, helperID); err != nil {
+			t.Fatalf("add squad helper: %v", err)
+		}
+	}
+	return squadID
+}
+
+func completeTaskForPlanTest(t *testing.T, taskID, output string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'running', started_at = COALESCE(started_at, now())
+		WHERE id = $1
+	`, taskID); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	result, err := json.Marshal(protocol.TaskCompletedPayload{TaskID: taskID, Output: output})
+	if err != nil {
+		t.Fatalf("marshal task completion: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(context.Background(), util.MustParseUUID(taskID), result, "", ""); err != nil {
+		t.Fatalf("CompleteTask(%s): %v", taskID, err)
+	}
 }

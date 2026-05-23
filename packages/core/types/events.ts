@@ -6,6 +6,7 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
+import type { ChatMessageRecipient, ChatRoutingWarning } from "./chat";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -297,6 +298,14 @@ export interface ChatMessageEventPayload {
   role: "user" | "assistant";
   content: string;
   task_id?: string;
+  author_type?: string | null;
+  author_member_id?: string | null;
+  author_agent_id?: string | null;
+  plan_run_id?: string | null;
+  consultation_id?: string | null;
+  reply_to_message_id?: string | null;
+  recipients?: ChatMessageRecipient[];
+  routing_warnings?: ChatRoutingWarning[];
   created_at: string;
 }
 
@@ -314,10 +323,13 @@ export interface ChatDonePayload {
   elapsed_ms?: number;
   created_at?: string;
   author_type?: string | null;
+  author_member_id?: string | null;
   author_agent_id?: string | null;
   plan_run_id?: string | null;
   consultation_id?: string | null;
   reply_to_message_id?: string | null;
+  recipients?: ChatMessageRecipient[];
+  routing_warnings?: ChatRoutingWarning[];
 }
 
 export interface ChatSessionReadPayload {

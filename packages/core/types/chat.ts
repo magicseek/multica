@@ -109,6 +109,7 @@ export interface ChatPlanRun {
   initial_message_id: string | null;
   latest_message_id: string | null;
   summary: PlanSummary | null;
+  consultation_wave_count?: number;
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
@@ -196,6 +197,34 @@ export interface PendingChatTasksResponse {
   tasks: PendingChatTaskItem[];
 }
 
+export type ChatMessageActorType = "member" | "agent" | "squad" | "system" | string;
+
+export interface ChatMessageActor {
+  type: ChatMessageActorType;
+  id?: string | null;
+}
+
+export interface ChatMessageRecipient {
+  id: string;
+  message_id: string;
+  recipient_type: ChatMessageActorType;
+  recipient_id: string;
+  resolved_agent_id: string | null;
+  source: "explicit_mention" | "continuation" | "default" | "system" | string;
+  status: "pending" | "routed" | "blocked" | "skipped" | "failed" | string;
+  task_id: string | null;
+  warning_code: string;
+  warning_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatRoutingWarning {
+  recipient_id: string;
+  code: string;
+  message: string;
+}
+
 export interface ChatMessage {
   id: string;
   chat_session_id: string;
@@ -203,10 +232,14 @@ export interface ChatMessage {
   content: string;
   task_id: string | null;
   author_type?: "member" | "agent" | "system" | string | null;
+  author_member_id?: string | null;
   author_agent_id?: string | null;
   plan_run_id?: string | null;
   consultation_id?: string | null;
   reply_to_message_id?: string | null;
+  sender?: ChatMessageActor;
+  recipients?: ChatMessageRecipient[];
+  routing_warnings?: ChatRoutingWarning[];
   created_at: string;
   /**
    * Attachments linked to this message via the attachment table's
@@ -250,6 +283,7 @@ export interface SendChatMessageRequest {
 export interface SendChatMessageResponse {
   message_id: string;
   task_id: string;
+  agent_id?: string | null;
   plan_run_id?: string | null;
   /**
    * Server-authoritative task creation time. Optimistic StatusPill seed
@@ -273,4 +307,5 @@ export interface ChatPendingTask {
   task_id?: string;
   status?: string;
   created_at?: string;
+  agent_id?: string;
 }

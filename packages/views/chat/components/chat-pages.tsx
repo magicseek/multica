@@ -18,7 +18,7 @@ import {
 import { toast } from "sonner";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { DRAFT_NEW_SESSION } from "@multica/core/chat";
 import { useAgentPresenceDetail } from "@multica/core/agents";
@@ -170,6 +170,13 @@ export function buildChatPlanSendVariables({
   return base;
 }
 
+function isNeedsTargetError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  if (err.status !== 409) return false;
+  const body = err.body;
+  return !!body && typeof body === "object" && "code" in body && body.code === "needs_target";
+}
+
 export function ChatsPage() {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
@@ -300,6 +307,10 @@ export function ChatNewPage() {
       navigation.push(wsPaths.chatSession(sessionId));
     },
     onError: (err) => {
+      if (isNeedsTargetError(err)) {
+        toast.error(t(($) => $.pages.session.needs_target));
+        return;
+      }
       toast.error(err instanceof Error ? err.message : t(($) => $.pages.new.start_failed));
     },
   });
@@ -330,7 +341,7 @@ export function ChatNewPage() {
             agentName={selectedActorName ?? undefined}
             draftKeyOverride={`${DRAFT_NEW_SESSION}:route:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
             editorKeyOverride={`route-new:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
-            topSlot={
+            footerSlot={
               <ChatComposerPlanControls
                 planMode={planMode}
                 onPlanModeChange={setPlanMode}
@@ -359,6 +370,7 @@ export function ChatNewPage() {
 export function ChatSessionPage({ sessionId }: { sessionId: string }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
+  const user = useAuthStore((s) => s.user);
   const wsPaths = useWorkspacePaths();
   const navigation = useNavigation();
   const qc = useQueryClient();
@@ -391,6 +403,10 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
   const sendMessage = useSendChatMessage({
     resolveSessionId: async () => sessionId,
     onError: (err) => {
+      if (isNeedsTargetError(err)) {
+        toast.error(t(($) => $.pages.session.needs_target));
+        return;
+      }
       toast.error(err instanceof Error ? err.message : t(($) => $.pages.session.send_failed));
     },
   });
@@ -492,6 +508,9 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
               pendingTask={pendingTaskQuery.data}
               availability={availability}
               agents={agents}
+              squads={visibleSquads}
+              currentUser={user}
+              sessionAgentId={session?.agent_id}
               renderAfterMessage={(message) => (
                 <InlineProposalsForMessage
                   message={message}
@@ -521,7 +540,7 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
               agentName={sessionAgent?.name}
               draftKeyOverride={sessionId}
               editorKeyOverride={sessionId}
-              topSlot={
+              footerSlot={
                 <ChatComposerPlanControls
                   planMode={planMode}
                   onPlanModeChange={setPlanMode}
@@ -1006,7 +1025,7 @@ export function ChatComposerPlanControls({
 
   if (activePlanRun) {
     return (
-      <div className="flex min-h-9 items-center gap-2 border-b px-2 py-1.5 text-xs">
+      <div className="flex min-h-7 items-center gap-2 text-xs">
         <Lightbulb className="size-3.5 shrink-0 text-brand" />
         <div className="min-w-0 flex-1 truncate text-muted-foreground">
           <span className="font-medium text-foreground">
@@ -1035,7 +1054,7 @@ export function ChatComposerPlanControls({
   }
 
   return (
-    <div className="flex min-h-9 flex-wrap items-center gap-1.5 border-b px-2 py-1.5">
+    <div className="flex min-h-7 flex-wrap items-center gap-1.5">
       <Button
         type="button"
         variant={planMode ? "secondary" : "ghost"}

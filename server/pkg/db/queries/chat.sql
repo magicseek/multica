@@ -274,6 +274,7 @@ INSERT INTO chat_message (
     failure_reason,
     elapsed_ms,
     author_type,
+    author_member_id,
     author_agent_id,
     plan_run_id,
     consultation_id,
@@ -287,6 +288,7 @@ VALUES (
     sqlc.narg(failure_reason),
     sqlc.narg(elapsed_ms),
     COALESCE(sqlc.narg('author_type'), CASE WHEN $2 = 'assistant' THEN 'agent' ELSE 'member' END),
+    sqlc.narg('author_member_id'),
     sqlc.narg('author_agent_id'),
     sqlc.narg('plan_run_id'),
     sqlc.narg('consultation_id'),
@@ -298,6 +300,87 @@ RETURNING *;
 SELECT * FROM chat_message
 WHERE chat_session_id = $1
 ORDER BY created_at ASC;
+
+-- name: CreateChatMessageRecipient :one
+INSERT INTO chat_message_recipient (
+    workspace_id,
+    chat_session_id,
+    message_id,
+    recipient_type,
+    recipient_id,
+    resolved_agent_id,
+    source,
+    status,
+    task_id,
+    warning_code,
+    warning_message
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    sqlc.narg('resolved_agent_id'),
+    COALESCE(sqlc.narg('source'), 'explicit_mention'),
+    COALESCE(sqlc.narg('status'), 'pending'),
+    sqlc.narg('recipient_task_id'),
+    COALESCE(sqlc.narg('warning_code'), ''),
+    COALESCE(sqlc.narg('warning_message'), '')
+)
+ON CONFLICT (message_id, recipient_type, recipient_id, source)
+DO UPDATE SET
+    resolved_agent_id = COALESCE(EXCLUDED.resolved_agent_id, chat_message_recipient.resolved_agent_id),
+    status = EXCLUDED.status,
+    task_id = COALESCE(EXCLUDED.task_id, chat_message_recipient.task_id),
+    warning_code = EXCLUDED.warning_code,
+    warning_message = EXCLUDED.warning_message,
+    updated_at = now()
+RETURNING *;
+
+-- name: ListChatMessageRecipientsBySession :many
+SELECT *
+FROM chat_message_recipient
+WHERE chat_session_id = $1
+ORDER BY created_at ASC, id ASC;
+
+-- name: ListChatMessageRecipientsByMessages :many
+SELECT *
+FROM chat_message_recipient
+WHERE message_id = ANY($1::uuid[])
+ORDER BY created_at ASC, id ASC;
+
+-- name: UpsertChatSessionDirectedState :one
+INSERT INTO chat_session_directed_state (
+    chat_session_id,
+    workspace_id,
+    state,
+    active_recipient_type,
+    active_recipient_id,
+    active_message_id,
+    candidate_recipients
+) VALUES (
+    $1,
+    $2,
+    $3,
+    sqlc.narg('active_recipient_type'),
+    sqlc.narg('active_recipient_id'),
+    sqlc.narg('active_message_id'),
+    COALESCE(sqlc.narg('candidate_recipients'), '[]'::jsonb)
+)
+ON CONFLICT (chat_session_id)
+DO UPDATE SET
+    state = EXCLUDED.state,
+    active_recipient_type = EXCLUDED.active_recipient_type,
+    active_recipient_id = EXCLUDED.active_recipient_id,
+    active_message_id = EXCLUDED.active_message_id,
+    candidate_recipients = EXCLUDED.candidate_recipients,
+    updated_at = now()
+RETURNING *;
+
+-- name: GetChatSessionDirectedState :one
+SELECT *
+FROM chat_session_directed_state
+WHERE chat_session_id = $1;
 
 -- name: GetChatMessage :one
 SELECT * FROM chat_message
@@ -440,6 +523,13 @@ SET summary = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: IncrementChatPlanRunConsultationWaveCount :one
+UPDATE chat_plan_run
+SET consultation_wave_count = consultation_wave_count + 1,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: CancelChatPlanRun :one
 UPDATE chat_plan_run
 SET status = 'cancelled',
@@ -539,7 +629,7 @@ LIMIT 1;
 -- created_at is the anchor for the chat StatusPill timer (it computes
 -- elapsed = now - task.created_at), so the pill survives refresh / reopen
 -- without "resetting to 0s".
-SELECT id, status, created_at FROM agent_task_queue
+SELECT id, status, created_at, agent_id FROM agent_task_queue
 WHERE chat_session_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 ORDER BY created_at DESC
 LIMIT 1;

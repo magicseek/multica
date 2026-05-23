@@ -75,6 +75,7 @@
       "archived": "Archived",
       "send": "Send",
       "send_failed": "Failed to send message",
+      "needs_target": "Mention an agent or squad to continue this multi-agent thread.",
       "placeholder": "Reply to this chat",
       "archived_placeholder": "This session is archived",
       "empty_chat_title": "No messages yet",

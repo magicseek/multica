@@ -1,0 +1,32 @@
+{
+  "id": "chat-plan-mode-polish-squad-routing",
+  "name": "chat-plan-mode-polish-squad-routing",
+  "title": "brainstorm: Chat Plan Mode polish and squad routing",
+  "description": "Refine Chat Plan mode UI placement, message identity display, and squad lead-agent coordination semantics.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "troy.huang",
+  "assignee": "troy.huang",
+  "createdAt": "2026-05-23",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feat/chat-plan-runs",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-23-chat-directed-graph-storage-api",
+    "05-23-chat-directed-routing-squad-orchestration",
+    "05-23-chat-message-identity-plan-footer-ui",
+    "05-23-plan-proposal-issue-drafts-approval",
+    "05-23-chat-plan-graph-e2e-verification"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
