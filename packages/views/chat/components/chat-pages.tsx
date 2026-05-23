@@ -322,9 +322,10 @@ export function ChatNewPage() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-10">
-        <div className="w-full max-w-4xl">
-          <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">{title}</h1>
+        <div className="w-full max-w-5xl">
+          <h1 className="mb-12 text-center text-4xl font-medium tracking-normal text-foreground">{title}</h1>
           <ChatInput
+            presentation="hero"
             onSend={(content, attachmentIds) =>
               startChat.mutate(buildChatPlanSendVariables({
                 content,
@@ -341,6 +342,16 @@ export function ChatNewPage() {
             agentName={selectedActorName ?? undefined}
             draftKeyOverride={`${DRAFT_NEW_SESSION}:route:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
             editorKeyOverride={`route-new:${projectId ?? "loose"}:${actor?.type ?? "none"}:${actor?.id ?? "no-agent"}`}
+            leftAdornment={
+              <ChatActorPicker
+                selectedActor={actor}
+                onSelect={setActor}
+                visibleAgents={visibleAgents}
+                visibleSquads={visibleSquads}
+                allowSquads={planMode}
+                disabled={!!sessionIdRef.current || startChat.isPending}
+              />
+            }
             footerSlot={
               <ChatComposerPlanControls
                 planMode={planMode}
@@ -348,19 +359,17 @@ export function ChatNewPage() {
                 engines={planEngines}
                 selectedEngineId={planEngineId}
                 onEngineChange={setPlanEngineId}
-                actorPicker={
-                  <ChatActorPicker
-                    selectedActor={actor}
-                    onSelect={setActor}
-                    visibleAgents={visibleAgents}
-                    visibleSquads={visibleSquads}
-                    allowSquads={planMode}
-                    disabled={!!sessionIdRef.current || startChat.isPending}
-                  />
-                }
               />
             }
           />
+          {projectQuery.data && (
+            <div className="-mt-5 rounded-b-[28px] bg-muted/60 px-4 pb-3 pt-8 text-sm text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-2">
+                <FolderKanban className="size-4 shrink-0" />
+                <span className="truncate">{projectQuery.data.title}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

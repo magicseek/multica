@@ -117,12 +117,12 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
     vi.fn(async (_file: File) =>
       makeUpload({ id: "att-1", link: "https://cdn.example/att-1.png", filename: "img.png" }),
     );
-  render(
+  const result = render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <ChatInput onSend={onSend} onUploadFile={onUploadFile} agentName="Multica" {...props} />
     </I18nProvider>,
   );
-  return { onSend, onUploadFile };
+  return { onSend, onUploadFile, ...result };
 }
 
 describe("ChatInput attachment wiring", () => {
@@ -132,6 +132,21 @@ describe("ChatInput attachment wiring", () => {
     const footer = screen.getByTestId("plan-footer");
     expect(footer.closest(".border-t")).toBeInTheDocument();
     expect(footer.closest(".rounded-lg")).toBeInTheDocument();
+  });
+
+  it("uses the hero composer layout with a ten-line scrolling editor viewport", () => {
+    const { container } = renderInput({
+      presentation: "hero",
+      leftAdornment: <button type="button">Actor</button>,
+      footerSlot: <div data-testid="plan-footer">Plan footer</div>,
+    });
+
+    expect(container.querySelector(".rounded-\\[28px\\]")).toBeInTheDocument();
+    const viewport = container.querySelector("[data-chat-input-editor-viewport]");
+    expect(viewport).toHaveClass("max-h-[15.25rem]");
+    expect(viewport).toHaveClass("overflow-y-auto");
+    expect(screen.getByText("Actor")).toBeInTheDocument();
+    expect(screen.getByTestId("plan-footer").closest(".border-t")).not.toBeInTheDocument();
   });
 
   it("routes dropped files through the editor's upload handler", async () => {

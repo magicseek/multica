@@ -46,6 +46,8 @@ interface ChatInputProps {
   topSlot?: ReactNode;
   /** Rendered on the bottom edge inside the rounded container. */
   footerSlot?: ReactNode;
+  /** Larger centered composer used by the new-chat start screen. */
+  presentation?: "default" | "hero";
   /** Route-owned pages pass explicit draft identity so URL state, not the
    *  legacy floating chat store, decides which session is being composed. */
   draftKeyOverride?: string;
@@ -64,6 +66,7 @@ export function ChatInput({
   rightAdornment,
   topSlot,
   footerSlot,
+  presentation = "default",
   draftKeyOverride,
   editorKeyOverride,
 }: ChatInputProps) {
@@ -199,6 +202,83 @@ export function ChatInput({
         : t(($) => $.input.placeholder_default);
 
   const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
+  const editorViewportClassName = presentation === "hero"
+    ? "min-h-[5.25rem] max-h-[15.25rem] overflow-y-auto px-6 pb-2 pt-5"
+    : "flex-1 min-h-0 max-h-[15.25rem] overflow-y-auto px-3 py-2";
+  const editorClassName = presentation === "hero"
+    ? "min-h-[4.5rem] text-[1rem] leading-relaxed"
+    : undefined;
+
+  const editor = (
+    <div className={editorViewportClassName} data-chat-input-editor-viewport="">
+      <ContentEditor
+        // See the editorKey / draftKey split note above — editorKey
+        // intentionally does not depend on activeSessionId.
+        key={editorKey}
+        ref={editorRef}
+        defaultValue={inputDraft}
+        placeholder={placeholder}
+        onUpdate={(md) => {
+          setIsEmpty(!md.trim());
+          setInputDraft(draftKey, md);
+        }}
+        onSubmit={handleSend}
+        onUploadFile={uploadEnabled ? handleUpload : undefined}
+        debounceMs={100}
+        className={editorClassName}
+        // Chat is short-form — the floating formatting toolbar is
+        // more distraction than feature here.
+        showBubbleMenu={false}
+        // Mod+Enter submits. Bare Enter falls through to Tiptap's
+        // default, which continues lists/quotes and breaks paragraphs.
+        // Without this, Enter-as-send would steal the only key that
+        // continues a bullet list, leaving users stuck after one item.
+      />
+    </div>
+  );
+
+  if (presentation === "hero") {
+    return (
+      <div className={cn("px-0", noAgent && "cursor-not-allowed")}>
+        <div
+          {...(uploadEnabled ? dropZoneProps : {})}
+          className={cn(
+            "relative mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/80 bg-card shadow-[0_18px_55px_oklch(0_0_0_/_0.08)] transition-colors focus-within:border-brand/70 focus-within:shadow-[0_18px_55px_oklch(0_0_0_/_0.1)]",
+            noAgent && "pointer-events-none opacity-60",
+          )}
+          aria-disabled={noAgent || undefined}
+        >
+          {topSlot}
+          {editor}
+          <div className="flex min-h-12 items-end justify-between gap-3 px-4 pb-3 pt-1">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              {uploadEnabled && (
+                <FileUploadButton
+                  size="default"
+                  className="size-8"
+                  onSelect={(file) => editorRef.current?.uploadFile(file)}
+                />
+              )}
+              {leftAdornment}
+              {footerSlot}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {rightAdornment}
+              <SubmitButton
+                onClick={handleSend}
+                disabled={isEmpty || !!disabled || !!noAgent || pendingUploads > 0}
+                running={isRunning}
+                onStop={onStop}
+                tooltip={`${t(($) => $.input.send_tooltip)} · ${formatShortcut(modKey, enterKey)}`}
+                stopTooltip={t(($) => $.input.stop_tooltip)}
+              />
+            </div>
+          </div>
+          {uploadEnabled && isDragOver && <FileDropOverlay />}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -214,7 +294,7 @@ export function ChatInput({
       <div
         {...(uploadEnabled ? dropZoneProps : {})}
         className={cn(
-          "relative mx-auto flex min-h-16 max-h-40 w-full max-w-4xl flex-col rounded-lg bg-card border-1 border-border transition-colors focus-within:border-brand",
+          "relative mx-auto flex min-h-16 max-h-[18.75rem] w-full max-w-4xl flex-col rounded-lg bg-card border-1 border-border transition-colors focus-within:border-brand",
           footerSlot ? "pb-0" : "pb-9",
           // Visual + interaction lock when there's no agent. We don't
           // toggle ContentEditor's editable mode (Tiptap can't switch
@@ -227,30 +307,7 @@ export function ChatInput({
         aria-disabled={noAgent || undefined}
       >
         {topSlot}
-        <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2">
-          <ContentEditor
-            // See the editorKey / draftKey split note above — editorKey
-            // intentionally does not depend on activeSessionId.
-            key={editorKey}
-            ref={editorRef}
-            defaultValue={inputDraft}
-            placeholder={placeholder}
-            onUpdate={(md) => {
-              setIsEmpty(!md.trim());
-              setInputDraft(draftKey, md);
-            }}
-            onSubmit={handleSend}
-            onUploadFile={uploadEnabled ? handleUpload : undefined}
-            debounceMs={100}
-            // Chat is short-form — the floating formatting toolbar is
-            // more distraction than feature here.
-            showBubbleMenu={false}
-            // Mod+Enter submits. Bare Enter falls through to Tiptap's
-            // default, which continues lists/quotes and breaks paragraphs.
-            // Without this, Enter-as-send would steal the only key that
-            // continues a bullet list, leaving users stuck after one item.
-          />
-        </div>
+        {editor}
         {footerSlot && (
           <div className="min-h-9 border-t px-2 py-1.5 pr-24">
             {footerSlot}
