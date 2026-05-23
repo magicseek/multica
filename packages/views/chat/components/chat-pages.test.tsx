@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
@@ -176,6 +177,12 @@ describe("ProposedIssuesColumn", () => {
 });
 
 describe("ChatComposerPlanControls", () => {
+  it("keeps chat analytics inside a constrained scroll panel", () => {
+    const source = readFileSync("chat/components/chat-pages.tsx", "utf8");
+    expect(source).toContain('const CHAT_ANALYTICS_TAB_CLASS_NAME = "flex min-h-0 flex-col overflow-hidden";');
+    expect(source).toContain('className={CHAT_ANALYTICS_TAB_CLASS_NAME}');
+  });
+
   it("exposes Plan mode and the default engine selector", async () => {
     const user = userEvent.setup();
     renderWithProviders(<PlanControlsHarness />);

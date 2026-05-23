@@ -131,6 +131,7 @@ const FALLBACK_PLAN_ENGINES: PlanEngine[] = [
     version: "",
   },
 ];
+const CHAT_ANALYTICS_TAB_CLASS_NAME = "flex min-h-0 flex-col overflow-hidden";
 
 export type ChatActorSelection = {
   type: ChatPlanActorType;
@@ -530,7 +531,7 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
               )}
             />
           )}
-          <div className="shrink-0 border-t bg-background/95 py-3">
+          <div className="shrink-0 bg-background/95 pb-4 pt-3">
             <ChatInput
               onSend={(content, attachmentIds) =>
                 sendMessage.mutate(buildChatPlanSendVariables({
@@ -582,7 +583,7 @@ export function ChatSessionPage({ sessionId }: { sessionId: string }) {
         <TabsContent value="outputs" className="min-h-0 overflow-y-auto">
           <ChatOutputsPanel sessionId={sessionId} />
         </TabsContent>
-        <TabsContent value="analytics" className="min-h-0">
+        <TabsContent value="analytics" className={CHAT_ANALYTICS_TAB_CLASS_NAME}>
           <AgentAnalyticsSurface
             scope={{ kind: "chat", sessionId }}
             active={tab === "analytics"}

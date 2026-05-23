@@ -61,6 +61,26 @@ Required pattern for Project, Chat, and similar dense app headers:
   full-width below the desktop breakpoint, but it should not squeeze the
   title/breadcrumb until text overlaps.
 
+### Scrollable Tab Panels
+
+Route-level and page-level tabs must make scroll ownership explicit. A child
+surface with `flex-1 overflow-y-auto` only scrolls when every parent in the
+height chain constrains it with `min-h-0` and a flex or overflow boundary.
+
+Required pattern:
+
+- When the tab content itself owns scrolling, give `TabsContent` both
+  `min-h-0` and `overflow-y-auto`.
+- When a child surface owns scrolling, make the `TabsContent` a constrained
+  flex column with `flex min-h-0 flex-col overflow-hidden`.
+- Do not leave a tab panel as plain `min-h-0` when its body can exceed the
+  viewport. That creates visible overflow with no scrollable ancestor.
+- Keep sibling tabs consistent. If `issues` and `outputs` panels define a
+  scroll boundary, `analytics` or other dense panels need an equivalent
+  boundary even when they render a reusable scrolling surface.
+- Add a regression for the panel class or rendered DOM when fixing a tab
+  scroll bug. The test should lock the scroll contract, not only data loading.
+
 ### Dense Tables and Long Text
 
 When a table contains user- or agent-generated text, column containment is part
@@ -176,6 +196,9 @@ Required pattern:
 - Reusing generic `TabsList` inside a header creates uneven tab widths and no
   route-switching motion. Header tabs need a shared segmented-control surface
   so Project and Chat stay visually consistent.
+- Leaving tab panels as plain `min-h-0` breaks scroll when the child surface
+  expects a flex-constrained parent. Decide whether the panel or child owns
+  vertical scrolling and encode that boundary on `TabsContent`.
 - Long labels in auto-layout tables can overlap status badges or metadata
   columns. Treat truncation as a table-level layout decision, not just a text
   utility on the child node.

@@ -202,12 +202,19 @@ export function ChatInput({
         : t(($) => $.input.placeholder_default);
 
   const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
-  const editorViewportClassName = presentation === "hero"
+  const isHeroPresentation = presentation === "hero";
+  const editorViewportClassName = isHeroPresentation
     ? "min-h-[5.25rem] max-h-[15.25rem] overflow-y-auto px-6 pb-2 pt-5"
-    : "flex-1 min-h-0 max-h-[15.25rem] overflow-y-auto px-3 py-2";
-  const editorClassName = presentation === "hero"
+    : "min-h-[4rem] max-h-[15.25rem] overflow-y-auto px-5 pb-2 pt-4";
+  const editorClassName = isHeroPresentation
     ? "min-h-[4.5rem] text-[1rem] leading-relaxed"
-    : undefined;
+    : "min-h-[3.25rem] text-[0.95rem] leading-relaxed";
+  const outerClassName = isHeroPresentation ? "px-0" : "px-5 pb-3 pt-0";
+  const cardClassName = cn(
+    "relative mx-auto flex w-full flex-col overflow-hidden rounded-[28px] border border-border/80 bg-card shadow-[0_14px_40px_oklch(0_0_0_/_0.07)] transition-colors focus-within:border-brand/70 focus-within:shadow-[0_16px_48px_oklch(0_0_0_/_0.09)]",
+    isHeroPresentation ? "max-w-5xl" : "max-w-4xl",
+    noAgent && "pointer-events-none opacity-60",
+  );
 
   const editor = (
     <div className={editorViewportClassName} data-chat-input-editor-viewport="">
@@ -237,103 +244,39 @@ export function ChatInput({
     </div>
   );
 
-  if (presentation === "hero") {
-    return (
-      <div className={cn("px-0", noAgent && "cursor-not-allowed")}>
-        <div
-          {...(uploadEnabled ? dropZoneProps : {})}
-          className={cn(
-            "relative mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-[28px] border border-border/80 bg-card shadow-[0_18px_55px_oklch(0_0_0_/_0.08)] transition-colors focus-within:border-brand/70 focus-within:shadow-[0_18px_55px_oklch(0_0_0_/_0.1)]",
-            noAgent && "pointer-events-none opacity-60",
-          )}
-          aria-disabled={noAgent || undefined}
-        >
-          {topSlot}
-          {editor}
-          <div className="flex min-h-12 items-end justify-between gap-3 px-4 pb-3 pt-1">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {uploadEnabled && (
-                <FileUploadButton
-                  size="default"
-                  className="size-8"
-                  onSelect={(file) => editorRef.current?.uploadFile(file)}
-                />
-              )}
-              {leftAdornment}
-              {footerSlot}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {rightAdornment}
-              <SubmitButton
-                onClick={handleSend}
-                disabled={isEmpty || !!disabled || !!noAgent || pendingUploads > 0}
-                running={isRunning}
-                onStop={onStop}
-                tooltip={`${t(($) => $.input.send_tooltip)} · ${formatShortcut(modKey, enterKey)}`}
-                stopTooltip={t(($) => $.input.stop_tooltip)}
-              />
-            </div>
-          </div>
-          {uploadEnabled && isDragOver && <FileDropOverlay />}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className={cn(
-        "px-5 pb-3 pt-0",
-        // Outer wrapper carries the disabled cursor. Inner card sets
-        // pointer-events-none, which suppresses hover (and therefore
-        // any cursor of its own) — splitting the two layers lets hover
-        // bubble back here so the browser actually reads cursor.
-        noAgent && "cursor-not-allowed",
-      )}
-    >
+    <div className={cn(outerClassName, noAgent && "cursor-not-allowed")}>
       <div
         {...(uploadEnabled ? dropZoneProps : {})}
-        className={cn(
-          "relative mx-auto flex min-h-16 max-h-[18.75rem] w-full max-w-4xl flex-col rounded-lg bg-card border-1 border-border transition-colors focus-within:border-brand",
-          footerSlot ? "pb-0" : "pb-9",
-          // Visual + interaction lock when there's no agent. We don't
-          // toggle ContentEditor's editable mode (Tiptap can't switch
-          // cleanly post-mount, and the prop has been removed); instead
-          // we drop pointer events at the wrapper level so clicks miss
-          // the editor entirely, and dim the surface so it reads as
-          // "disabled" rather than "broken".
-          noAgent && "pointer-events-none opacity-60",
-        )}
+        className={cardClassName}
+        data-chat-input-card=""
         aria-disabled={noAgent || undefined}
       >
         {topSlot}
         {editor}
-        {footerSlot && (
-          <div className="min-h-9 border-t px-2 py-1.5 pr-24">
+        <div className="flex min-h-12 items-end justify-between gap-3 px-4 pb-3 pt-1">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {uploadEnabled && (
+              <FileUploadButton
+                size="default"
+                className="size-8"
+                onSelect={(file) => editorRef.current?.uploadFile(file)}
+              />
+            )}
+            {leftAdornment}
             {footerSlot}
           </div>
-        )}
-        {leftAdornment && (
-          <div className="absolute bottom-1.5 left-2 flex items-center">
-            {leftAdornment}
-          </div>
-        )}
-        <div className="absolute bottom-1 right-1.5 flex items-center gap-1">
-          {rightAdornment}
-          {uploadEnabled && (
-            <FileUploadButton
-              size="sm"
-              onSelect={(file) => editorRef.current?.uploadFile(file)}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {rightAdornment}
+            <SubmitButton
+              onClick={handleSend}
+              disabled={isEmpty || !!disabled || !!noAgent || pendingUploads > 0}
+              running={isRunning}
+              onStop={onStop}
+              tooltip={`${t(($) => $.input.send_tooltip)} · ${formatShortcut(modKey, enterKey)}`}
+              stopTooltip={t(($) => $.input.stop_tooltip)}
             />
-          )}
-          <SubmitButton
-            onClick={handleSend}
-            disabled={isEmpty || !!disabled || !!noAgent || pendingUploads > 0}
-            running={isRunning}
-            onStop={onStop}
-            tooltip={`${t(($) => $.input.send_tooltip)} · ${formatShortcut(modKey, enterKey)}`}
-            stopTooltip={t(($) => $.input.stop_tooltip)}
-          />
+          </div>
         </div>
         {uploadEnabled && isDragOver && <FileDropOverlay />}
       </div>

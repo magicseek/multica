@@ -126,12 +126,14 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
 }
 
 describe("ChatInput attachment wiring", () => {
-  it("renders footer controls on the lower edge inside the composer", () => {
+  it("renders footer controls in the lower composer toolbar", () => {
     renderInput({ footerSlot: <div data-testid="plan-footer">Plan footer</div> });
 
     const footer = screen.getByTestId("plan-footer");
-    expect(footer.closest(".border-t")).toBeInTheDocument();
-    expect(footer.closest(".rounded-lg")).toBeInTheDocument();
+    const card = footer.closest("[data-chat-input-card]");
+    expect(card).toBeInTheDocument();
+    expect(card).toHaveClass("rounded-[28px]");
+    expect(footer.closest(".border-t")).not.toBeInTheDocument();
   });
 
   it("uses the hero composer layout with a ten-line scrolling editor viewport", () => {
@@ -141,7 +143,7 @@ describe("ChatInput attachment wiring", () => {
       footerSlot: <div data-testid="plan-footer">Plan footer</div>,
     });
 
-    expect(container.querySelector(".rounded-\\[28px\\]")).toBeInTheDocument();
+    expect(container.querySelector("[data-chat-input-card]")).toHaveClass("max-w-5xl");
     const viewport = container.querySelector("[data-chat-input-editor-viewport]");
     expect(viewport).toHaveClass("max-h-[15.25rem]");
     expect(viewport).toHaveClass("overflow-y-auto");
