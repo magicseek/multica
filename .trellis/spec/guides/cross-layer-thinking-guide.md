@@ -140,6 +140,30 @@ Checklist:
   durable product signal for "concrete work was completed"; otherwise the
   agent-facing workflow is the contract.
 
+### Mistake 7: Analytics Aggregates Lose Chart Semantics
+
+**Bad**: A scoped analytics API returns valid daily rows, but the UI flattens
+them into a one-off `total_tokens` mini-chart. Project Analytics, Chat
+Analytics, and Usage then render the same concept with different chart
+contracts, making a populated trend look blank or visually unrelated.
+
+**Good**: Treat chart-ready metric shapes as a boundary contract. Backend
+analytics responses preserve the daily/model/token dimensions; the frontend
+adapter folds those rows into the shared Usage chart shape before rendering.
+
+Checklist:
+
+- [ ] Identify whether a new analytics panel is showing a metric already
+  charted elsewhere, especially tokens, cost, run time, or task counts.
+- [ ] Reuse the existing chart component when the metric matches. Build a small
+  adapter if the API shape differs instead of rebuilding the visualization.
+- [ ] Preserve stack segments across layers. Do not collapse input/output/cache
+  token buckets unless the chart explicitly asks for a total-only series.
+- [ ] Backend tests should assert that scoped analytics responses include daily
+  buckets when summary usage exists.
+- [ ] Frontend tests should assert that API aggregate rows convert into the
+  chart component's expected data shape.
+
 ---
 
 ## Checklist for Cross-Layer Features

@@ -82,6 +82,29 @@ Required pattern for dense shared tables:
 - Keep the table inside an `overflow-x-auto` container when the fixed minimum
   width is wider than the available panel.
 
+### Analytics Time-Series Panels
+
+Analytics pages must reuse the shared Usage chart components for equivalent
+time-series metrics. Project Analytics and Chat Analytics consume a scoped
+analytics API, but daily token trend rows still need to be transformed into the
+same `DailyTokenData` shape that `DailyTokensChart` renders on the Usage page.
+
+Required pattern:
+
+- Do not hand-roll miniature bar charts for token/cost/time trends when a
+  shared Usage chart already exists for that metric.
+- Preserve the chart segment dimensions. Token trends should keep input,
+  output, cache-read, and cache-write buckets instead of flattening everything
+  into one `total_tokens` value.
+- Aggregate per-model daily API rows by date before rendering so the chart has
+  one x-axis bucket per day and the stack segments still represent all models.
+- Keep the parent responsible for empty-state decisions. Shared chart
+  components should receive non-empty chart data and avoid owning feature
+  copy.
+- Add a regression for the data adapter that proves multi-model daily rows
+  become the Usage chart shape, and a backend regression that scoped analytics
+  responses include daily buckets whenever the summary has usage.
+
 ### Streaming Chat Rows
 
 In-flight agent output is a chat message surface, not a loader-only surface.
@@ -156,6 +179,9 @@ Required pattern:
 - Long labels in auto-layout tables can overlap status badges or metadata
   columns. Treat truncation as a table-level layout decision, not just a text
   utility on the child node.
+- Hand-rolled analytics trend bars drift from Usage charts and can look empty
+  even when the API returns valid daily usage. Reuse the shared chart component
+  and adapt data into its expected shape.
 - Nested issue replies without the root comment gutter make agent-to-agent
   handoff replies look detached from the thread. Preserve the gutter even when
   the reply itself has no disclosure control.

@@ -46,6 +46,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../navigation";
 import { useT } from "../i18n";
 import { CustomPricingDialog } from "../runtimes/components/custom-pricing-dialog";
+import { DailyTokensChart } from "../runtimes/components/charts";
 import {
   collectUnmappedModels,
   estimateCost,
@@ -53,6 +54,10 @@ import {
   formatTokens,
   isModelPriced,
 } from "../runtimes/utils";
+import {
+  aggregateAgentAnalyticsDailyTokens,
+  dailyTokenTotal,
+} from "./agent-analytics-utils";
 
 type AgentAnalyticsScope =
   | { kind: "project"; projectId: string }
@@ -365,8 +370,11 @@ function AnalyticsSecondaryPanels({ data }: { data: AgentAnalyticsResponse }) {
   const { t } = useT("usage");
   const breakdown = costBreakdown(data.summary.model_usage);
   const topSources = (data.sources ?? []).slice(0, 5);
-  const daily = dailyTokenBuckets(data).slice(-14);
-  const maxDailyTokens = Math.max(...daily.map((row) => row.total_tokens), 1);
+  const dailyTokens = useMemo(
+    () => aggregateAgentAnalyticsDailyTokens(data.daily).slice(-14),
+    [data.daily],
+  );
+  const hasDailyTokens = dailyTokenTotal(dailyTokens) > 0;
 
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -377,24 +385,16 @@ function AnalyticsSecondaryPanels({ data }: { data: AgentAnalyticsResponse }) {
             {t(($) => $.analytics.trend.caption)}
           </span>
         </div>
-        <div className="mt-4 flex h-32 items-end gap-1.5">
-          {daily.length === 0 ? (
-            <div className="flex h-full flex-1 items-center justify-center text-xs text-muted-foreground">
-              {t(($) => $.analytics.trend.empty)}
+        <div className="mt-4 min-h-[220px]">
+          {!hasDailyTokens ? (
+            <div className="flex aspect-[3/1] flex-col items-center justify-center gap-2 rounded-md border border-dashed bg-muted/20 p-6 text-center">
+              <BarChart3 className="h-5 w-5 text-muted-foreground/50" />
+              <p className="text-xs text-muted-foreground">
+                {t(($) => $.analytics.trend.empty)}
+              </p>
             </div>
           ) : (
-            daily.map((row) => (
-              <div key={row.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-                <div
-                  className="w-full rounded-t bg-primary/25"
-                  style={{ height: `${Math.max(6, (row.total_tokens / maxDailyTokens) * 100)}%` }}
-                  title={`${row.date} · ${formatTokens(row.total_tokens)}`}
-                />
-                <span className="w-full truncate text-center text-[10px] text-muted-foreground">
-                  {row.date.slice(5)}
-                </span>
-              </div>
-            ))
+            <DailyTokensChart data={dailyTokens} />
           )}
         </div>
       </section>
@@ -751,16 +751,6 @@ function deltaText(current: number, previous: number) {
   if (Math.abs(change) < 0.005) return "0%";
   const sign = change > 0 ? "+" : "";
   return `${sign}${(change * 100).toFixed(0)}%`;
-}
-
-function dailyTokenBuckets(data: AgentAnalyticsResponse) {
-  const buckets = new Map<string, { date: string; total_tokens: number }>();
-  for (const row of data.daily) {
-    const bucket = buckets.get(row.date) ?? { date: row.date, total_tokens: 0 };
-    bucket.total_tokens += row.total_tokens;
-    buckets.set(row.date, bucket);
-  }
-  return [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function rate(numerator: number, denominator: number) {

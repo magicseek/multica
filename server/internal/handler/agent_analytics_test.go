@@ -84,6 +84,19 @@ func TestAgentAnalyticsProjectScopeIncludesIssueAndChatRuns(t *testing.T) {
 	if resp.Summary.InputTokens != 300 || resp.Summary.TotalTokens != 405 {
 		t.Fatalf("token totals: got input=%d total=%d", resp.Summary.InputTokens, resp.Summary.TotalTokens)
 	}
+	if len(resp.Daily) == 0 {
+		t.Fatal("project analytics should include daily trend buckets")
+	}
+	var dailyTokens int64
+	for _, row := range resp.Daily {
+		if row.Date == "" {
+			t.Fatalf("daily trend bucket should include a date: %+v", row)
+		}
+		dailyTokens += row.TotalTokens
+	}
+	if dailyTokens != resp.Summary.TotalTokens {
+		t.Fatalf("daily trend tokens should match summary total: daily=%d summary=%d", dailyTokens, resp.Summary.TotalTokens)
+	}
 	if resp.Summary.PromptBytes != 3000 || resp.Summary.ToolUseCount != 2 || resp.Summary.ToolResultBytes != 700 {
 		t.Fatalf("tracing summary mismatch: %+v", resp.Summary)
 	}
@@ -180,6 +193,9 @@ func TestAgentAnalyticsChatScopeDefaultsToAllWindow(t *testing.T) {
 	}
 	if resp.Summary.TaskCount != 1 || resp.Summary.InputTokens != 25 {
 		t.Fatalf("chat summary should include only target chat: %+v", resp.Summary)
+	}
+	if len(resp.Daily) != 1 || resp.Daily[0].TotalTokens != 25 {
+		t.Fatalf("chat analytics should include the target chat daily trend bucket: %+v", resp.Daily)
 	}
 	if resp.Pagination.Total != 1 || len(resp.Runs) != 1 {
 		t.Fatalf("chat runs: total=%d len=%d", resp.Pagination.Total, len(resp.Runs))
