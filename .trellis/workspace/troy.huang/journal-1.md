@@ -314,3 +314,36 @@ Completed final Trellis finish pass for Chat Plan Runs: make check-worktree pass
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Request-efficient task bundles
+
+**Date**: 2026-05-24
+**Task**: Request-efficient task bundles
+**Branch**: `feat/chat-plan-runs`
+
+### Summary
+
+Implemented request-efficient agent task bundles with durable bundle/item records, one provider execution task, daemon bundle context, checkpoint CLI/API, transcript segmentation, frontend gating, and Codex CLI E2E verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b87f5c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
