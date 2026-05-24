@@ -164,4 +164,79 @@ describe("TaskBundleSection", () => {
       });
     });
   });
+
+  it("shows completed bundle history without exposing create controls or IDs", async () => {
+    const bundleId = "beb14ee0-cfa1-44b1-bf6d-04dc5acf0000";
+    const issueA = makeIssue({
+      id: "issue-1",
+      identifier: "MUL-1",
+      title: "First task",
+      status: "in_review",
+      assignee_id: "agent-1",
+    });
+    const issueB = makeIssue({
+      id: "issue-2",
+      identifier: "MUL-2",
+      title: "Second task",
+      status: "in_review",
+      assignee_id: "agent-1",
+    });
+    mockApi.listTaskBundlesByIssue.mockResolvedValue([
+      {
+        id: bundleId,
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        status: "completed",
+        changeset_mode: "per_issue",
+        max_items: 5,
+        runtime_budget_seconds: 18_000,
+        rerun_scope: [],
+        created_at: "2026-05-24T00:00:00Z",
+        updated_at: "2026-05-24T00:00:00Z",
+        completed_at: "2026-05-24T00:30:00Z",
+        items: [
+          {
+            id: "item-1",
+            bundle_id: bundleId,
+            issue_id: "issue-1",
+            position: 1,
+            status: "completed",
+            output_namespace: "bundle/internal/item-1",
+            created_at: "2026-05-24T00:00:00Z",
+            updated_at: "2026-05-24T00:15:00Z",
+          },
+          {
+            id: "item-2",
+            bundle_id: bundleId,
+            issue_id: "issue-2",
+            position: 2,
+            status: "completed",
+            output_namespace: "bundle/internal/item-2",
+            created_at: "2026-05-24T00:00:00Z",
+            updated_at: "2026-05-24T00:30:00Z",
+          },
+        ],
+      },
+    ]);
+
+    renderSection({
+      issue: issueA,
+      issues: [issueB],
+      agents: [makeAgent({ request_efficient_enabled: true })],
+    });
+
+    fireEvent.click(await screen.findByText("Task bundle"));
+
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByText("2/2")).toBeInTheDocument();
+    expect(screen.getByText("MUL-1 First task")).toBeInTheDocument();
+    expect(screen.getByText("MUL-2 Second task")).toBeInTheDocument();
+    expect(screen.queryByText(bundleId)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Start bundle" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+  });
 });

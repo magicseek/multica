@@ -7,7 +7,13 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
 import { agentTaskSnapshotKeys } from "@multica/core/agents/queries";
-import type { Agent, Issue, Squad } from "@multica/core/types";
+import type {
+  Agent,
+  Issue,
+  Squad,
+  TaskBundle,
+  TaskBundleItemStatus,
+} from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
@@ -20,6 +26,14 @@ import {
 import { useT } from "../../i18n";
 
 const MAX_BUNDLE_ITEMS = 5;
+const STARTABLE_ISSUE_STATUSES = new Set<Issue["status"]>(["todo", "blocked"]);
+const FINAL_BUNDLE_ITEM_STATUSES = new Set<TaskBundleItemStatus>([
+  "completed",
+  "failed",
+  "blocked",
+  "input_needed",
+  "cancelled",
+]);
 
 interface TaskBundleSectionProps {
   workspaceId: string;
@@ -58,10 +72,17 @@ export function TaskBundleSection({
   );
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
-    () => new Set([issue.id]),
+    () => new Set(isIssueStartableForNewBundle(issue) ? [issue.id] : []),
   );
   const [creating, setCreating] = useState(false);
   const [rerunningBundleId, setRerunningBundleId] = useState<string | null>(null);
+  const currentIssueStartable = isIssueStartableForNewBundle(issue);
+  const issueById = useMemo(() => {
+    const byId = new Map<string, Issue>();
+    byId.set(issue.id, issue);
+    for (const candidate of issues) byId.set(candidate.id, candidate);
+    return byId;
+  }, [issue, issues]);
 
   useEffect(() => {
     setSelectedAgentId((current) => {
@@ -71,18 +92,18 @@ export function TaskBundleSection({
   }, [eligibleAgents, requestEfficientAgents]);
 
   useEffect(() => {
-    setSelectedIssueIds(new Set([issue.id]));
-  }, [issue.id, selectedAgentId]);
+    setSelectedIssueIds(new Set(currentIssueStartable ? [issue.id] : []));
+  }, [currentIssueStartable, issue.id, selectedAgentId]);
 
   const selectedAgent =
     requestEfficientAgents.find((agent) => agent.id === selectedAgentId) ?? null;
 
   const candidateIssues = useMemo(() => {
-    if (!selectedAgent) return [issue];
+    if (!selectedAgent || !currentIssueStartable) return [];
     const byId = new Map<string, Issue>();
     byId.set(issue.id, issue);
     for (const candidate of issues) {
-      if (candidate.status === "done" || candidate.status === "cancelled") {
+      if (!isIssueStartableForNewBundle(candidate)) {
         continue;
       }
       if (issueCanRunInBundle(candidate, selectedAgent, squads)) {
@@ -94,7 +115,7 @@ export function TaskBundleSection({
       if (b.id === issue.id) return 1;
       return a.identifier.localeCompare(b.identifier);
     });
-  }, [issue, issues, selectedAgent, squads]);
+  }, [currentIssueStartable, issue, issues, selectedAgent, squads]);
 
   const { data: bundles = [] } = useQuery({
     queryKey: issueKeys.taskBundles(issue.id),
@@ -111,9 +132,15 @@ export function TaskBundleSection({
   const currentIssueEligible = selectedAgent
     ? issueCanRunInBundle(issue, selectedAgent, squads)
     : false;
+  const creationAvailable =
+    eligibleAgents.length > 0 && currentIssueEligible && currentIssueStartable;
+  const shouldRender =
+    bundles.length > 0 || creationAvailable || eligibleAgents.length === 0;
+  if (!shouldRender) return null;
+
   const canCreate =
     !!selectedAgent &&
-    currentIssueEligible &&
+    creationAvailable &&
     selectedIds.length > 0 &&
     selectedIds.length <= MAX_BUNDLE_ITEMS &&
     !creating;
@@ -179,6 +206,42 @@ export function TaskBundleSection({
     }
   };
 
+  const bundleStatusLabel = (status: TaskBundle["status"]): string => {
+    switch (status) {
+      case "queued":
+        return t(($) => $.task_bundle.status_queued);
+      case "running":
+        return t(($) => $.task_bundle.status_running);
+      case "completed":
+        return t(($) => $.task_bundle.status_completed);
+      case "failed":
+        return t(($) => $.task_bundle.status_failed);
+      case "blocked":
+        return t(($) => $.task_bundle.status_blocked);
+      case "cancelled":
+        return t(($) => $.task_bundle.status_cancelled);
+    }
+  };
+
+  const bundleItemStatusLabel = (status: TaskBundleItemStatus): string => {
+    switch (status) {
+      case "queued":
+        return t(($) => $.task_bundle.item_status_queued);
+      case "in_progress":
+        return t(($) => $.task_bundle.item_status_running);
+      case "completed":
+        return t(($) => $.task_bundle.item_status_completed);
+      case "failed":
+        return t(($) => $.task_bundle.item_status_failed);
+      case "blocked":
+        return t(($) => $.task_bundle.item_status_blocked);
+      case "input_needed":
+        return t(($) => $.task_bundle.item_status_input_needed);
+      case "cancelled":
+        return t(($) => $.task_bundle.item_status_cancelled);
+    }
+  };
+
   return (
     <div>
       <button
@@ -203,32 +266,129 @@ export function TaskBundleSection({
 
       {open && (
         <div className="space-y-2 pl-2">
-          <div className="rounded-md border bg-muted/20 p-2">
-            {eligibleAgents.length === 0 ? (
+          {bundles.length > 0 && (
+            <div className="space-y-2">
+              {bundles.slice(0, 3).map((bundle) => {
+                const done = bundle.items.filter((item) =>
+                  FINAL_BUNDLE_ITEM_STATUSES.has(item.status),
+                ).length;
+                return (
+                  <div key={bundle.id} className="rounded-md border bg-muted/20 p-2">
+                    <div className="flex min-w-0 items-center gap-2 text-xs">
+                      <PackageCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 truncate font-medium text-foreground">
+                        {bundleStatusLabel(bundle.status)}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {done}/{bundle.items.length}
+                      </span>
+                      {(bundle.status === "blocked" || bundle.status === "failed") && (
+                        <button
+                          type="button"
+                          onClick={() => void rerunBundle(bundle.id)}
+                          disabled={!!rerunningBundleId}
+                          className="ml-auto shrink-0 rounded px-1 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                        >
+                          {rerunningBundleId === bundle.id
+                            ? t(($) => $.task_bundle.rerunning)
+                            : t(($) => $.task_bundle.rerun_action)}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-2 space-y-1">
+                      {[...bundle.items]
+                        .sort((a, b) => a.position - b.position)
+                        .map((item) => {
+                          const itemIssue = issueById.get(item.issue_id);
+                          const label = itemIssue
+                            ? `${itemIssue.identifier} ${itemIssue.title}`
+                            : t(($) => $.task_bundle.transcript_item, {
+                                position: item.position,
+                              });
+                          return (
+                            <div
+                              key={item.id}
+                              className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground"
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${bundleItemDotClass(
+                                  item.status,
+                                )}`}
+                              />
+                              <span className="min-w-0 flex-1 truncate">{label}</span>
+                              {item.issue_id === issue.id && (
+                                <span className="shrink-0 rounded bg-background px-1 py-0.5 text-[10px]">
+                                  {t(($) => $.task_bundle.current_issue)}
+                                </span>
+                              )}
+                              <span className="shrink-0">
+                                {bundleItemStatusLabel(item.status)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {eligibleAgents.length === 0 && bundles.length === 0 && (
+            <div className="rounded-md border bg-muted/20 p-2">
               <p className="text-xs text-muted-foreground">
                 {t(($) => $.task_bundle.assign_hint)}
               </p>
-            ) : (
+            </div>
+          )}
+
+          {creationAvailable && (
+            <div className="rounded-md border bg-muted/20 p-2">
               <div className="space-y-2">
-                <Select
-                  value={selectedAgentId}
-                  onValueChange={(value) => {
-                    if (value) {
-                      setSelectedAgentId(value);
-                    }
-                  }}
-                >
-                  <SelectTrigger size="sm" className="h-7 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {eligibleAgents.map((agent) => (
-                      <SelectItem key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="space-y-0.5">
+                  <div className="text-xs font-medium text-foreground">
+                    {t(($) => $.task_bundle.create_title)}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t(($) => $.task_bundle.create_description)}
+                  </p>
+                </div>
+
+                {eligibleAgents.length > 1 ? (
+                  <Select
+                    value={selectedAgentId}
+                    onValueChange={(value) => {
+                      if (value) {
+                        setSelectedAgentId(value);
+                      }
+                    }}
+                  >
+                    <SelectTrigger size="sm" className="h-7 text-xs">
+                      <SelectValue
+                        placeholder={t(($) => $.task_bundle.agent_placeholder)}
+                      >
+                        {selectedAgent?.name ?? ""}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {eligibleAgents.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : selectedAgent ? (
+                  <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
+                    <span className="shrink-0 text-muted-foreground">
+                      {t(($) => $.task_bundle.agent_label)}
+                    </span>
+                    <span className="min-w-0 truncate font-medium">
+                      {selectedAgent.name}
+                    </span>
+                  </div>
+                ) : null}
 
                 <div className="max-h-40 space-y-0.5 overflow-y-auto pr-1">
                   {candidateIssues.map((candidate) => {
@@ -263,7 +423,6 @@ export function TaskBundleSection({
                   <span className="text-[11px] text-muted-foreground">
                     {t(($) => $.task_bundle.selected_count, {
                       count: selectedIds.length,
-                      max: MAX_BUNDLE_ITEMS,
                     })}
                   </span>
                   <Button
@@ -278,51 +437,16 @@ export function TaskBundleSection({
                   </Button>
                 </div>
               </div>
-            )}
-          </div>
-
-          {bundles.length > 0 && (
-            <div className="space-y-1">
-              {bundles.slice(0, 3).map((bundle) => {
-                const done = bundle.items.filter(
-                  (item) =>
-                    item.status === "completed" ||
-                    item.status === "failed" ||
-                    item.status === "blocked" ||
-                    item.status === "input_needed" ||
-                    item.status === "cancelled",
-                ).length;
-                return (
-                  <div
-                    key={bundle.id}
-                    className="flex items-center gap-2 rounded px-1 py-1 text-xs text-muted-foreground"
-                  >
-                    <PackageCheck className="h-3.5 w-3.5 shrink-0" />
-                    <span className="capitalize">{bundle.status}</span>
-                    <span className="ml-auto tabular-nums">
-                      {done}/{bundle.items.length}
-                    </span>
-                    {(bundle.status === "blocked" || bundle.status === "failed") && (
-                      <button
-                        type="button"
-                        onClick={() => void rerunBundle(bundle.id)}
-                        disabled={!!rerunningBundleId}
-                        className="rounded px-1 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-                      >
-                        {rerunningBundleId === bundle.id
-                          ? t(($) => $.task_bundle.rerunning)
-                          : t(($) => $.task_bundle.rerun_action)}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
             </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function isIssueStartableForNewBundle(issue: Issue): boolean {
+  return STARTABLE_ISSUE_STATUSES.has(issue.status);
 }
 
 function issueCanRunInBundle(issue: Issue, agent: Agent, squads: Squad[]): boolean {
@@ -333,4 +457,21 @@ function issueCanRunInBundle(issue: Issue, agent: Agent, squads: Squad[]): boole
     return !!squad && !squad.archived_at && squad.leader_id === agent.id;
   }
   return false;
+}
+
+function bundleItemDotClass(status: TaskBundleItemStatus): string {
+  switch (status) {
+    case "completed":
+      return "bg-emerald-500";
+    case "failed":
+    case "blocked":
+    case "input_needed":
+      return "bg-amber-500";
+    case "cancelled":
+      return "bg-muted-foreground/50";
+    case "in_progress":
+      return "bg-blue-500";
+    case "queued":
+      return "bg-muted-foreground/35";
+  }
 }
