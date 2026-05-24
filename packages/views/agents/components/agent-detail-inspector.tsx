@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type ReactNode,
@@ -25,11 +26,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -223,40 +219,20 @@ export function AgentDetailInspector({
             </SelectContent>
           </Select>
         </PropRow>
-        <PropRow
-          label={t(($) => $.inspector.prop_request_efficient)}
-          interactive={false}
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    aria-label={requestEfficientHelpText}
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </button>
-                }
-              />
-              <TooltipContent side="top" className="max-w-64">
-                {requestEfficientHelpText}
-              </TooltipContent>
-            </Tooltip>
-            <Switch
-              checked={agent.request_efficient_enabled === true}
-              onCheckedChange={(checked) => update({ request_efficient_enabled: checked })}
-              disabled={!canEdit}
-              aria-label={t(($) => $.inspector.request_efficient_aria)}
-            />
-            {isRequestEfficientRecommendedProvider(runtime?.provider) && (
-              <span className="truncate text-[11px] text-muted-foreground">
-                {t(($) => $.request_efficient.recommended_badge)}
-              </span>
-            )}
-          </div>
-        </PropRow>
+        <div className="-mx-2 col-span-2 grid min-h-8 grid-cols-subgrid items-center rounded-md px-2">
+          <span className="text-xs text-muted-foreground">
+            {t(($) => $.inspector.prop_request_efficient)}
+          </span>
+          <RequestEfficientControl
+            text={requestEfficientHelpText}
+            checked={agent.request_efficient_enabled === true}
+            disabled={!canEdit}
+            switchLabel={t(($) => $.inspector.request_efficient_aria)}
+            recommended={isRequestEfficientRecommendedProvider(runtime?.provider)}
+            recommendedLabel={t(($) => $.request_efficient.recommended_badge)}
+            onCheckedChange={(checked) => update({ request_efficient_enabled: checked })}
+          />
+        </div>
       </Section>
 
       {/* Details — read-only (no hover, no chip styling — these aren't clickable) */}
@@ -308,6 +284,101 @@ export function AgentDetailInspector({
         </div>
       </div>
     </aside>
+  );
+}
+
+function RequestEfficientControl({
+  text,
+  checked,
+  disabled,
+  switchLabel,
+  recommended,
+  recommendedLabel,
+  onCheckedChange,
+}: {
+  text: string;
+  checked: boolean;
+  disabled: boolean;
+  switchLabel: string;
+  recommended: boolean;
+  recommendedLabel: string;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const helpId = useId();
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openHelp = () => {
+    clearCloseTimer();
+    setOpen(true);
+  };
+
+  const scheduleClose = () => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => setOpen(false), 150);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <div
+      className="flex min-w-0 flex-col items-start gap-1.5 text-xs"
+      onMouseEnter={openHelp}
+      onMouseLeave={scheduleClose}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          title={text}
+          aria-label={text}
+          aria-describedby={open ? helpId : undefined}
+          aria-expanded={open}
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={(event) => {
+            event.preventDefault();
+            clearCloseTimer();
+            setOpen(true);
+          }}
+          onFocus={openHelp}
+          onBlur={scheduleClose}
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+        <Switch
+          checked={checked}
+          onCheckedChange={onCheckedChange}
+          disabled={disabled}
+          aria-label={switchLabel}
+        />
+        {recommended && (
+          <span className="truncate text-[11px] text-muted-foreground">
+            {recommendedLabel}
+          </span>
+        )}
+      </div>
+      {open && (
+        <div
+          id={helpId}
+          role="tooltip"
+          className="max-w-64 rounded-lg border bg-popover p-2.5 text-left text-xs leading-relaxed text-popover-foreground shadow-sm"
+        >
+          {text}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
-import type { ReactNode } from "react";
 import enAgents from "../../locales/en/agents.json";
 import enCommon from "../../locales/en/common.json";
 
@@ -24,14 +23,6 @@ vi.mock("@multica/core/api", () => ({
 
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
-}));
-
-vi.mock("@multica/ui/components/ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
-  TooltipContent: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
 }));
 
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -123,16 +114,13 @@ function renderInspector(runtime = makeRuntime()) {
 describe("AgentDetailInspector", () => {
   it("explains request-efficient mode from the inspector", () => {
     renderInspector();
+    const helpText =
+      "Recommended for request-priced providers; bundle several issues into one provider run.";
+    const helpButton = screen.getByRole("button", { name: helpText });
 
-    expect(
-      screen.getByRole("button", {
-        name: "Recommended for request-priced providers; bundle several issues into one provider run.",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Recommended for request-priced providers; bundle several issues into one provider run.",
-      ),
-    ).toBeInTheDocument();
+    expect(helpButton).toHaveAttribute("title", helpText);
+    fireEvent.click(helpButton);
+
+    expect(screen.getByText(helpText)).toBeInTheDocument();
   });
 });

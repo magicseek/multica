@@ -288,6 +288,9 @@
     "agent_label": "Agent",
     "agent_placeholder": "Select agent",
     "selected_count": "{{count}} selected",
+    "provider_requests_count_one": "{{count}} provider request",
+    "provider_requests_count_other": "{{count}} provider requests",
+    "single_provider_request_hint": "This transcript is one agent task. Every bundle item shown here ran inside the same provider request.",
     "bundle_items_count_one": "{{count}} bundle item",
     "bundle_items_count_other": "{{count}} bundle items",
     "create_action": "Start bundle",
@@ -313,6 +316,7 @@
     "item_status_cancelled": "Cancelled",
     "transcript_item": "Bundle item {{position}}",
     "transcript_item_started": "Started",
+    "transcript_item_completed": "Completed",
     "transcript_item_current": "Current item",
     "transcript_item_done": "Done"
   },

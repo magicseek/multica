@@ -148,7 +148,7 @@ describe("AgentTranscriptDialog", () => {
                   bundle_id: "bundle-1",
                   issue_id: "issue-2",
                   position: 2,
-                  status: "in_progress",
+                  status: "completed",
                   output_namespace: "bundle/bundle-1/item-02-issue-2",
                   created_at: "2026-05-17T00:00:00Z",
                   updated_at: "2026-05-17T00:00:00Z",
@@ -173,25 +173,50 @@ describe("AgentTranscriptDialog", () => {
               output: "checkpoint ok",
             },
             { seq: 4, type: "text", content: "starting issue 2" },
+            {
+              seq: 5,
+              type: "tool_use",
+              tool: "exec_command",
+              input: {
+                command: "multica task-bundle checkpoint item-2 --status completed",
+              },
+            },
+            {
+              seq: 6,
+              type: "tool_result",
+              tool: "exec_command",
+              output: "checkpoint 2 ok",
+            },
           ]}
           agentName="Builder"
         />
       </I18nProvider>,
     );
 
-    expect(screen.getByText("Bundle item 1")).toBeInTheDocument();
-    expect(screen.getByText("Bundle item 2")).toBeInTheDocument();
+    expect(screen.getAllByText("Bundle item 1")).toHaveLength(2);
+    expect(screen.getAllByText("Bundle item 2")).toHaveLength(2);
+    expect(screen.getByText("1 provider request")).toBeInTheDocument();
     expect(screen.getByText("2 bundle items")).toBeInTheDocument();
     expect(screen.getAllByText("Started")).toHaveLength(2);
+    expect(screen.getAllByText("Completed").length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("Done")).not.toBeInTheDocument();
     expect(screen.queryByText("Current item")).not.toBeInTheDocument();
 
     const text = document.body.textContent ?? "";
+    expect(text.indexOf("Bundle item 1Completed")).toBeGreaterThan(
+      text.indexOf("checkpoint ok"),
+    );
+    expect(text.indexOf("Bundle item 1Completed")).toBeLessThan(
+      text.indexOf("Bundle item 2Started"),
+    );
     expect(text.indexOf("Bundle item 2")).toBeGreaterThan(
       text.indexOf("checkpoint ok"),
     );
     expect(text.indexOf("Bundle item 2")).toBeLessThan(
       text.indexOf("starting issue 2"),
+    );
+    expect(text.indexOf("Bundle item 2Completed")).toBeGreaterThan(
+      text.indexOf("checkpoint 2 ok"),
     );
   });
 });

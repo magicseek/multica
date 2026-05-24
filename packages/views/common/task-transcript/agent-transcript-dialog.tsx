@@ -325,6 +325,29 @@ export function AgentTranscriptDialog({
     (seq: number) => findBundleSegmentForSeq(bundleSegments, seq),
     [bundleSegments],
   );
+  const formatBundleItemStatus = useCallback(
+    (status: NonNullable<AgentTask["task_bundle"]>["items"][number]["status"]) => {
+      switch (status) {
+        case "queued":
+          return tIssues(($) => $.task_bundle.item_status_queued);
+        case "in_progress":
+          return tIssues(($) => $.task_bundle.item_status_running);
+        case "completed":
+          return tIssues(($) => $.task_bundle.transcript_item_completed);
+        case "failed":
+          return tIssues(($) => $.task_bundle.item_status_failed);
+        case "blocked":
+          return tIssues(($) => $.task_bundle.item_status_blocked);
+        case "input_needed":
+          return tIssues(($) => $.task_bundle.item_status_input_needed);
+        case "cancelled":
+          return tIssues(($) => $.task_bundle.item_status_cancelled);
+        default:
+          return status;
+      }
+    },
+    [tIssues],
+  );
 
   // Status display
   const statusBadge = isLive ? (
@@ -470,6 +493,15 @@ export function AgentTranscriptDialog({
               <MetadataChip>{t(($) => $.transcript.task_outputs, { count: taskOutputs.length })}</MetadataChip>
             )}
             {bundleItems.length > 0 && (
+              <MetadataChip
+                title={tIssues(($) => $.task_bundle.single_provider_request_hint)}
+              >
+                {tIssues(($) => $.task_bundle.provider_requests_count, {
+                  count: 1,
+                })}
+              </MetadataChip>
+            )}
+            {bundleItems.length > 0 && (
               <MetadataChip>
                 {tIssues(($) => $.task_bundle.bundle_items_count, {
                   count: bundleItems.length,
@@ -552,8 +584,16 @@ export function AgentTranscriptDialog({
                   index > 0
                     ? bundleSegmentForSeq(filteredItems[index - 1]!.seq)
                     : null;
+                const nextSegment =
+                  index < filteredItems.length - 1
+                    ? bundleSegmentForSeq(filteredItems[index + 1]!.seq)
+                    : null;
                 const showSegment =
                   segment != null && segment.item.id !== previousSegment?.item.id;
+                const showSegmentEnd =
+                  segment != null &&
+                  segment.endSeq != null &&
+                  segment.item.id !== nextSegment?.item.id;
                 return (
                   <Fragment key={item.seq}>
                     {showSegment && (
@@ -572,6 +612,15 @@ export function AgentTranscriptDialog({
                       item={item}
                       isSelected={selectedSeq === item.seq}
                     />
+                    {showSegmentEnd && (
+                      <BundleItemDivider
+                        label={tIssues(($) => $.task_bundle.transcript_item, {
+                          position: segment.item.position,
+                        })}
+                        detail={formatBundleItemStatus(segment.item.status)}
+                        variant="end"
+                      />
+                    )}
                   </Fragment>
                 );
               })}
@@ -643,12 +692,21 @@ function findBundleSegmentForSeq(segments: BundleSegment[], seq: number) {
 function BundleItemDivider({
   label,
   detail,
+  variant = "start",
 }: {
   label: string;
   detail: string;
+  variant?: "start" | "end";
 }) {
   return (
-    <div className="flex items-center gap-2 bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground">
+    <div
+      className={cn(
+        "flex items-center gap-2 px-4 py-1.5 text-[11px] text-muted-foreground",
+        variant === "end"
+          ? "bg-background"
+          : "bg-muted/30",
+      )}
+    >
       <span className="font-medium text-foreground">{label}</span>
       <span className="ml-auto">{detail}</span>
     </div>
@@ -726,9 +784,20 @@ function TaskOutputMetadataPill({
   );
 }
 
-function MetadataChip({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
+function MetadataChip({
+  icon,
+  title,
+  children,
+}: {
+  icon?: React.ReactNode;
+  title?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground">
+    <span
+      title={title}
+      className="inline-flex items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground"
+    >
       {icon}
       {children}
     </span>

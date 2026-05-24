@@ -56,20 +56,28 @@ Timeline and transcript dividers must describe the event boundary where they
 are rendered. If a divider is inserted before the first event for a task bundle
 item, it should say that the item started; it must not display the item's final
 checkpoint status (`completed`, `blocked`, `done`, etc.) at that start
-position. Final outcomes belong on checkpoint/result events, item summaries
-that render after the segment, or separate read-only status summaries.
+position. Final outcomes need an end-boundary marker or summary after the
+checkpoint/result event so users can see both where the item began and where it
+finished.
 
 Do not reuse selection-copy such as `N selected` for historical transcript
 metadata. Bundle transcripts should say how many bundle items exist; creation
 forms should say how many items are selected.
 
+Request-efficient bundle transcripts must also make the single execution
+contract visible. If multiple bundle items appear in one task transcript, the
+header should show that the transcript represents one provider request/run
+rather than making users infer it from raw task IDs or checkpoint commands.
+
 ### Inspector Toggle Help
 
 Agent settings toggles that change execution behavior need an inline help
-affordance next to the control. The tooltip must explain the user-visible
-effect of the toggle, not just restate the label. This is required for
+affordance next to the control. The help must be reachable by click and
+discoverable by hover or focus, and it must explain the user-visible effect of
+the toggle instead of restating the label. This is required for
 request-efficient mode because it changes how issue tasks are grouped into
-provider runs and affects billing behavior for request-priced providers.
+provider requests/runs and affects billing behavior for request-priced
+providers.
 
 ---
 
@@ -82,9 +90,15 @@ provider runs and affects billing behavior for request-priced providers.
   identifiers are not visible and that completed/non-startable issues do not
   render stale creation controls.
 - Transcript regressions need component tests that prove time-positioned
-  dividers do not display future/final state at the start of a segment.
+  dividers do not display future/final state at the start of a segment, and
+  that completion/end markers render after the checkpoint output that ends the
+  segment.
+- Request-efficient transcript regressions should assert that the single
+  provider request/run evidence is visible in the transcript header.
 - Inspector behavior toggles need component tests for their help affordance so
-  the explanatory copy is not accidentally removed during layout changes.
+  the explanatory copy is not accidentally removed during layout changes. For
+  icon-only help, tests should exercise the disclosure path instead of only
+  asserting an accessible name.
 
 ---
 

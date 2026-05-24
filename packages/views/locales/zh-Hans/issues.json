@@ -283,6 +283,9 @@
     "agent_label": "智能体",
     "agent_placeholder": "选择智能体",
     "selected_count": "已选 {{count}} 个",
+    "provider_requests_count_one": "{{count}} 次提供方请求",
+    "provider_requests_count_other": "{{count}} 次提供方请求",
+    "single_provider_request_hint": "这份记录来自一个 agent task。这里展示的所有 bundle item 都在同一次提供方请求中运行。",
     "bundle_items_count_one": "{{count}} 个 bundle item",
     "bundle_items_count_other": "{{count}} 个 bundle item",
     "create_action": "启动 bundle",
@@ -308,6 +311,7 @@
     "item_status_cancelled": "取消",
     "transcript_item": "Bundle item {{position}}",
     "transcript_item_started": "开始",
+    "transcript_item_completed": "结束",
     "transcript_item_current": "当前 item",
     "transcript_item_done": "已结束"
   },
