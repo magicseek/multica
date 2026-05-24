@@ -1,0 +1,19 @@
+{"file": "CONTEXT.md", "reason": "Shared glossary and relationships for request-efficient bundles"}
+{"file": "docs/adr/0024-request-efficient-task-bundles-for-request-priced-agents.md", "reason": "Accepted architecture decision and rejected alternatives"}
+{"file": ".trellis/tasks/05-24-request-efficient-task-bundles/prd.md", "reason": "Task requirements and acceptance criteria"}
+{"file": ".trellis/spec/server/backend/index.md", "reason": "Server backend guidelines"}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Agent task execution contract"}
+{"file": ".trellis/spec/server/backend/daemon-runtime-contracts.md", "reason": "Daemon runtime and transcript contracts"}
+{"file": ".trellis/spec/views/frontend/index.md", "reason": "Shared views frontend guidelines"}
+{"file": ".trellis/spec/core/frontend/index.md", "reason": "Core frontend guidelines"}
+{"file": "server/internal/service/task.go", "reason": "Issue task enqueue, claim, complete, retry, and squad lead behavior"}
+{"file": "server/internal/daemon/daemon.go", "reason": "Daemon claim execution and provider invocation boundary"}
+{"file": "server/pkg/db/queries/agent.sql", "reason": "Agent task queue SQL and stale cleanup semantics"}
+{"file": "server/cmd/server/runtime_sweeper.go", "reason": "Server stale running timeout path"}
+{"file": "server/pkg/agent/copilot.go", "reason": "Request-priced provider execution reference"}
+{"file": "server/pkg/agent/kiro.go", "reason": "Request-priced provider execution reference"}
+{"file": "packages/core/types/agent.ts", "reason": "Agent and task API types"}
+{"file": "packages/core/agents/queries.ts", "reason": "Workspace agent query cache patterns"}
+{"file": "packages/views/issues/components/agent-live-card.tsx", "reason": "Issue task status surface and live transcript anchor"}
+{"file": "packages/views/issues/actions/issue-actions-menu-items.tsx", "reason": "Issue action/status UI reference"}
+{"file": "packages/views/common/task-transcript/", "type": "directory", "reason": "Task transcript UI reference"}

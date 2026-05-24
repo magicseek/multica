@@ -1,0 +1,12 @@
+{"file": "CONTEXT.md", "reason": "Terminology and acceptance boundaries to verify"}
+{"file": "docs/adr/0024-request-efficient-task-bundles-for-request-priced-agents.md", "reason": "Decision constraints to validate against implementation"}
+{"file": ".trellis/tasks/05-24-request-efficient-task-bundles/prd.md", "reason": "Acceptance criteria and test plan"}
+{"file": ".trellis/spec/server/backend/agent-execution-protocol.md", "reason": "Agent execution verification contract"}
+{"file": ".trellis/spec/server/backend/daemon-runtime-contracts.md", "reason": "Daemon transcript and runtime verification contract"}
+{"file": ".trellis/spec/views/frontend/quality-guidelines.md", "reason": "Shared views quality checks"}
+{"file": ".trellis/spec/core/frontend/type-safety.md", "reason": "Core frontend type-safety checks"}
+{"file": "server/internal/service/task.go", "reason": "Existing task lifecycle behavior to regression test"}
+{"file": "server/internal/daemon/daemon.go", "reason": "Verify single provider execution and live message drain"}
+{"file": "server/pkg/db/queries/agent.sql", "reason": "Verify queue and stale cleanup SQL changes"}
+{"file": "packages/views/issues/components/agent-live-card.test.tsx", "reason": "Existing issue task status UI tests to extend"}
+{"file": "packages/views/issues/actions/__tests__/issue-actions-menu.test.tsx", "reason": "Existing issue action UI tests to extend"}
