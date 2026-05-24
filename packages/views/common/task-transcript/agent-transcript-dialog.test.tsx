@@ -5,10 +5,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
+import enIssues from "../../locales/en/issues.json";
 import type { AgentTask } from "@multica/core/types/agent";
 import type { TaskOutputMetadata } from "@multica/core/types";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents, issues: enIssues } };
 
 const taskOutputsRef = vi.hoisted(() => ({
   current: [] as TaskOutputMetadata[],
@@ -108,5 +109,65 @@ describe("AgentTranscriptDialog", () => {
     await waitFor(() => {
       expect(clipboardWriteTextMock).toHaveBeenCalledWith("docs/design.md");
     });
+  });
+
+  it("shows bundle item dividers in transcript order", () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <AgentTranscriptDialog
+          open
+          onOpenChange={vi.fn()}
+          task={{
+            ...makeTask(),
+            task_bundle: {
+              id: "bundle-1",
+              workspace_id: "workspace-1",
+              agent_id: "agent-1",
+              runtime_id: "runtime-1",
+              status: "running",
+              changeset_mode: "per_issue",
+              max_items: 5,
+              runtime_budget_seconds: 3900,
+              rerun_scope: [],
+              created_at: "2026-05-17T00:00:00Z",
+              updated_at: "2026-05-17T00:00:00Z",
+              items: [
+                {
+                  id: "item-1",
+                  bundle_id: "bundle-1",
+                  issue_id: "issue-1",
+                  position: 1,
+                  status: "completed",
+                  output_namespace: "bundle/bundle-1/item-01-issue-1",
+                  checkpoint_seq: 1,
+                  created_at: "2026-05-17T00:00:00Z",
+                  updated_at: "2026-05-17T00:00:00Z",
+                },
+                {
+                  id: "item-2",
+                  bundle_id: "bundle-1",
+                  issue_id: "issue-2",
+                  position: 2,
+                  status: "in_progress",
+                  output_namespace: "bundle/bundle-1/item-02-issue-2",
+                  created_at: "2026-05-17T00:00:00Z",
+                  updated_at: "2026-05-17T00:00:00Z",
+                },
+              ],
+            },
+          }}
+          items={[
+            { seq: 1, type: "text", content: "finished issue 1" },
+            { seq: 2, type: "text", content: "starting issue 2" },
+          ]}
+          agentName="Builder"
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByText("Bundle item 1")).toBeInTheDocument();
+    expect(screen.getByText("Bundle item 2")).toBeInTheDocument();
+    expect(screen.getByText("Done")).toBeInTheDocument();
+    expect(screen.getByText("Current item")).toBeInTheDocument();
   });
 });

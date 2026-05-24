@@ -23,9 +23,41 @@ import (
 // agentUpdateCmd has no Reset).
 func freshAgentUpdateCmd() *cobra.Command {
 	c := &cobra.Command{Use: "update"}
+	c.Flags().String("name", "", "")
+	c.Flags().String("description", "", "")
+	c.Flags().String("instructions", "", "")
+	c.Flags().String("runtime-id", "", "")
+	c.Flags().String("runtime-config", "", "")
+	c.Flags().String("model", "", "")
+	c.Flags().String("custom-args", "", "")
 	c.Flags().String("custom-env", "", "")
 	c.Flags().Bool("custom-env-stdin", false, "")
 	c.Flags().String("custom-env-file", "", "")
+	c.Flags().String("visibility", "", "")
+	c.Flags().String("status", "", "")
+	c.Flags().Int32("max-concurrent-tasks", 0, "")
+	c.Flags().Bool("request-efficient", false, "")
+	c.Flags().String("output", "json", "")
+	return c
+}
+
+func freshAgentCreateCmd() *cobra.Command {
+	c := &cobra.Command{Use: "create"}
+	c.Flags().String("name", "", "")
+	c.Flags().String("description", "", "")
+	c.Flags().String("instructions", "", "")
+	c.Flags().String("runtime-id", "", "")
+	c.Flags().String("from-template", "", "")
+	c.Flags().String("runtime-config", "", "")
+	c.Flags().String("model", "", "")
+	c.Flags().String("custom-args", "", "")
+	c.Flags().String("custom-env", "", "")
+	c.Flags().Bool("custom-env-stdin", false, "")
+	c.Flags().String("custom-env-file", "", "")
+	c.Flags().String("visibility", "private", "")
+	c.Flags().Int32("max-concurrent-tasks", 6, "")
+	c.Flags().Bool("request-efficient", false, "")
+	c.Flags().String("output", "json", "")
 	return c
 }
 
@@ -224,21 +256,7 @@ func TestAgentUpdateNoFieldsErrorMentionsAllCustomEnvFlags(t *testing.T) {
 	// but without the package-level state, so cmd.Flags().Changed(...)
 	// returns false for every field and runAgentUpdate falls into the
 	// "no fields to update" branch.
-	cmd := &cobra.Command{Use: "update"}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("description", "", "")
-	cmd.Flags().String("instructions", "", "")
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("runtime-config", "", "")
-	cmd.Flags().String("model", "", "")
-	cmd.Flags().String("custom-args", "", "")
-	cmd.Flags().String("custom-env", "", "")
-	cmd.Flags().Bool("custom-env-stdin", false, "")
-	cmd.Flags().String("custom-env-file", "", "")
-	cmd.Flags().String("visibility", "", "")
-	cmd.Flags().String("status", "", "")
-	cmd.Flags().Int32("max-concurrent-tasks", 0, "")
-	cmd.Flags().String("output", "json", "")
+	cmd := freshAgentUpdateCmd()
 	cmd.Flags().String("profile", "", "")
 
 	err := runAgentUpdate(cmd, []string{"agent-id-placeholder"})
@@ -248,11 +266,132 @@ func TestAgentUpdateNoFieldsErrorMentionsAllCustomEnvFlags(t *testing.T) {
 	msg := err.Error()
 	// "--custom-env (" matches the bare flag specifically, not its -stdin /
 	// -file siblings, so we can prove all three names are present.
-	for _, want := range []string{"--custom-env (", "--custom-env-stdin", "--custom-env-file"} {
+	for _, want := range []string{"--custom-env (", "--custom-env-stdin", "--custom-env-file", "--request-efficient"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("no-fields error must mention %q; got: %q", want, msg)
 		}
 	}
+}
+
+func TestAgentCreateAndUpdateSendRequestEfficientFlag(t *testing.T) {
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	t.Run("manual create", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/agents" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method != http.MethodPost {
+				t.Errorf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":                         "agent-1",
+				"name":                       "Efficient Agent",
+				"request_efficient_enabled":  true,
+				"max_concurrent_tasks":       6,
+				"runtime_id":                 "runtime-1",
+				"runtime_mode":               "local",
+				"visibility":                 "private",
+				"status":                     "idle",
+				"custom_env":                 map[string]string{},
+				"custom_args":                []string{},
+				"custom_env_redacted":        false,
+				"execution_protocol_enabled": false,
+			})
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+		cmd := freshAgentCreateCmd()
+		_ = cmd.Flags().Set("name", "Efficient Agent")
+		_ = cmd.Flags().Set("runtime-id", "runtime-1")
+		_ = cmd.Flags().Set("request-efficient", "true")
+		if err := runAgentCreate(cmd, nil); err != nil {
+			t.Fatalf("runAgentCreate: %v", err)
+		}
+		if got := body["request_efficient_enabled"]; got != true {
+			t.Fatalf("request_efficient_enabled = %#v, want true", got)
+		}
+	})
+
+	t.Run("template create", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/agents/from-template" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method != http.MethodPost {
+				t.Errorf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"agent": map[string]any{
+					"id":                        "agent-1",
+					"name":                      "Template Agent",
+					"request_efficient_enabled": true,
+				},
+				"imported_skill_ids": []string{},
+				"reused_skill_ids":   []string{},
+			})
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+		cmd := freshAgentCreateCmd()
+		_ = cmd.Flags().Set("name", "Template Agent")
+		_ = cmd.Flags().Set("runtime-id", "runtime-1")
+		_ = cmd.Flags().Set("from-template", "coding")
+		_ = cmd.Flags().Set("request-efficient", "true")
+		if err := runAgentCreate(cmd, nil); err != nil {
+			t.Fatalf("runAgentCreate from template: %v", err)
+		}
+		if got := body["request_efficient_enabled"]; got != true {
+			t.Fatalf("template request_efficient_enabled = %#v, want true", got)
+		}
+	})
+
+	t.Run("update false", func(t *testing.T) {
+		var body map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/agents/agent-1" {
+				http.NotFound(w, r)
+				return
+			}
+			if r.Method != http.MethodPut {
+				t.Errorf("method = %s, want PUT", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":                        "agent-1",
+				"name":                      "Efficient Agent",
+				"request_efficient_enabled": false,
+			})
+		}))
+		defer srv.Close()
+		t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+		cmd := freshAgentUpdateCmd()
+		_ = cmd.Flags().Set("request-efficient", "false")
+		if err := runAgentUpdate(cmd, []string{"agent-1"}); err != nil {
+			t.Fatalf("runAgentUpdate: %v", err)
+		}
+		if got := body["request_efficient_enabled"]; got != false {
+			t.Fatalf("request_efficient_enabled = %#v, want false", got)
+		}
+	})
 }
 
 // TestParseCustomEnvErrorSanitization guards against future changes

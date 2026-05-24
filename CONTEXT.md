@@ -66,6 +66,98 @@ _Avoid_: unanimous vote, infinite debate
 **Lead Agent**:
 The agent selected to bootstrap, coordinate, or own work when a repository starts without an existing Git remote or user-selected local directory.
 
+**Request-priced Agent**:
+An agent whose external provider charges materially per provider request or interactive connection rather than only by consumed tokens.
+_Avoid_: Expensive agent, Copilot special case, Kiro special case
+
+**Request-efficient Assignment**:
+An assignment policy that asks a **Request-priced Agent** to complete a bounded set of related issue work in as few provider requests as practical.
+_Avoid_: Silent batching, daemon optimization
+
+**Request-efficient Mode**:
+An agent-level setting that enables request-efficient task bundle creation for that agent regardless of provider.
+_Avoid_: Provider hardcode, global batching flag
+
+**Request-efficient Squad Lead Execution**:
+A squad-lead behavior where an agent in request-efficient mode treats squad-assigned execution work as lead-owned work and avoids delegating to squad members unless an explicit exception applies.
+_Avoid_: Consultation-first execution, automatic squad delegation
+
+**Request-efficient Delegation Exception**:
+A narrow condition that allows a request-efficient squad lead to hand work to another agent despite the default lead-owned execution rule.
+_Avoid_: Optional brainstorming, convenience delegation
+
+**Task Bundle**:
+A user-visible assignment unit that groups one or more issue work items for one agent-owned execution.
+_Avoid_: Hidden claim merge, provider session reuse, mega issue
+
+**Task Bundle Availability Gate**:
+The UI exposure rule that shows task bundle controls only when at least one available agent has **Request-efficient Mode** enabled.
+_Avoid_: Always-on bundle option, provider-name gate
+
+**Task Bundle Item**:
+One issue work item inside a task bundle, with its own order, status, result, outputs, and rerun eligibility.
+_Avoid_: JSON-only issue id, subtask by implication
+
+**Bundle Execution Task**:
+The single queued agent task that starts the provider execution for a task bundle.
+_Avoid_: One task per bundle item, hidden task fanout
+
+**Sequential Task Bundle Execution**:
+A task bundle execution strategy where one provider session handles issue work items one at a time without disconnecting between items.
+_Avoid_: Parallel batching, simultaneous issue execution
+
+**Single Provider Execution**:
+An execution boundary where Multica starts the external agent provider once and does not send additional provider prompts between issue work items.
+_Avoid_: Per-issue provider turn, daemon-driven multi-turn bundle
+
+**Pre-materialized Bundle Context**:
+The bundle, issue, resource, and output-path context prepared before a task bundle starts so the agent can read each work item as needed during one provider execution.
+_Avoid_: Just-in-time daemon prompt, live context injection
+
+**Bundle Input Deferral**:
+The rule that a task bundle records missing human input as a per-item or bundle-level blocked outcome instead of pausing the provider execution to wait for a reply.
+_Avoid_: Interactive bundle pause, long-lived human wait
+
+**Bundle Rerun Scope**:
+The user-selected subset of issue work items from a prior task bundle that should be attempted in a follow-up execution.
+_Avoid_: Always rerun all, implicit retry set
+
+**Start Work Review**:
+A pre-execution review boundary where a member decides whether selected assigned issue work starts separately or as a request-efficient task bundle.
+_Avoid_: Post-queue merge prompt, daemon batching prompt
+
+**Bundle Size Guardrail**:
+The maximum number of issue work items allowed in one task bundle before the selection must be split.
+_Avoid_: Unlimited bundle, giant execution batch
+
+**Bundle Output Namespace**:
+A task bundle output boundary with one bundle-level summary and isolated per-issue work item outputs.
+_Avoid_: Shared outputs.json, mixed artifact folder
+
+**Bundle Item Checkpoint**:
+A transcript and result boundary where a task bundle records one issue work item's completed, failed, blocked, or input-needed outcome before moving to the next item.
+_Avoid_: Unstructured progress note, mixed final summary
+
+**Bundle Checkpoint Command**:
+A task-scoped Multica command or API call that records a bundle item checkpoint during provider execution.
+_Avoid_: Final-manifest-only checkpoint, prose-only checkpoint
+
+**Bundle Runtime Budget**:
+A bundle-specific execution timeout budget derived from item count and configuration rather than the global single-task timeout alone.
+_Avoid_: Unlimited bundle runtime, fixed single-task timeout
+
+**Live Bundle Transcript**:
+A live provider execution transcript segmented by bundle item checkpoints so progress remains visible while a task bundle is running.
+_Avoid_: End-only bundle log, mixed unsegmented transcript
+
+**Active Bundle Item**:
+The one task bundle item currently being worked during sequential bundle execution.
+_Avoid_: All running items, parallel active issues
+
+**Bundle Changeset Mode**:
+The creation-time choice that determines whether a task bundle produces one changeset per issue work item or one shared changeset for the whole bundle.
+_Avoid_: Agent-decided branch mode, implicit MR grouping
+
 **Output Metadata**:
 Privacy-minimized facts about local or agent-managed task outputs, such as file names, relative paths, sizes, MIME types, and creation times, excluding file contents, diffs, logs, stack traces, screenshots, and absolute local paths.
 
@@ -203,6 +295,36 @@ _Avoid_: Happy-path demo, manual-only test, unchecked token handling
 - Agent-authored comment triggers inherit the parent task's **Connector Delegated User** rather than granting the agent new connector authority
 - Chat tasks use the chat session creator or triggering human chat message author as the **Connector Delegated User**
 - Autopilot tasks require an explicitly configured **Connector Delegated User** before using user-owned connector credentials
+- A **Request-efficient Assignment** creates a **Task Bundle** when multiple issue work items should be handled by the same **Request-priced Agent**
+- **Request-efficient Mode** is configured on a concrete agent; providers such as Copilot and Kiro may recommend enabling it, but any provider may opt in or out
+- **Task Bundle Availability Gate** hides task bundle controls from issue task status pages unless at least one available agent has **Request-efficient Mode** enabled
+- A request-efficient agent acting as a squad leader uses **Request-efficient Squad Lead Execution** for squad-assigned execution work
+- **Request-efficient Delegation Exceptions** include explicit user delegation, another agent's unique required capability, or a follow-up task after the lead records a blocked outcome
+- A **Task Bundle** belongs to one agent execution owner and contains one or more issue work items
+- A **Task Bundle** is a first-class domain object rather than only JSON inside a queued task
+- A **Task Bundle** contains one or more **Task Bundle Items**
+- A **Task Bundle** has one **Bundle Execution Task** for the single provider execution
+- A **Task Bundle** is created at an explicit assignment or proposal-approval boundary, not by silently merging already queued tasks
+- A **Task Bundle** may report distinct outcomes for each issue work item even when the agent attempts them in one provider request
+- A **Task Bundle** uses **Sequential Task Bundle Execution** by default to reduce context, artifact, and worktree interference between issue work items
+- A request-efficient **Task Bundle** uses **Single Provider Execution** for **Request-priced Agents**
+- A request-efficient **Task Bundle** uses **Pre-materialized Bundle Context** rather than daemon-sent per-issue prompts between work items
+- A request-efficient **Task Bundle** uses **Bundle Input Deferral** when human clarification is needed during execution
+- A follow-up request-efficient **Task Bundle** uses an explicit **Bundle Rerun Scope** and defaults to failed, blocked, or input-needed issue work items rather than completed items
+- A **Task Bundle** uses a **Bundle Output Namespace** so bundle-level summaries and per-issue outputs cannot overwrite each other
+- A **Task Bundle** records **Bundle Item Checkpoints** so one provider execution transcript can still be read per issue work item
+- A **Task Bundle** has a **Bundle Changeset Mode** chosen at creation time; the default is one changeset per issue work item, with an explicit shared-bundle changeset mode for tightly coupled issue sets
+- A **Task Bundle** has a **Bundle Size Guardrail**; the default maximum is five issue work items, and larger selections are split into multiple bundles unless configuration allows a higher bounded maximum
+- A **Task Bundle** is visible from its issue work items, but each issue remains the primary surface for per-item status, comments, outputs, branches, and merge requests
+- A **Task Bundle** exposes bundle-level execution order, aggregate usage, provider request metrics when available, item outcomes, transcript checkpoints, and rerun scope
+- Backlog is the staging status for assigned issue work; moving assigned work out of backlog is an execution trigger
+- Request-efficient bundle choice happens before task enqueue at assignment, **Start Work Review**, or **Chat Issue Proposal** approval boundaries
+- Already queued or running issue tasks are not silently regrouped into a **Task Bundle**
+- During **Sequential Task Bundle Execution**, only the **Active Bundle Item** moves its issue to `in_progress`; later items may be `todo` while visibly queued inside the bundle
+- When an **Active Bundle Item** reaches a **Bundle Item Checkpoint**, its issue moves according to that item outcome before the next item becomes active
+- **Bundle Item Checkpoints** are recorded through **Bundle Checkpoint Commands** as the primary path; final structured manifests are not the only source of per-item outcomes
+- A **Task Bundle** has a **Bundle Runtime Budget** that controls daemon execution timeout and server stale-task expiry for the **Bundle Execution Task**
+- A **Task Bundle** exposes a **Live Bundle Transcript** for bundle-level progress and per-item transcript segments
 - A **Project** may have zero or more **Project Resources**
 - A **Project Resource** may reference a **Connector** and narrows what a **Project** can use
 - A **Project Resource** may be a **Container Project Resource** or **Pinned Project Resource**

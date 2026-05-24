@@ -253,6 +253,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
+		r.Post("/tasks/{taskId}/bundle/checkpoint", h.CheckpointTaskBundleItem)
 		r.Post("/tasks/{taskId}/outputs", h.UploadTaskOutputMetadata)
 
 		r.Get("/issues/{issueId}/gc-check", h.GetIssueGCCheck)
@@ -368,6 +369,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/subscribe", h.SubscribeToIssue)
 					r.Post("/unsubscribe", h.UnsubscribeFromIssue)
 					r.Get("/active-task", h.GetActiveTaskForIssue)
+					r.Get("/task-bundles", h.ListTaskBundlesByIssue)
 					r.Post("/tasks/{taskId}/cancel", h.CancelTask)
 					r.Post("/rerun", h.RerunIssue)
 					r.Get("/task-runs", h.ListTasksByIssue)
@@ -385,6 +387,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Task messages (user-facing, not daemon auth)
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Post("/api/task-bundles", h.CreateTaskBundle)
+			r.Post("/api/task-bundles/{id}/rerun", h.RerunTaskBundle)
 
 			// Labels
 			r.Route("/api/labels", func(r chi.Router) {

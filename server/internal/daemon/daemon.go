@@ -2182,31 +2182,35 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Repos are passed as metadata only — the agent checks them out on demand
 	// via `multica repo checkout <url>`.
 	taskCtx := execenv.TaskContextForEnv{
-		IssueID:                  task.IssueID,
-		TriggerCommentID:         task.TriggerCommentID,
-		TriggerAuthorType:        task.TriggerAuthorType,
-		TriggerAuthorName:        task.TriggerAuthorName,
-		AgentID:                  agentID,
-		AgentName:                agentName,
-		AgentInstructions:        instructions,
-		AgentSkills:              convertSkillsForEnv(skills),
-		Repos:                    convertReposForEnv(task.Repos),
-		Repositories:             convertTaskRepositoriesForEnv(task.Repositories),
-		ProjectID:                task.ProjectID,
-		ProjectTitle:             task.ProjectTitle,
-		ProjectResources:         convertProjectResourcesForEnv(task.ProjectResources),
-		ChatSessionID:            task.ChatSessionID,
-		AutopilotRunID:           task.AutopilotRunID,
-		AutopilotID:              task.AutopilotID,
-		AutopilotTitle:           task.AutopilotTitle,
-		AutopilotDescription:     task.AutopilotDescription,
-		AutopilotSource:          task.AutopilotSource,
-		AutopilotTriggerPayload:  strings.TrimSpace(string(task.AutopilotTriggerPayload)),
-		QuickCreatePrompt:        task.QuickCreatePrompt,
-		IsSquadLeader:            strings.Contains(instructions, "## Squad Operating Protocol"),
-		ExecutionProtocolEnabled: executionProtocolEnabled,
-		ExecutionProtocolSlug:    executionProtocolSlug,
-		WorkflowRenderedMarkdown: strings.TrimSpace(task.WorkflowSnapshot.RenderedMarkdown),
+		IssueID:                        task.IssueID,
+		TriggerCommentID:               task.TriggerCommentID,
+		TriggerAuthorType:              task.TriggerAuthorType,
+		TriggerAuthorName:              task.TriggerAuthorName,
+		AgentID:                        agentID,
+		AgentName:                      agentName,
+		AgentInstructions:              instructions,
+		AgentSkills:                    convertSkillsForEnv(skills),
+		Repos:                          convertReposForEnv(task.Repos),
+		Repositories:                   convertTaskRepositoriesForEnv(task.Repositories),
+		ProjectID:                      task.ProjectID,
+		ProjectTitle:                   task.ProjectTitle,
+		ProjectResources:               convertProjectResourcesForEnv(task.ProjectResources),
+		ChatSessionID:                  task.ChatSessionID,
+		AutopilotRunID:                 task.AutopilotRunID,
+		AutopilotID:                    task.AutopilotID,
+		AutopilotTitle:                 task.AutopilotTitle,
+		AutopilotDescription:           task.AutopilotDescription,
+		AutopilotSource:                task.AutopilotSource,
+		AutopilotTriggerPayload:        strings.TrimSpace(string(task.AutopilotTriggerPayload)),
+		QuickCreatePrompt:              task.QuickCreatePrompt,
+		TaskBundleID:                   taskBundleID(task),
+		TaskBundleChangesetMode:        taskBundleChangesetMode(task),
+		TaskBundleRuntimeBudgetSeconds: taskBundleRuntimeBudgetSeconds(task),
+		TaskBundleItems:                convertTaskBundleItemsForEnv(task.TaskBundle),
+		IsSquadLeader:                  strings.Contains(instructions, "## Squad Operating Protocol"),
+		ExecutionProtocolEnabled:       executionProtocolEnabled,
+		ExecutionProtocolSlug:          executionProtocolSlug,
+		WorkflowRenderedMarkdown:       strings.TrimSpace(task.WorkflowSnapshot.RenderedMarkdown),
 	}
 	if task.WorkflowRun != nil {
 		taskCtx.WorkflowRunID = task.WorkflowRun.ID
@@ -3264,6 +3268,44 @@ func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.Pr
 			ResourceType: r.ResourceType,
 			ResourceRef:  r.ResourceRef,
 			Label:        r.Label,
+		}
+	}
+	return result
+}
+
+func taskBundleID(task Task) string {
+	if task.TaskBundle == nil {
+		return ""
+	}
+	return task.TaskBundle.ID
+}
+
+func taskBundleChangesetMode(task Task) string {
+	if task.TaskBundle == nil {
+		return ""
+	}
+	return task.TaskBundle.ChangesetMode
+}
+
+func taskBundleRuntimeBudgetSeconds(task Task) int32 {
+	if task.TaskBundle == nil {
+		return 0
+	}
+	return task.TaskBundle.RuntimeBudgetSeconds
+}
+
+func convertTaskBundleItemsForEnv(bundle *TaskBundleData) []execenv.TaskBundleItemContextForEnv {
+	if bundle == nil || len(bundle.Items) == 0 {
+		return nil
+	}
+	result := make([]execenv.TaskBundleItemContextForEnv, len(bundle.Items))
+	for i, item := range bundle.Items {
+		result[i] = execenv.TaskBundleItemContextForEnv{
+			ID:              item.ID,
+			IssueID:         item.IssueID,
+			Position:        item.Position,
+			Status:          item.Status,
+			OutputNamespace: item.OutputNamespace,
 		}
 	}
 	return result

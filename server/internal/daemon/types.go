@@ -144,6 +144,33 @@ type Task struct {
 	WorkflowRevisionID      string                `json:"workflow_revision_id,omitempty"`      // immutable workflow revision selected at queue time
 	WorkflowSnapshot        WorkflowSnapshot      `json:"workflow_snapshot,omitempty"`         // rendered workflow snapshot captured at queue time
 	WorkflowRun             *WorkflowRun          `json:"workflow_run,omitempty"`              // materialized workflow run and initial step state
+	TaskBundle              *TaskBundleData       `json:"task_bundle,omitempty"`               // request-efficient bundle context for sequential multi-issue execution
+}
+
+type TaskBundleData struct {
+	ID                   string               `json:"id"`
+	WorkspaceID          string               `json:"workspace_id"`
+	AgentID              string               `json:"agent_id"`
+	RuntimeID            string               `json:"runtime_id"`
+	Status               string               `json:"status"`
+	ChangesetMode        string               `json:"changeset_mode"`
+	MaxItems             int32                `json:"max_items"`
+	RuntimeBudgetSeconds int32                `json:"runtime_budget_seconds"`
+	RerunOfBundleID      *string              `json:"rerun_of_bundle_id,omitempty"`
+	RerunScope           json.RawMessage      `json:"rerun_scope"`
+	Items                []TaskBundleItemData `json:"items"`
+}
+
+type TaskBundleItemData struct {
+	ID              string          `json:"id"`
+	BundleID        string          `json:"bundle_id"`
+	IssueID         string          `json:"issue_id"`
+	Position        int32           `json:"position"`
+	Status          string          `json:"status"`
+	OutputNamespace string          `json:"output_namespace"`
+	CheckpointSeq   *int32          `json:"checkpoint_seq,omitempty"`
+	Result          json.RawMessage `json:"result,omitempty"`
+	Error           string          `json:"error,omitempty"`
 }
 
 type WorkflowSnapshot struct {
@@ -305,6 +332,7 @@ type AgentData struct {
 	Model                    string            `json:"model,omitempty"`
 	ExecutionProtocolEnabled bool              `json:"execution_protocol_enabled,omitempty"`
 	ExecutionProtocolSlug    string            `json:"execution_protocol_slug,omitempty"`
+	RequestEfficientEnabled  bool              `json:"request_efficient_enabled,omitempty"`
 }
 
 // SkillData represents a structured skill for task execution.

@@ -137,6 +137,7 @@ func init() {
 	agentCreateCmd.Flags().String("custom-env-file", "", "Read the --custom-env JSON object from a file path (suggested mode: 0600). Mutually exclusive with --custom-env and --custom-env-stdin.")
 	agentCreateCmd.Flags().String("visibility", "private", "Visibility: private or workspace")
 	agentCreateCmd.Flags().Int32("max-concurrent-tasks", 6, "Maximum concurrent tasks")
+	agentCreateCmd.Flags().Bool("request-efficient", false, "Enable request-efficient task bundles for this agent")
 	agentCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent update
@@ -153,6 +154,7 @@ func init() {
 	agentUpdateCmd.Flags().String("visibility", "", "New visibility: private or workspace")
 	agentUpdateCmd.Flags().String("status", "", "New status")
 	agentUpdateCmd.Flags().Int32("max-concurrent-tasks", 0, "New max concurrent tasks")
+	agentUpdateCmd.Flags().Bool("request-efficient", false, "Enable or disable request-efficient task bundles")
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent archive
@@ -423,6 +425,10 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
 		body["max_concurrent_tasks"] = v
 	}
+	if cmd.Flags().Changed("request-efficient") {
+		v, _ := cmd.Flags().GetBool("request-efficient")
+		body["request_efficient_enabled"] = v
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -463,6 +469,10 @@ func runAgentCreateFromTemplate(cmd *cobra.Command, client *cli.APIClient, name,
 	if cmd.Flags().Changed("max-concurrent-tasks") {
 		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
 		body["max_concurrent_tasks"] = v
+	}
+	if cmd.Flags().Changed("request-efficient") {
+		v, _ := cmd.Flags().GetBool("request-efficient")
+		body["request_efficient_enabled"] = v
 	}
 
 	// 60s ceiling: templates fan out N HTTP fetches to GitHub, each ~200-500ms.
@@ -550,9 +560,13 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
 		body["max_concurrent_tasks"] = v
 	}
+	if cmd.Flags().Changed("request-efficient") {
+		v, _ := cmd.Flags().GetBool("request-efficient")
+		body["request_efficient_enabled"] = v
+	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --custom-args, --custom-env (or --custom-env-stdin, --custom-env-file), --visibility, --status, or --max-concurrent-tasks")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --custom-args, --custom-env (or --custom-env-stdin, --custom-env-file), --visibility, --status, --max-concurrent-tasks, or --request-efficient")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

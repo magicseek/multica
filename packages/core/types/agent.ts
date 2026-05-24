@@ -123,6 +123,69 @@ export interface AgentTask {
    * the daemon reports a work_dir (typically once execution starts).
    */
   work_dir?: string;
+  /** Present when this task is the single provider execution for a task bundle. */
+  task_bundle?: TaskBundle;
+}
+
+export type TaskBundleStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled";
+
+export type TaskBundleItemStatus =
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "input_needed"
+  | "cancelled";
+
+export interface TaskBundleItem {
+  id: string;
+  bundle_id: string;
+  issue_id: string;
+  position: number;
+  status: TaskBundleItemStatus;
+  output_namespace: string;
+  checkpoint_seq?: number;
+  result?: unknown;
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskBundle {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  runtime_id: string;
+  status: TaskBundleStatus;
+  changeset_mode: "per_issue" | "shared";
+  max_items: number;
+  runtime_budget_seconds: number;
+  rerun_of_bundle_id?: string;
+  rerun_scope: unknown;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+  items: TaskBundleItem[];
+  task?: AgentTask;
+}
+
+export interface CreateTaskBundleRequest {
+  agent_id: string;
+  issue_ids: string[];
+  changeset_mode?: "per_issue" | "shared";
+  runtime_budget_seconds?: number;
+  rerun_of_bundle_id?: string;
+  rerun_scope?: string[];
 }
 
 export interface AgentTaskWorkflowSnapshot {
@@ -159,6 +222,7 @@ export interface Agent {
   model: string;
   execution_protocol_enabled?: boolean;
   execution_protocol_slug?: ExecutionProtocolSlug;
+  request_efficient_enabled?: boolean;
   owner_id: string | null;
   skills: AgentSkillSummary[];
   created_at: string;
@@ -194,6 +258,7 @@ export interface CreateAgentRequest {
   model?: string;
   execution_protocol_enabled?: boolean;
   execution_protocol_slug?: ExecutionProtocolSlug;
+  request_efficient_enabled?: boolean;
   /** Optional template slug used by the onboarding agent picker. Surfaced
    *  as the `template` property on the `agent_created` PostHog event. */
   template?: string;
@@ -284,6 +349,7 @@ export interface UpdateAgentRequest {
   model?: string;
   execution_protocol_enabled?: boolean;
   execution_protocol_slug?: ExecutionProtocolSlug;
+  request_efficient_enabled?: boolean;
 }
 
 // Skills

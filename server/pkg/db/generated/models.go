@@ -43,6 +43,7 @@ type Agent struct {
 	Model                    pgtype.Text        `json:"model"`
 	ExecutionProtocolEnabled bool               `json:"execution_protocol_enabled"`
 	ExecutionProtocolSlug    string             `json:"execution_protocol_slug"`
+	RequestEfficientEnabled  bool               `json:"request_efficient_enabled"`
 }
 
 type AgentRuntime struct {
@@ -105,6 +106,7 @@ type AgentTaskQueue struct {
 	ChatPlanRunID            pgtype.UUID        `json:"chat_plan_run_id"`
 	ChatPlanConsultationID   pgtype.UUID        `json:"chat_plan_consultation_id"`
 	ChatTaskKind             string             `json:"chat_task_kind"`
+	TaskBundleID             pgtype.UUID        `json:"task_bundle_id"`
 }
 
 type Attachment struct {
@@ -686,6 +688,39 @@ type SquadMember struct {
 	MemberID   pgtype.UUID        `json:"member_id"`
 	Role       string             `json:"role"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type TaskBundle struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	RuntimeID            pgtype.UUID        `json:"runtime_id"`
+	Status               string             `json:"status"`
+	ChangesetMode        string             `json:"changeset_mode"`
+	MaxItems             int32              `json:"max_items"`
+	RuntimeBudgetSeconds int32              `json:"runtime_budget_seconds"`
+	RerunOfBundleID      pgtype.UUID        `json:"rerun_of_bundle_id"`
+	RerunScope           []byte             `json:"rerun_scope"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+}
+
+type TaskBundleItem struct {
+	ID              pgtype.UUID        `json:"id"`
+	BundleID        pgtype.UUID        `json:"bundle_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	Position        int32              `json:"position"`
+	Status          string             `json:"status"`
+	OutputNamespace string             `json:"output_namespace"`
+	CheckpointSeq   pgtype.Int4        `json:"checkpoint_seq"`
+	Result          []byte             `json:"result"`
+	Error           pgtype.Text        `json:"error"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskMessage struct {

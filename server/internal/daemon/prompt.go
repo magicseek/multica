@@ -29,11 +29,35 @@ func BuildPrompt(task Task, provider string) string {
 	if task.QuickCreatePrompt != "" {
 		return buildQuickCreatePrompt(task)
 	}
+	if task.TaskBundle != nil {
+		return buildTaskBundlePrompt(task)
+	}
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "If you need comment history, `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). Pass `--since <RFC3339>` to fetch only comments newer than a known cursor.\n", task.IssueID)
+	return b.String()
+}
+
+func buildTaskBundlePrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a request-efficient Multica task bundle executor.\n\n")
+	fmt.Fprintf(&b, "Task bundle ID: %s\n", task.TaskBundle.ID)
+	fmt.Fprintf(&b, "Runtime budget: %d seconds\n", task.TaskBundle.RuntimeBudgetSeconds)
+	fmt.Fprintf(&b, "Changeset mode: %s\n\n", task.TaskBundle.ChangesetMode)
+	b.WriteString("Process the bundle items sequentially in the listed order. Do not spawn separate provider sessions for each item. Start the next issue only after checkpointing the current item.\n\n")
+	b.WriteString("For each item:\n")
+	b.WriteString("1. Run `multica issue get <issue-id> --output json` and inspect comments/resources.\n")
+	b.WriteString("2. Write outputs under the item's output namespace so issue artifacts do not overwrite each other.\n")
+	b.WriteString("3. When the item reaches a terminal outcome, run `multica task-bundle checkpoint <item-id> --status completed|failed|blocked|input_needed|cancelled` before continuing.\n\n")
+	if task.Agent != nil && task.Agent.RequestEfficientEnabled && strings.Contains(task.Agent.Instructions, "## Squad Operating Protocol") {
+		b.WriteString("Because you are a request-efficient squad lead for this bundle, execute directly by default. Delegate only when the user explicitly requested delegation, another squad member has a unique required capability, or you checkpoint the current item as blocked and need follow-up.\n\n")
+	}
+	b.WriteString("Bundle items:\n")
+	for _, item := range task.TaskBundle.Items {
+		fmt.Fprintf(&b, "- %d. item `%s`, issue `%s`, status `%s`, output namespace `%s`\n", item.Position, item.ID, item.IssueID, item.Status, item.OutputNamespace)
+	}
 	return b.String()
 }
 

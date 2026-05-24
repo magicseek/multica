@@ -234,6 +234,7 @@ function useTriggerText(task: AgentTask): string {
     : "";
 
   if (task.trigger_summary) return retryPrefix + stripMentionMarkdown(task.trigger_summary);
+  if (task.task_bundle) return t(($) => $.execution_log.trigger_task_bundle);
   if (isRetry) {
     return task.attempt && task.attempt > 1
       ? t(($) => $.execution_log.trigger_retry_attempt, { attempt: task.attempt })

@@ -607,7 +607,7 @@ VALUES (
     COALESCE($8, 'normal'),
     $9
 )
-RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id, chat_plan_run_id, chat_plan_consultation_id, chat_task_kind
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, workflow_definition_id, workflow_revision_id, workflow_snapshot, trigger_chat_message_id, connector_delegated_user_id, chat_plan_run_id, chat_plan_consultation_id, chat_task_kind, task_bundle_id
 `
 
 type CreateChatTaskParams struct {
@@ -669,6 +669,7 @@ func (q *Queries) CreateChatTask(ctx context.Context, arg CreateChatTaskParams) 
 		&i.ChatPlanRunID,
 		&i.ChatPlanConsultationID,
 		&i.ChatTaskKind,
+		&i.TaskBundleID,
 	)
 	return i, err
 }

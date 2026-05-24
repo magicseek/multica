@@ -47,6 +47,8 @@ export const issueKeys = {
   attachments: (issueId: string) => ["issues", "attachments", issueId] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => ["issues", "tasks", issueId] as const,
+  /** Per-issue task bundles (issue-detail bundle controls and progress). */
+  taskBundles: (issueId: string) => ["issues", "task-bundles", issueId] as const,
   /** Prefix-match key for invalidating tasks across all issues — used by
    *  the global WS task: prefix path so any task lifecycle event refreshes
    *  every per-issue list, regardless of which issue is currently mounted. */

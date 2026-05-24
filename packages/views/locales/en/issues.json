@@ -270,6 +270,7 @@
     "trigger_retry_prefix": "Retry · ",
     "trigger_autopilot": "Autopilot run",
     "trigger_comment": "Comment trigger",
+    "trigger_task_bundle": "Task bundle",
     "trigger_initial": "Initial run",
     "status_queued": "Queued",
     "status_dispatched": "Starting",
@@ -278,6 +279,21 @@
     "status_completed": "Completed",
     "status_failed": "Failed",
     "status_cancelled": "Cancelled"
+  },
+  "task_bundle": {
+    "section": "Task bundle",
+    "assign_hint": "Assign this issue to a request-efficient agent or a squad led by one.",
+    "selected_count": "{{count}}/{{max}} selected",
+    "create_action": "Start bundle",
+    "create_success": "Task bundle started",
+    "create_failed": "Failed to start task bundle",
+    "rerun_action": "Rerun",
+    "rerunning": "Rerunning…",
+    "rerun_success": "Task bundle rerun started",
+    "rerun_failed": "Failed to rerun task bundle",
+    "transcript_item": "Bundle item {{position}}",
+    "transcript_item_current": "Current item",
+    "transcript_item_done": "Done"
   },
   "workflow_activity": {
     "title": "Workflow run",

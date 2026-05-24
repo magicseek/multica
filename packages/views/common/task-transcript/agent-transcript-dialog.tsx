@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { Fragment, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   Bot,
   ChevronRight,
@@ -48,6 +48,8 @@ interface AgentTranscriptDialogProps {
   agentName: string;
   isLive?: boolean;
 }
+
+const EMPTY_BUNDLE_ITEMS: NonNullable<AgentTask["task_bundle"]>["items"] = [];
 
 // ─── Color mapping for timeline segments ────────────────────────────────────
 
@@ -189,6 +191,7 @@ export function AgentTranscriptDialog({
   isLive = false,
 }: AgentTranscriptDialogProps) {
   const { t } = useT("agents");
+  const { t: tIssues } = useT("issues");
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState("");
   const [copied, setCopied] = useState(false);
@@ -313,6 +316,12 @@ export function AgentTranscriptDialog({
         : null;
 
   const toolCount = items.filter((i) => i.type === "tool_use").length;
+  const bundleItems = task.task_bundle?.items ?? EMPTY_BUNDLE_ITEMS;
+  const bundleSegments = useMemo(() => buildBundleSegments(bundleItems), [bundleItems]);
+  const bundleSegmentForSeq = useCallback(
+    (seq: number) => findBundleSegmentForSeq(bundleSegments, seq),
+    [bundleSegments],
+  );
 
   // Status display
   const statusBadge = isLive ? (
@@ -457,6 +466,14 @@ export function AgentTranscriptDialog({
             {taskOutputs.length > 0 && (
               <MetadataChip>{t(($) => $.transcript.task_outputs, { count: taskOutputs.length })}</MetadataChip>
             )}
+            {bundleItems.length > 0 && (
+              <MetadataChip>
+                {tIssues(($) => $.task_bundle.selected_count, {
+                  count: bundleItems.length,
+                  max: task.task_bundle?.max_items ?? bundleItems.length,
+                })}
+              </MetadataChip>
+            )}
             <MetadataChip>
               {selectedTools.size > 0
                 ? t(($) => $.transcript.events_filtered, { shown: filteredItems.length, total: items.length })
@@ -527,22 +544,91 @@ export function AgentTranscriptDialog({
             </div>
           ) : (
             <div className="divide-y">
-              {filteredItems.map((item) => (
-                <TranscriptEventRow
-                  key={item.seq}
-                  ref={(el) => {
-                    if (el) eventRefs.current.set(item.seq, el);
-                    else eventRefs.current.delete(item.seq);
-                  }}
-                  item={item}
-                  isSelected={selectedSeq === item.seq}
-                />
-              ))}
+              {filteredItems.map((item, index) => {
+                const segment = bundleSegmentForSeq(item.seq);
+                const previousSegment =
+                  index > 0
+                    ? bundleSegmentForSeq(filteredItems[index - 1]!.seq)
+                    : null;
+                const showSegment =
+                  segment != null && segment.item.id !== previousSegment?.item.id;
+                return (
+                  <Fragment key={item.seq}>
+                    {showSegment && (
+                      <BundleItemDivider
+                        label={tIssues(($) => $.task_bundle.transcript_item, {
+                          position: segment.item.position,
+                        })}
+                        status={segment.item.status}
+                        detail={
+                          segment.item.checkpoint_seq
+                            ? tIssues(($) => $.task_bundle.transcript_item_done)
+                            : tIssues(($) => $.task_bundle.transcript_item_current)
+                        }
+                      />
+                    )}
+                    <TranscriptEventRow
+                      ref={(el) => {
+                        if (el) eventRefs.current.set(item.seq, el);
+                        else eventRefs.current.delete(item.seq);
+                      }}
+                      item={item}
+                      isSelected={selectedSeq === item.seq}
+                    />
+                  </Fragment>
+                );
+              })}
             </div>
           )}
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type BundleSegment = {
+  item: NonNullable<AgentTask["task_bundle"]>["items"][number];
+  startSeq: number;
+  endSeq: number | null;
+};
+
+function buildBundleSegments(
+  items: NonNullable<AgentTask["task_bundle"]>["items"],
+): BundleSegment[] {
+  let startSeq = 1;
+  return [...items]
+    .sort((a, b) => a.position - b.position)
+    .map((item) => {
+      const endSeq = item.checkpoint_seq ?? null;
+      const segment = { item, startSeq, endSeq };
+      if (endSeq != null) startSeq = endSeq + 1;
+      return segment;
+    });
+}
+
+function findBundleSegmentForSeq(segments: BundleSegment[], seq: number) {
+  for (const segment of segments) {
+    if (seq < segment.startSeq) continue;
+    if (segment.endSeq == null || seq <= segment.endSeq) return segment;
+  }
+  return null;
+}
+
+function BundleItemDivider({
+  label,
+  status,
+  detail,
+}: {
+  label: string;
+  status: string;
+  detail: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground">
+      <span className="font-medium text-foreground">{label}</span>
+      <span className="capitalize">{status.replace("_", " ")}</span>
+      <span className="ml-auto">{detail}</span>
+    </div>
   );
 }
 

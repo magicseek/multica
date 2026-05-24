@@ -234,6 +234,30 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     });
   });
 
+  it("submits request-efficient mode from the create form", async () => {
+    const mine = makeRuntime({
+      id: "rt-mine",
+      name: "My Runtime",
+      owner_id: ME,
+      visibility: "private",
+      provider: "github-copilot",
+    });
+    const { onCreate } = renderDialog([mine]);
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Deep Research Agent"), {
+      target: { value: "Efficient Agent" },
+    });
+    fireEvent.click(screen.getByLabelText("Toggle request-efficient mode"));
+    fireEvent.click(screen.getByText("Create"));
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+      name: "Efficient Agent",
+      request_efficient_enabled: true,
+    });
+  });
+
   it("defaults the selected runtime to a usable one, not a locked private", () => {
     const othersPrivate = makeRuntime({
       id: "rt-others-private",

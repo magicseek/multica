@@ -117,18 +117,19 @@ func (h *Handler) GetAgentTemplate(w http.ResponseWriter, r *http.Request) {
 // --- Create-from-template handler ---
 
 type CreateAgentFromTemplateRequest struct {
-	TemplateSlug       string `json:"template_slug"`
-	Name               string `json:"name"`
-	RuntimeID          string `json:"runtime_id"`
-	Model              string `json:"model,omitempty"`
-	Visibility         string `json:"visibility,omitempty"`
-	MaxConcurrentTasks int32  `json:"max_concurrent_tasks,omitempty"`
+	TemplateSlug            string `json:"template_slug"`
+	Name                    string `json:"name"`
+	RuntimeID               string `json:"runtime_id"`
+	Model                   string `json:"model,omitempty"`
+	Visibility              string `json:"visibility,omitempty"`
+	MaxConcurrentTasks      int32  `json:"max_concurrent_tasks,omitempty"`
+	RequestEfficientEnabled *bool  `json:"request_efficient_enabled,omitempty"`
 	// Optional overrides — let the picker UI customise the template before
 	// creation without forcing a second round-trip to the detail page.
 	// When nil/empty, the template's own values are used.
-	Description     *string  `json:"description,omitempty"`
-	Instructions    *string  `json:"instructions,omitempty"`
-	AvatarURL       *string  `json:"avatar_url,omitempty"`
+	Description  *string `json:"description,omitempty"`
+	Instructions *string `json:"instructions,omitempty"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
 	// Workspace skill IDs to attach **in addition to** the template's
 	// skills. The merge dedupes against template skills automatically
 	// (agent_skill INSERT uses ON CONFLICT DO NOTHING).
@@ -173,6 +174,10 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	}
 	if req.MaxConcurrentTasks == 0 {
 		req.MaxConcurrentTasks = 6
+	}
+	requestEfficientEnabled := false
+	if req.RequestEfficientEnabled != nil {
+		requestEfficientEnabled = *req.RequestEfficientEnabled
 	}
 
 	tmpl, found := agentTemplates.Get(req.TemplateSlug)
@@ -431,21 +436,22 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	}
 
 	agent, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
-		WorkspaceID:        wsUUID,
-		Name:               req.Name,
-		Description:        description,
-		Instructions:       instructions,
-		AvatarUrl:          avatarURL,
-		RuntimeMode:        runtime.RuntimeMode,
-		RuntimeConfig:      rc,
-		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
-		MaxConcurrentTasks: req.MaxConcurrentTasks,
-		OwnerID:            creatorUUID,
-		CustomEnv:          ce,
-		CustomArgs:         ca,
-		McpConfig:          nil,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		WorkspaceID:             wsUUID,
+		Name:                    req.Name,
+		Description:             description,
+		Instructions:            instructions,
+		AvatarUrl:               avatarURL,
+		RuntimeMode:             runtime.RuntimeMode,
+		RuntimeConfig:           rc,
+		RuntimeID:               runtime.ID,
+		Visibility:              req.Visibility,
+		MaxConcurrentTasks:      req.MaxConcurrentTasks,
+		OwnerID:                 creatorUUID,
+		CustomEnv:               ce,
+		CustomArgs:              ca,
+		McpConfig:               nil,
+		Model:                   pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		RequestEfficientEnabled: requestEfficientEnabled,
 	})
 	if err != nil {
 		// Mirror handler/agent.go:CreateAgent: when the duplicate is the
@@ -650,4 +656,3 @@ func fetchSkillFromURL(client *http.Client, rawURL string) (*importedSkill, erro
 	}
 	return nil, fmt.Errorf("unknown import source for %s", rawURL)
 }
-

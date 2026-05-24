@@ -13,6 +13,10 @@ SELECT * FROM task_message
 WHERE task_id = $1 AND seq > $2
 ORDER BY seq ASC;
 
+-- name: GetLatestTaskMessageSeq :one
+SELECT COALESCE(MAX(seq), 0)::int FROM task_message
+WHERE task_id = $1;
+
 -- name: DeleteTaskMessages :exec
 DELETE FROM task_message
 WHERE task_id = $1;

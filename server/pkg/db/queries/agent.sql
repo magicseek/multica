@@ -21,8 +21,8 @@ INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,
     runtime_config, runtime_id, visibility, max_concurrent_tasks, owner_id,
     instructions, custom_env, custom_args, mcp_config, model, execution_protocol_enabled,
-    execution_protocol_slug
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+    execution_protocol_slug, request_efficient_enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 RETURNING *;
 
 -- name: UpdateAgent :one
@@ -43,6 +43,7 @@ UPDATE agent SET
     model = COALESCE(sqlc.narg('model'), model),
     execution_protocol_enabled = COALESCE(sqlc.narg('execution_protocol_enabled'), execution_protocol_enabled),
     execution_protocol_slug = COALESCE(sqlc.narg('execution_protocol_slug'), execution_protocol_slug),
+    request_efficient_enabled = COALESCE(sqlc.narg('request_efficient_enabled'), request_efficient_enabled),
     updated_at = now()
 WHERE id = $1
 RETURNING *;
@@ -82,7 +83,7 @@ INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
     trigger_summary, force_fresh_session, is_leader_task,
     workflow_definition_id, workflow_revision_id, workflow_snapshot,
-    connector_delegated_user_id
+    connector_delegated_user_id, task_bundle_id
 )
 VALUES (
     $1, $2, $3, 'queued', $4, sqlc.narg(trigger_comment_id),
@@ -92,7 +93,8 @@ VALUES (
     sqlc.narg('workflow_definition_id'),
     sqlc.narg('workflow_revision_id'),
     sqlc.narg('workflow_snapshot'),
-    sqlc.narg('connector_delegated_user_id')
+    sqlc.narg('connector_delegated_user_id'),
+    sqlc.narg('task_bundle_id')
 )
 RETURNING *;
 
@@ -408,7 +410,17 @@ UPDATE agent_task_queue
 SET status = 'failed', completed_at = now(), error = 'task timed out',
     failure_reason = 'timeout'
 WHERE (status = 'dispatched' AND dispatched_at < now() - make_interval(secs => @dispatch_timeout_secs::double precision))
-   OR (status = 'running' AND started_at < now() - make_interval(secs => @running_timeout_secs::double precision))
+   OR (
+      status = 'running'
+      AND started_at < now() - make_interval(secs => COALESCE(
+          (
+              SELECT tb.runtime_budget_seconds::double precision
+              FROM task_bundle tb
+              WHERE tb.id = agent_task_queue.task_bundle_id
+          ),
+          @running_timeout_secs::double precision
+      ))
+   )
 RETURNING *;
 
 -- name: ExpireStaleQueuedTasks :many
@@ -466,7 +478,15 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running');
 -- name: HasActiveTaskForIssue :one
 -- Returns true if there is any queued, dispatched, or running task for the issue.
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting');
+WHERE status IN ('queued', 'dispatched', 'running', 'waiting')
+  AND (
+      agent_task_queue.issue_id = $1
+      OR EXISTS (
+          SELECT 1 FROM task_bundle_item tbi
+          WHERE tbi.bundle_id = agent_task_queue.task_bundle_id
+            AND tbi.issue_id = $1
+      )
+  );
 
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
@@ -474,7 +494,15 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
 -- the agent picks up new comments on the next cycle) but skip if a pending
 -- task already exists (natural dedup).
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'waiting');
+WHERE status IN ('queued', 'dispatched', 'waiting')
+  AND (
+      agent_task_queue.issue_id = $1
+      OR EXISTS (
+          SELECT 1 FROM task_bundle_item tbi
+          WHERE tbi.bundle_id = agent_task_queue.task_bundle_id
+            AND tbi.issue_id = $1
+      )
+  );
 
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
@@ -519,7 +547,15 @@ ORDER BY priority DESC, created_at ASC;
 -- busy on a prior task, and a silent UI during that window looks like the
 -- platform never received the trigger.
 SELECT * FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting')
+WHERE status IN ('queued', 'dispatched', 'running', 'waiting')
+  AND (
+      agent_task_queue.issue_id = $1
+      OR EXISTS (
+          SELECT 1 FROM task_bundle_item tbi
+          WHERE tbi.bundle_id = agent_task_queue.task_bundle_id
+            AND tbi.issue_id = $1
+      )
+  )
 ORDER BY created_at DESC;
 
 -- name: GetWorkspaceAgentRunCounts :many
@@ -599,7 +635,12 @@ SELECT t.* FROM (
 
 -- name: ListTasksByIssue :many
 SELECT * FROM agent_task_queue
-WHERE issue_id = $1
+WHERE agent_task_queue.issue_id = $1
+   OR EXISTS (
+      SELECT 1 FROM task_bundle_item tbi
+      WHERE tbi.bundle_id = agent_task_queue.task_bundle_id
+        AND tbi.issue_id = $1
+   )
 ORDER BY created_at DESC;
 
 -- name: UpdateAgentStatus :one

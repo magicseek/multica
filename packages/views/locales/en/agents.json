@@ -134,6 +134,8 @@
     "prop_concurrency": "Concurrency",
     "prop_execution_protocol": "Protocol",
     "execution_protocol_aria": "Choose execution protocol",
+    "prop_request_efficient": "Request efficient",
+    "request_efficient_aria": "Toggle request-efficient mode",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",
@@ -153,6 +155,11 @@
     "option_off": "Off",
     "option_standard": "Standard",
     "option_trellis": "Trellis"
+  },
+  "request_efficient": {
+    "hint": "Bundle several issues into one provider run when you start a task bundle.",
+    "recommended_hint": "Recommended for request-priced providers; bundle several issues into one provider run.",
+    "recommended_badge": "Recommended"
   },
   "skill_attach": {
     "trigger_aria": "Attach a workspace skill",
@@ -215,6 +222,8 @@
     "visibility_label": "Visibility",
     "execution_protocol_label": "Protocol",
     "execution_protocol_aria": "Choose execution protocol",
+    "request_efficient_label": "Request-efficient mode",
+    "request_efficient_aria": "Toggle request-efficient mode",
     "runtime_label": "Runtime",
     "runtime_filter_mine": "Mine",
     "runtime_filter_all": "All",

@@ -49,6 +49,7 @@ type AgentResponse struct {
 	Model                    string              `json:"model"`
 	ExecutionProtocolEnabled bool                `json:"execution_protocol_enabled"`
 	ExecutionProtocolSlug    string              `json:"execution_protocol_slug"`
+	RequestEfficientEnabled  bool                `json:"request_efficient_enabled"`
 	OwnerID                  *string             `json:"owner_id"`
 	Skills                   []AgentSkillSummary `json:"skills"`
 	CreatedAt                string              `json:"created_at"`
@@ -110,6 +111,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		Model:                    a.Model.String,
 		ExecutionProtocolEnabled: a.ExecutionProtocolEnabled,
 		ExecutionProtocolSlug:    a.ExecutionProtocolSlug,
+		RequestEfficientEnabled:  a.RequestEfficientEnabled,
 		OwnerID:                  uuidToPtr(a.OwnerID),
 		Skills:                   []AgentSkillSummary{},
 		CreatedAt:                timestampToString(a.CreatedAt),
@@ -193,6 +195,7 @@ type AgentTaskResponse struct {
 	WorkflowRevisionID       *string               `json:"workflow_revision_id,omitempty"`
 	WorkflowSnapshot         json.RawMessage       `json:"workflow_snapshot,omitempty"`
 	WorkflowRun              *WorkflowRunResponse  `json:"workflow_run,omitempty"`
+	TaskBundle               *TaskBundleResponse   `json:"task_bundle,omitempty"`
 	Agent                    *TaskAgentData        `json:"agent,omitempty"`
 	Repos                    []RepoData            `json:"repos,omitempty"`
 	Repositories             []TaskRepositoryData  `json:"repositories,omitempty"`
@@ -253,6 +256,7 @@ type TaskAgentData struct {
 	Model                    string                   `json:"model,omitempty"`
 	ExecutionProtocolEnabled bool                     `json:"execution_protocol_enabled,omitempty"`
 	ExecutionProtocolSlug    string                   `json:"execution_protocol_slug,omitempty"`
+	RequestEfficientEnabled  bool                     `json:"request_efficient_enabled,omitempty"`
 }
 
 func taskToResponse(t db.AgentTaskQueue) AgentTaskResponse {
@@ -452,6 +456,7 @@ type CreateAgentRequest struct {
 	Model                    string            `json:"model"`
 	ExecutionProtocolEnabled bool              `json:"execution_protocol_enabled"`
 	ExecutionProtocolSlug    string            `json:"execution_protocol_slug"`
+	RequestEfficientEnabled  bool              `json:"request_efficient_enabled"`
 	// Template records which template slug was used to seed this agent
 	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
 	// the caller didn't come from a template picker — the `agent_created`
@@ -595,6 +600,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Model:                    pgtype.Text{String: req.Model, Valid: req.Model != ""},
 		ExecutionProtocolEnabled: req.ExecutionProtocolEnabled,
 		ExecutionProtocolSlug:    req.ExecutionProtocolSlug,
+		RequestEfficientEnabled:  req.RequestEfficientEnabled,
 	})
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — return a clear conflict error
@@ -648,6 +654,7 @@ type UpdateAgentRequest struct {
 	Model                    *string            `json:"model"`
 	ExecutionProtocolEnabled *bool              `json:"execution_protocol_enabled"`
 	ExecutionProtocolSlug    *string            `json:"execution_protocol_slug"`
+	RequestEfficientEnabled  *bool              `json:"request_efficient_enabled"`
 }
 
 // canViewAgentEnv checks whether the requesting user is allowed to see the
@@ -802,6 +809,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.ExecutionProtocolSlug = pgtype.Text{String: slug, Valid: true}
+	}
+	if req.RequestEfficientEnabled != nil {
+		params.RequestEfficientEnabled = pgtype.Bool{Bool: *req.RequestEfficientEnabled, Valid: true}
 	}
 
 	agent, err = h.Queries.UpdateAgent(r.Context(), params)
@@ -964,7 +974,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t)
+		resp[i] = h.taskToResponseWithBundle(r.Context(), t)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1101,7 +1111,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
 			continue
 		}
-		resp = append(resp, taskToResponse(t))
+		resp = append(resp, h.taskToResponseWithBundle(r.Context(), t))
 	}
 
 	writeJSON(w, http.StatusOK, resp)

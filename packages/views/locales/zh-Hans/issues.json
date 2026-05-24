@@ -265,6 +265,7 @@
     "trigger_retry_prefix": "重试 · ",
     "trigger_autopilot": "自动化运行",
     "trigger_comment": "评论触发",
+    "trigger_task_bundle": "Task bundle",
     "trigger_initial": "首次运行",
     "status_queued": "排队中",
     "status_dispatched": "启动中",
@@ -273,6 +274,21 @@
     "status_completed": "已完成",
     "status_failed": "失败",
     "status_cancelled": "已取消"
+  },
+  "task_bundle": {
+    "section": "Task bundle",
+    "assign_hint": "请先将这个 issue 分配给开启请求节省模式的智能体，或由它担任 lead 的小队。",
+    "selected_count": "已选 {{count}}/{{max}}",
+    "create_action": "启动 bundle",
+    "create_success": "Task bundle 已启动",
+    "create_failed": "启动 task bundle 失败",
+    "rerun_action": "重跑",
+    "rerunning": "重跑中…",
+    "rerun_success": "Task bundle 重跑已启动",
+    "rerun_failed": "重跑 task bundle 失败",
+    "transcript_item": "Bundle item {{position}}",
+    "transcript_item_current": "当前 item",
+    "transcript_item_done": "已结束"
   },
   "workflow_activity": {
     "title": "Workflow 运行",

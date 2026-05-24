@@ -130,6 +130,8 @@
     "prop_concurrency": "并发",
     "prop_execution_protocol": "流程",
     "execution_protocol_aria": "选择执行流程",
+    "prop_request_efficient": "请求节省",
+    "request_efficient_aria": "切换请求节省模式",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",
@@ -149,6 +151,11 @@
     "option_off": "关闭",
     "option_standard": "标准",
     "option_trellis": "Trellis"
+  },
+  "request_efficient": {
+    "hint": "创建 task bundle 时，将多个 issue 放进同一次提供方运行。",
+    "recommended_hint": "推荐按请求计费的提供方开启；可将多个 issue 放进同一次提供方运行。",
+    "recommended_badge": "推荐"
   },
   "skill_attach": {
     "trigger_aria": "附加工作区 skill",
@@ -211,6 +218,8 @@
     "visibility_label": "可见性",
     "execution_protocol_label": "流程",
     "execution_protocol_aria": "选择执行流程",
+    "request_efficient_label": "请求节省模式",
+    "request_efficient_aria": "切换请求节省模式",
     "runtime_label": "运行时",
     "runtime_filter_mine": "我的",
     "runtime_filter_all": "全部",

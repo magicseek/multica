@@ -24,6 +24,7 @@ import { isImeComposing, timeAgo } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
+import { Switch } from "@multica/ui/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -64,6 +65,11 @@ function executionProtocolValue(agent: Agent): ExecutionProtocolSelectValue {
   return agent.execution_protocol_slug === TRELLIS_EXECUTION_PROTOCOL
     ? TRELLIS_EXECUTION_PROTOCOL
     : STANDARD_EXECUTION_PROTOCOL;
+}
+
+function isRequestEfficientRecommendedProvider(provider?: string | null): boolean {
+  const normalized = provider?.trim().toLowerCase() ?? "";
+  return normalized.includes("copilot") || normalized.includes("kiro");
 }
 
 interface InspectorProps {
@@ -206,6 +212,24 @@ export function AgentDetailInspector({
               </SelectItem>
             </SelectContent>
           </Select>
+        </PropRow>
+        <PropRow
+          label={t(($) => $.inspector.prop_request_efficient)}
+          interactive={false}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <Switch
+              checked={agent.request_efficient_enabled === true}
+              onCheckedChange={(checked) => update({ request_efficient_enabled: checked })}
+              disabled={!canEdit}
+              aria-label={t(($) => $.inspector.request_efficient_aria)}
+            />
+            {isRequestEfficientRecommendedProvider(runtime?.provider) && (
+              <span className="truncate text-[11px] text-muted-foreground">
+                {t(($) => $.request_efficient.recommended_badge)}
+              </span>
+            )}
+          </div>
         </PropRow>
       </Section>
 

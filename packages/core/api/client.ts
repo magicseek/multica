@@ -14,12 +14,14 @@ import type {
   ListGroupedIssuesParams,
   Agent,
   CreateAgentRequest,
+  CreateTaskBundleRequest,
   AgentTemplate,
   AgentTemplateSummary,
   CreateAgentFromTemplateRequest,
   CreateAgentFromTemplateResponse,
   UpdateAgentRequest,
   AgentTask,
+  TaskBundle,
   AgentActivityBucket,
   AgentRunCount,
   AgentRuntime,
@@ -1163,6 +1165,27 @@ export class ApiClient {
 
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/issues/${issueId}/task-runs`);
+  }
+
+  async createTaskBundle(data: CreateTaskBundleRequest): Promise<TaskBundle> {
+    return this.fetch("/api/task-bundles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listTaskBundlesByIssue(issueId: string): Promise<TaskBundle[]> {
+    return this.fetch(`/api/issues/${issueId}/task-bundles`);
+  }
+
+  async rerunTaskBundle(
+    bundleId: string,
+    data: { issue_ids?: string[] } = {},
+  ): Promise<TaskBundle> {
+    return this.fetch(`/api/task-bundles/${bundleId}/rerun`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {

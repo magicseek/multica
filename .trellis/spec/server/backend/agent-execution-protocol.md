@@ -179,3 +179,120 @@ This creates a second source of truth for server state.
 ```
 
 The UI reads the React Query-backed `Agent` response and writes through the API mutation.
+
+## Scenario: Request-Efficient Task Bundle Execution
+
+### 1. Scope / Trigger
+
+- Trigger: changes to request-priced provider execution, task bundling, per-item progress, task runtime budgets, or the agent-level `request_efficient_enabled` setting.
+- Applies when changing task enqueueing, daemon claim payloads, runtime prompt/context rendering, task transcript segmentation, issue task status transitions, or agent create/update payloads.
+- Goal: several issue work items can be processed by one request-efficient agent in one provider execution boundary, without silently regrouping already queued/running work.
+
+### 2. Signatures
+
+- DB:
+  - `agent.request_efficient_enabled BOOLEAN NOT NULL DEFAULT FALSE`
+  - `task_bundle(id, workspace_id, agent_id, runtime_id, status, changeset_mode, max_items, runtime_budget_seconds, rerun_of_bundle_id, rerun_scope, created_by, completed_at, ...)`
+  - `task_bundle_item(id, bundle_id, issue_id, position, status, output_namespace, checkpoint_seq, result, error, started_at, completed_at, ...)`
+  - `agent_task_queue.task_bundle_id UUID NULL`
+- Protected API:
+  - `POST /api/task-bundles`
+  - `GET /api/issues/{id}/task-bundles`
+  - `POST /api/task-bundles/{id}/rerun`
+- Daemon API:
+  - `POST /api/daemon/tasks/{taskId}/bundle/checkpoint`
+- CLI:
+  - `multica task-bundle checkpoint <item-id> --status <completed|failed|blocked|input_needed|cancelled> [--result ...] [--error ...] [--checkpoint-seq ...]`
+- Frontend/core:
+  - `Agent.request_efficient_enabled?: boolean`
+  - `CreateAgentRequest.request_efficient_enabled?: boolean`
+  - `UpdateAgentRequest.request_efficient_enabled?: boolean`
+  - `AgentTask.task_bundle?: TaskBundle`
+
+### 3. Contracts
+
+- Request-efficient mode is agent-level. Copilot and Kiro may be recommended-on in UI copy, but every provider can opt in.
+- Task Bundle controls are visible only when at least one available agent has `request_efficient_enabled=true`.
+- Bundle creation is an explicit user-facing enqueue boundary. The daemon must not scan existing queued tasks and merge them into a bundle.
+- A bundle owns exactly one `agent_task_queue` execution task through `agent_task_queue.task_bundle_id`.
+- The daemon executes one `Backend.Execute(...)` call for the bundle task. It must not loop over items and call the provider once per item.
+- Bundle items run sequentially by default. Only the active item moves its issue to `in_progress`; later items remain queued/backlog until the prior item checkpoints terminally.
+- The checkpoint endpoint records the item status, result/error metadata, transcript boundary sequence, and advances or completes the bundle.
+- Runtime timeout/stale-task cleanup must use the bundle runtime budget, not the single-issue default.
+- Bundle outputs must use per-item namespaces so one issue item cannot overwrite another.
+- If a request-efficient agent is a squad lead, its bundle prompt must tell the lead to execute directly unless delegation is explicitly required by the user, capability, or a blocked follow-up.
+
+### 4. Validation & Error Matrix
+
+- Create bundle with no issue ids -> `400`.
+- Create bundle with more than the configured/default max item count -> `400`.
+- Create bundle for an agent without request-efficient mode -> `400`.
+- Create bundle for archived/no-runtime/wrong-workspace agent -> `400`.
+- Create bundle for an issue not assigned to the agent or its led squad -> `400`.
+- Create bundle for terminal or already-active issue -> `400`.
+- Checkpoint with a task not linked to a bundle -> `400`.
+- Checkpoint item not in the task bundle -> `400`.
+- Rerun with no failed/blocked/input-needed items and no explicit issue list -> `400`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: two backlog issues assigned to a request-efficient Codex agent create one bundle, one task, one Codex `app-server` process, two completed items, and two issue status transitions to `in_review`.
+- Good: first item checkpoints `completed`, then the second item starts and its issue moves from backlog/queued to `in_progress`.
+- Base: an ordinary non-bundled issue task still creates one `agent_task_queue` row with `task_bundle_id=NULL`.
+- Base: request-efficient mode disabled hides bundle UI and rejects direct bundle API creation for that agent.
+- Bad: creating separate queued tasks first and relying on the daemon to batch them later.
+- Bad: putting the item list only in task context JSON without durable `task_bundle_item` rows.
+- Bad: marking every bundled issue `in_progress` when the bundle starts.
+- Bad: exposing raw function/tool names to users instead of concise integration/task labels.
+
+### 6. Tests Required
+
+- Migration applies and rolls back; sqlc output includes agent flag, bundle tables, and linked task fields.
+- Handler/service tests assert durable bundle + ordered items + exactly one linked execution task.
+- Handler/service tests assert rejection for disabled request-efficient agents, wrong assignment, active tasks, terminal issues, and over-size bundles.
+- Daemon/execenv tests assert claim payload and prompt/context contain ordered items, checkpoint command, output namespaces, runtime budget, and squad-lead direct-execution guidance.
+- CLI tests assert `task-bundle checkpoint` posts to the daemon checkpoint endpoint and requires task context.
+- Frontend tests assert agent create/edit controls submit the flag and issue detail bundle controls are gated by available request-efficient agents.
+- E2E/manual smoke should verify one real provider execution boundary, sequential item checkpoints, transcript boundaries, and final issue statuses.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```go
+for _, item := range bundle.Items {
+    task := createTaskForIssue(item.IssueID)
+    backend.Execute(ctx, task)
+}
+```
+
+This converts a request-efficient bundle into multiple provider requests.
+
+#### Correct
+
+```go
+task := createTaskForBundle(bundle, bundle.Items[0].IssueID)
+context := buildBundleContext(bundle, orderedItems)
+backend.Execute(ctx, task, context)
+```
+
+One execution task carries all item context; per-item progress is recorded through checkpoints.
+
+#### Wrong
+
+```go
+for _, item := range items {
+    updateIssueStatus(item.IssueID, "in_progress")
+}
+```
+
+This makes later items look active before the provider has reached them.
+
+#### Correct
+
+```go
+startBundleItem(items[0])
+// Next items start only after the prior item checkpoints terminally.
+```
+
+The UI can show queued bundle items without claiming that every issue is already running.

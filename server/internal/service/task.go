@@ -60,7 +60,21 @@ const (
 	ChatTaskKindPlanConsultation = "plan_consultation"
 
 	maxChatPlanConsultationWaves = 5
+
+	TaskBundleMaxItems                 = 5
+	TaskBundleDefaultItemBudgetSeconds = 2 * 3600
+	TaskBundleBudgetBufferSeconds      = 30 * 60
+	TaskBundleChangesetModePerIssue    = "per_issue"
+	TaskBundleChangesetModeShared      = "shared"
 )
+
+var TaskBundleTerminalStatuses = map[string]bool{
+	"completed":    true,
+	"failed":       true,
+	"blocked":      true,
+	"input_needed": true,
+	"cancelled":    true,
+}
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
 // `…` when truncated. Operates on runes (not bytes) so multibyte characters
@@ -368,6 +382,9 @@ func taskErrorType(reason string) string {
 }
 
 func (s *TaskService) willRetryTask(task db.AgentTaskQueue) bool {
+	if task.TaskBundleID.Valid {
+		return false
+	}
 	reason := taskFailureReason(task)
 	if !retryableReasons[reason] {
 		return false
@@ -553,6 +570,352 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
+}
+
+type CreateTaskBundleInput struct {
+	WorkspaceID          pgtype.UUID
+	AgentID              pgtype.UUID
+	IssueIDs             []pgtype.UUID
+	ChangesetMode        string
+	RuntimeBudgetSeconds int32
+	RerunOfBundleID      pgtype.UUID
+	RerunScope           []byte
+	CreatedBy            pgtype.UUID
+}
+
+type CreateTaskBundleResult struct {
+	Bundle db.TaskBundle
+	Items  []db.TaskBundleItem
+	Task   db.AgentTaskQueue
+}
+
+type RerunTaskBundleInput struct {
+	WorkspaceID pgtype.UUID
+	BundleID    pgtype.UUID
+	IssueIDs    []pgtype.UUID
+	CreatedBy   pgtype.UUID
+}
+
+func (s *TaskService) CreateTaskBundle(ctx context.Context, input CreateTaskBundleInput) (*CreateTaskBundleResult, error) {
+	if len(input.IssueIDs) == 0 {
+		return nil, fmt.Errorf("at least one issue is required")
+	}
+	if len(input.IssueIDs) > TaskBundleMaxItems {
+		return nil, fmt.Errorf("task bundle can include at most %d issues", TaskBundleMaxItems)
+	}
+	changesetMode := strings.TrimSpace(input.ChangesetMode)
+	if changesetMode == "" {
+		changesetMode = TaskBundleChangesetModePerIssue
+	}
+	if changesetMode != TaskBundleChangesetModePerIssue && changesetMode != TaskBundleChangesetModeShared {
+		return nil, fmt.Errorf("invalid changeset_mode")
+	}
+	runtimeBudgetSeconds := input.RuntimeBudgetSeconds
+	if runtimeBudgetSeconds <= 0 {
+		runtimeBudgetSeconds = int32(len(input.IssueIDs)*TaskBundleDefaultItemBudgetSeconds + TaskBundleBudgetBufferSeconds)
+	}
+
+	seen := map[string]struct{}{}
+	for _, issueID := range input.IssueIDs {
+		key := util.UUIDToString(issueID)
+		if key == "" {
+			return nil, fmt.Errorf("invalid issue id")
+		}
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("duplicate issue id")
+		}
+		seen[key] = struct{}{}
+	}
+
+	var result CreateTaskBundleResult
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		agent, err := qtx.GetAgent(ctx, input.AgentID)
+		if err != nil {
+			return fmt.Errorf("load agent: %w", err)
+		}
+		if util.UUIDToString(agent.WorkspaceID) != util.UUIDToString(input.WorkspaceID) {
+			return fmt.Errorf("agent is not in this workspace")
+		}
+		if agent.ArchivedAt.Valid {
+			return fmt.Errorf("agent is archived")
+		}
+		if !agent.RuntimeID.Valid {
+			return fmt.Errorf("agent has no runtime")
+		}
+		if !agent.RequestEfficientEnabled {
+			return fmt.Errorf("agent does not have request-efficient mode enabled")
+		}
+
+		issues := make([]db.Issue, 0, len(input.IssueIDs))
+		for _, issueID := range input.IssueIDs {
+			issue, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+				ID:          issueID,
+				WorkspaceID: input.WorkspaceID,
+			})
+			if err != nil {
+				return fmt.Errorf("load issue: %w", err)
+			}
+			if !s.issueCanRunInBundle(ctx, qtx, issue, agent) {
+				return fmt.Errorf("issue %s is not assigned to this request-efficient agent or its led squad", util.UUIDToString(issue.ID))
+			}
+			if issue.Status == "done" || issue.Status == "cancelled" {
+				return fmt.Errorf("issue %s is already terminal", util.UUIDToString(issue.ID))
+			}
+			hasActive, err := qtx.HasActiveTaskForIssue(ctx, issue.ID)
+			if err != nil {
+				return fmt.Errorf("check active task: %w", err)
+			}
+			if hasActive {
+				return fmt.Errorf("issue %s already has an active task", util.UUIDToString(issue.ID))
+			}
+			issues = append(issues, issue)
+		}
+
+		rerunScope := input.RerunScope
+		if len(rerunScope) == 0 {
+			rerunScope = []byte("[]")
+		}
+		bundle, err := qtx.CreateTaskBundle(ctx, db.CreateTaskBundleParams{
+			WorkspaceID:          input.WorkspaceID,
+			AgentID:              agent.ID,
+			RuntimeID:            agent.RuntimeID,
+			ChangesetMode:        changesetMode,
+			MaxItems:             TaskBundleMaxItems,
+			RuntimeBudgetSeconds: runtimeBudgetSeconds,
+			RerunOfBundleID:      input.RerunOfBundleID,
+			RerunScope:           rerunScope,
+			CreatedBy:            input.CreatedBy,
+		})
+		if err != nil {
+			return fmt.Errorf("create bundle: %w", err)
+		}
+
+		task, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:      agent.ID,
+			RuntimeID:    agent.RuntimeID,
+			IssueID:      issues[0].ID,
+			Priority:     priorityToInt(issues[0].Priority),
+			TaskBundleID: bundle.ID,
+		})
+		if err != nil {
+			return fmt.Errorf("create bundle execution task: %w", err)
+		}
+		if err := s.createWorkflowRunForTask(ctx, qtx, task); err != nil {
+			return err
+		}
+
+		items := make([]db.TaskBundleItem, 0, len(issues))
+		for i, issue := range issues {
+			item, err := qtx.CreateTaskBundleItem(ctx, db.CreateTaskBundleItemParams{
+				BundleID:        bundle.ID,
+				IssueID:         issue.ID,
+				Position:        int32(i + 1),
+				OutputNamespace: fmt.Sprintf("bundle/%s/item-%02d-%s", util.UUIDToString(bundle.ID), i+1, util.UUIDToString(issue.ID)),
+			})
+			if err != nil {
+				return fmt.Errorf("create bundle item: %w", err)
+			}
+			items = append(items, item)
+		}
+
+		result = CreateTaskBundleResult{
+			Bundle: bundle,
+			Items:  items,
+			Task:   task,
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, result.Task)
+	s.NotifyTaskEnqueued(ctx, result.Task)
+	return &result, nil
+}
+
+func (s *TaskService) issueCanRunInBundle(ctx context.Context, q *db.Queries, issue db.Issue, agent db.Agent) bool {
+	if !issue.AssigneeID.Valid {
+		return false
+	}
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" {
+		return util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agent.ID)
+	}
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" {
+		squad, err := q.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+			ID:          issue.AssigneeID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		return err == nil && util.UUIDToString(squad.LeaderID) == util.UUIDToString(agent.ID)
+	}
+	return false
+}
+
+func (s *TaskService) RerunTaskBundle(ctx context.Context, input RerunTaskBundleInput) (*CreateTaskBundleResult, error) {
+	bundle, err := s.Queries.GetTaskBundle(ctx, input.BundleID)
+	if err != nil {
+		return nil, fmt.Errorf("load bundle: %w", err)
+	}
+	if util.UUIDToString(bundle.WorkspaceID) != util.UUIDToString(input.WorkspaceID) {
+		return nil, fmt.Errorf("task bundle is not in this workspace")
+	}
+	items, err := s.Queries.ListTaskBundleItems(ctx, bundle.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list bundle items: %w", err)
+	}
+
+	selected := map[string]struct{}{}
+	for _, issueID := range input.IssueIDs {
+		key := util.UUIDToString(issueID)
+		if key == "" {
+			return nil, fmt.Errorf("invalid issue id")
+		}
+		selected[key] = struct{}{}
+	}
+
+	issueIDs := make([]pgtype.UUID, 0, len(items))
+	rerunScope := make([]string, 0, len(items))
+	for _, item := range items {
+		issueID := util.UUIDToString(item.IssueID)
+		if len(selected) > 0 {
+			if _, ok := selected[issueID]; !ok {
+				continue
+			}
+		} else if item.Status != "failed" && item.Status != "blocked" && item.Status != "input_needed" {
+			continue
+		}
+		issueIDs = append(issueIDs, item.IssueID)
+		rerunScope = append(rerunScope, issueID)
+	}
+	if len(issueIDs) == 0 {
+		return nil, fmt.Errorf("no bundle items are eligible to rerun")
+	}
+	rerunScopeJSON, _ := json.Marshal(rerunScope)
+	return s.CreateTaskBundle(ctx, CreateTaskBundleInput{
+		WorkspaceID:     input.WorkspaceID,
+		AgentID:         bundle.AgentID,
+		IssueIDs:        issueIDs,
+		ChangesetMode:   bundle.ChangesetMode,
+		RerunOfBundleID: bundle.ID,
+		RerunScope:      rerunScopeJSON,
+		CreatedBy:       input.CreatedBy,
+	})
+}
+
+type CheckpointTaskBundleItemInput struct {
+	TaskID        pgtype.UUID
+	ItemID        pgtype.UUID
+	Status        string
+	Result        []byte
+	Error         string
+	CheckpointSeq pgtype.Int4
+}
+
+type CheckpointTaskBundleItemResult struct {
+	Bundle db.TaskBundle
+	Item   db.TaskBundleItem
+	Items  []db.TaskBundleItem
+}
+
+func (s *TaskService) CheckpointTaskBundleItem(ctx context.Context, input CheckpointTaskBundleItemInput) (*CheckpointTaskBundleItemResult, error) {
+	status := strings.TrimSpace(input.Status)
+	if !TaskBundleTerminalStatuses[status] {
+		return nil, fmt.Errorf("invalid bundle item status")
+	}
+
+	var result CheckpointTaskBundleItemResult
+	var issuesToBroadcast []db.Issue
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		task, err := qtx.GetAgentTask(ctx, input.TaskID)
+		if err != nil {
+			return fmt.Errorf("load task: %w", err)
+		}
+		if !task.TaskBundleID.Valid {
+			return fmt.Errorf("task is not a task bundle execution")
+		}
+		existing, err := qtx.GetTaskBundleItem(ctx, input.ItemID)
+		if err != nil {
+			return fmt.Errorf("load bundle item: %w", err)
+		}
+		if util.UUIDToString(existing.BundleID) != util.UUIDToString(task.TaskBundleID) {
+			return fmt.Errorf("bundle item does not belong to this task")
+		}
+
+		checkpointSeq := input.CheckpointSeq
+		if !checkpointSeq.Valid {
+			seq, err := qtx.GetLatestTaskMessageSeq(ctx, task.ID)
+			if err != nil {
+				return fmt.Errorf("load latest task message seq: %w", err)
+			}
+			checkpointSeq = pgtype.Int4{Int32: int32(seq), Valid: true}
+		}
+		item, err := qtx.CheckpointTaskBundleItem(ctx, db.CheckpointTaskBundleItemParams{
+			ID:            existing.ID,
+			Status:        status,
+			Result:        input.Result,
+			Error:         pgtype.Text{String: input.Error, Valid: input.Error != ""},
+			CheckpointSeq: checkpointSeq,
+		})
+		if err != nil {
+			return fmt.Errorf("checkpoint bundle item: %w", err)
+		}
+		result.Item = item
+		if updated, err := qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:     item.IssueID,
+			Status: issueStatusForBundleItemStatus(status),
+		}); err == nil {
+			issuesToBroadcast = append(issuesToBroadcast, updated)
+		} else {
+			return fmt.Errorf("update checkpoint issue status: %w", err)
+		}
+
+		if next, err := qtx.StartNextTaskBundleItem(ctx, task.TaskBundleID); err == nil {
+			if updated, updateErr := qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+				ID:     next.IssueID,
+				Status: "in_progress",
+			}); updateErr == nil {
+				issuesToBroadcast = append(issuesToBroadcast, updated)
+			} else {
+				return fmt.Errorf("update next bundle issue status: %w", updateErr)
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("start next bundle item: %w", err)
+		}
+
+		if bundle, err := qtx.CompleteTaskBundleIfDone(ctx, task.TaskBundleID); err == nil {
+			result.Bundle = bundle
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			bundle, err := qtx.GetTaskBundle(ctx, task.TaskBundleID)
+			if err != nil {
+				return fmt.Errorf("load bundle: %w", err)
+			}
+			result.Bundle = bundle
+		} else {
+			return fmt.Errorf("complete bundle: %w", err)
+		}
+		items, err := qtx.ListTaskBundleItems(ctx, task.TaskBundleID)
+		if err != nil {
+			return fmt.Errorf("list bundle items: %w", err)
+		}
+		result.Items = items
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	for _, issue := range issuesToBroadcast {
+		s.broadcastIssueUpdated(issue)
+	}
+	return &result, nil
+}
+
+func issueStatusForBundleItemStatus(status string) string {
+	switch status {
+	case "completed":
+		return "in_review"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return "blocked"
+	}
 }
 
 func (s *TaskService) resolveConnectorDelegatedUser(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, fallback pgtype.UUID) pgtype.UUID {
@@ -1095,19 +1458,45 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 // Issue status is NOT changed here — the agent manages it via the CLI.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	var issuesToBroadcast []db.Issue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.StartAgentTask(ctx, taskID)
 		if err != nil {
 			return err
 		}
 		task = t
-		return s.setWorkflowRunStatusForTask(ctx, qtx, task.ID, workflowRunStatusRunning)
+		if task.TaskBundleID.Valid {
+			if _, err := qtx.StartTaskBundle(ctx, task.TaskBundleID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("start task bundle: %w", err)
+			}
+			item, err := qtx.StartNextTaskBundleItem(ctx, task.TaskBundleID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("start first bundle item: %w", err)
+			}
+			if err == nil {
+				updated, updateErr := qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+					ID:     item.IssueID,
+					Status: "in_progress",
+				})
+				if updateErr != nil {
+					return fmt.Errorf("update first bundle issue status: %w", updateErr)
+				}
+				issuesToBroadcast = append(issuesToBroadcast, updated)
+			}
+		}
+		if err := s.setWorkflowRunStatusForTask(ctx, qtx, task.ID, workflowRunStatusRunning); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("start task: %w", err)
 	}
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
+	for _, issue := range issuesToBroadcast {
+		s.broadcastIssueUpdated(issue)
+	}
 	return &task, nil
 }
 
@@ -1121,6 +1510,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 // causing the new task to resume against a stale (or NULL) session.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	var issuesToBroadcast []db.Issue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -1155,6 +1545,29 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		}
 		if err := s.setWorkflowRunStatusForTask(ctx, qtx, t.ID, workflowRunStatusCompleted); err != nil {
 			return err
+		}
+		if t.TaskBundleID.Valid {
+			unfinished, err := qtx.FinishUnfinishedTaskBundleItems(ctx, db.FinishUnfinishedTaskBundleItemsParams{
+				BundleID: t.TaskBundleID,
+				Status:   "blocked",
+				Error:    pgtype.Text{String: "bundle execution ended before this item was checkpointed", Valid: true},
+			})
+			if err != nil {
+				return fmt.Errorf("finish unfinished bundle items: %w", err)
+			}
+			for _, item := range unfinished {
+				updated, updateErr := qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+					ID:     item.IssueID,
+					Status: "blocked",
+				})
+				if updateErr != nil {
+					return fmt.Errorf("update unfinished bundle issue status: %w", updateErr)
+				}
+				issuesToBroadcast = append(issuesToBroadcast, updated)
+			}
+			if _, err := qtx.CompleteTaskBundleIfDone(ctx, t.TaskBundleID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("complete task bundle: %w", err)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -1202,6 +1615,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	for _, issue := range issuesToBroadcast {
+		s.broadcastIssueUpdated(issue)
+	}
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -1335,6 +1751,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 // Pass "" when unknown (treated as 'agent_error').
 func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, sessionID, workDir, failureReason string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	var bundleIssuesToBroadcast []db.Issue
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -1369,6 +1786,29 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		if err := s.setWorkflowRunStatusForTask(ctx, qtx, t.ID, workflowRunStatusFailed); err != nil {
 			return err
 		}
+		if t.TaskBundleID.Valid {
+			unfinished, err := qtx.FinishUnfinishedTaskBundleItems(ctx, db.FinishUnfinishedTaskBundleItemsParams{
+				BundleID: t.TaskBundleID,
+				Status:   "failed",
+				Error:    pgtype.Text{String: errMsg, Valid: errMsg != ""},
+			})
+			if err != nil {
+				return fmt.Errorf("fail unfinished bundle items: %w", err)
+			}
+			for _, item := range unfinished {
+				updated, updateErr := qtx.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+					ID:     item.IssueID,
+					Status: "blocked",
+				})
+				if updateErr != nil {
+					return fmt.Errorf("update failed bundle issue status: %w", updateErr)
+				}
+				bundleIssuesToBroadcast = append(bundleIssuesToBroadcast, updated)
+			}
+			if _, err := qtx.FailTaskBundle(ctx, t.TaskBundleID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("fail task bundle: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
@@ -1399,6 +1839,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	for _, issue := range bundleIssuesToBroadcast {
+		s.broadcastIssueUpdated(issue)
+	}
 
 	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
 	// runtime_recovery). The helper itself enforces attempt < max_attempts
@@ -1690,6 +2133,42 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 				"task_id", util.UUIDToString(t.ID),
 				"error", err,
 			)
+		}
+		if t.TaskBundleID.Valid {
+			unfinished, err := s.Queries.FinishUnfinishedTaskBundleItems(ctx, db.FinishUnfinishedTaskBundleItemsParams{
+				BundleID: t.TaskBundleID,
+				Status:   "failed",
+				Error:    pgtype.Text{String: taskFailureReason(t), Valid: true},
+			})
+			if err != nil {
+				slog.Warn("handle failed tasks: fail bundle items failed",
+					"task_id", util.UUIDToString(t.ID),
+					"task_bundle_id", util.UUIDToString(t.TaskBundleID),
+					"error", err,
+				)
+			}
+			for _, item := range unfinished {
+				updated, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+					ID:     item.IssueID,
+					Status: "blocked",
+				})
+				if updateErr != nil {
+					slog.Warn("handle failed tasks: mark bundled issue blocked failed",
+						"issue_id", util.UUIDToString(item.IssueID),
+						"task_bundle_id", util.UUIDToString(t.TaskBundleID),
+						"error", updateErr,
+					)
+				} else {
+					s.broadcastIssueUpdated(updated)
+				}
+			}
+			if _, err := s.Queries.FailTaskBundle(ctx, t.TaskBundleID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("handle failed tasks: fail bundle failed",
+					"task_id", util.UUIDToString(t.ID),
+					"task_bundle_id", util.UUIDToString(t.TaskBundleID),
+					"error", err,
+				)
+			}
 		}
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.

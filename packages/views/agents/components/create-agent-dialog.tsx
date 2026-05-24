@@ -30,6 +30,7 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { Switch } from "@multica/ui/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -49,6 +50,11 @@ import { useT } from "../../i18n";
 const STANDARD_EXECUTION_PROTOCOL = "standard-assignment" satisfies ExecutionProtocolSlug;
 const TRELLIS_EXECUTION_PROTOCOL = "trellis-task" satisfies ExecutionProtocolSlug;
 type ExecutionProtocolSelectValue = "off" | typeof STANDARD_EXECUTION_PROTOCOL | typeof TRELLIS_EXECUTION_PROTOCOL;
+
+function isRequestEfficientRecommendedProvider(provider?: string | null): boolean {
+  const normalized = provider?.trim().toLowerCase() ?? "";
+  return normalized.includes("copilot") || normalized.includes("kiro");
+}
 
 function initialExecutionProtocolValue(template?: Agent | null): ExecutionProtocolSelectValue {
   if (template?.execution_protocol_enabled !== true) {
@@ -112,6 +118,9 @@ export function CreateAgentDialog({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(template?.avatar_url ?? null);
   const [executionProtocolValue, setExecutionProtocolValue] =
     useState<ExecutionProtocolSelectValue>(() => initialExecutionProtocolValue(template));
+  const [requestEfficientEnabled, setRequestEfficientEnabled] = useState(
+    template?.request_efficient_enabled === true,
+  );
   const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(
     () => new Set(template?.skills.map((s) => s.id) ?? []),
   );
@@ -189,6 +198,7 @@ export function CreateAgentDialog({
         avatar_url: avatarUrl ?? undefined,
         execution_protocol_enabled: executionProtocolSlug !== "",
         execution_protocol_slug: executionProtocolSlug,
+        request_efficient_enabled: requestEfficientEnabled,
       };
       if (template) {
         // Duplicate path: forward the hidden config fields the source
@@ -409,6 +419,28 @@ export function CreateAgentDialog({
                   </SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+              <div className="min-w-0">
+                <Label
+                  htmlFor="create-agent-request-efficient"
+                  className="text-sm font-medium"
+                >
+                  {t(($) => $.create_dialog.request_efficient_label)}
+                </Label>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {isRequestEfficientRecommendedProvider(selectedRuntime?.provider)
+                    ? t(($) => $.request_efficient.recommended_hint)
+                    : t(($) => $.request_efficient.hint)}
+                </p>
+              </div>
+              <Switch
+                id="create-agent-request-efficient"
+                checked={requestEfficientEnabled}
+                onCheckedChange={setRequestEfficientEnabled}
+                aria-label={t(($) => $.create_dialog.request_efficient_aria)}
+              />
             </div>
 
             {/* --- Optional sections (instructions / skills) ---

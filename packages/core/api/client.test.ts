@@ -246,6 +246,73 @@ describe("ApiClient", () => {
     });
   });
 
+  it("uses the expected HTTP contract for task bundle endpoints", async () => {
+    const bundle = {
+      id: "bundle-1",
+      workspace_id: "workspace-1",
+      agent_id: "agent-1",
+      runtime_id: "runtime-1",
+      status: "queued",
+      changeset_mode: "per_issue",
+      max_items: 5,
+      runtime_budget_seconds: 3900,
+      rerun_scope: [],
+      created_at: "2026-05-24T00:00:00Z",
+      updated_at: "2026-05-24T00:00:00Z",
+      items: [],
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/api/issues/issue-1/task-bundles")) {
+        return Promise.resolve(new Response(JSON.stringify([bundle]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(bundle), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+
+    await client.createTaskBundle({
+      agent_id: "agent-1",
+      issue_ids: ["issue-1", "issue-2"],
+      changeset_mode: "per_issue",
+    });
+    await client.listTaskBundlesByIssue("issue-1");
+    await client.rerunTaskBundle("bundle-1", { issue_ids: ["issue-2"] });
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => ({
+      url,
+      method: init?.method ?? "GET",
+      body: init?.body,
+    }));
+
+    expect(calls).toMatchObject([
+      {
+        url: "https://api.example.test/api/task-bundles",
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: "agent-1",
+          issue_ids: ["issue-1", "issue-2"],
+          changeset_mode: "per_issue",
+        }),
+      },
+      {
+        url: "https://api.example.test/api/issues/issue-1/task-bundles",
+        method: "GET",
+      },
+      {
+        url: "https://api.example.test/api/task-bundles/bundle-1/rerun",
+        method: "POST",
+        body: JSON.stringify({ issue_ids: ["issue-2"] }),
+      },
+    ]);
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {

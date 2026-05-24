@@ -224,6 +224,19 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 
 	b.WriteString("# Task Assignment\n\n")
+	if ctx.TaskBundleID != "" {
+		b.WriteString("## Task Bundle\n\n")
+		fmt.Fprintf(&b, "**Bundle ID:** %s\n", ctx.TaskBundleID)
+		fmt.Fprintf(&b, "**Changeset mode:** %s\n", ctx.TaskBundleChangesetMode)
+		fmt.Fprintf(&b, "**Runtime budget seconds:** %d\n\n", ctx.TaskBundleRuntimeBudgetSeconds)
+		b.WriteString("Process these items sequentially. The checkpoint command is `multica task-bundle checkpoint <item-id> --status completed|failed|blocked|input_needed|cancelled`.\n\n")
+		b.WriteString("| Order | Item ID | Issue ID | Status | Output namespace |\n")
+		b.WriteString("| --- | --- | --- | --- | --- |\n")
+		for _, item := range ctx.TaskBundleItems {
+			fmt.Fprintf(&b, "| %d | `%s` | `%s` | %s | `%s` |\n", item.Position, item.ID, item.IssueID, item.Status, item.OutputNamespace)
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "**Issue ID:** %s\n\n", ctx.IssueID)
 
 	if ctx.TriggerCommentID != "" {
@@ -234,7 +247,11 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	}
 
 	b.WriteString("## Quick Start\n\n")
-	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
+	if ctx.TaskBundleID != "" {
+		b.WriteString("Run `multica issue get <issue-id> --output json` for each bundle item as it becomes active. Do not process later items before checkpointing the current one.\n\n")
+	} else {
+		fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
+	}
 
 	if len(ctx.AgentSkills) > 0 {
 		b.WriteString("## Agent Skills\n\n")

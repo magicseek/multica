@@ -1399,6 +1399,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp := taskToResponse(*task)
+	h.populateTaskBundleResponse(r.Context(), &resp, *task)
 	if run, err := h.Queries.GetWorkflowRunByTask(r.Context(), task.ID); err == nil {
 		if steps, stepErr := h.Queries.ListWorkflowStepRunsByRun(r.Context(), run.ID); stepErr == nil {
 			inputRequests, inputErr := h.Queries.ListWorkflowInputRequestsByRun(r.Context(), run.ID)
@@ -1442,6 +1443,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			Model:                    agent.Model.String,
 			ExecutionProtocolEnabled: agent.ExecutionProtocolEnabled,
 			ExecutionProtocolSlug:    agent.ExecutionProtocolSlug,
+			RequestEfficientEnabled:  agent.RequestEfficientEnabled,
 		}
 	}
 
@@ -1779,7 +1781,7 @@ func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Reque
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t)
+		resp[i] = h.taskToResponseWithBundle(r.Context(), t)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1806,7 +1808,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task started", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*task))
+	writeJSON(w, http.StatusOK, h.taskToResponseWithBundle(r.Context(), *task))
 }
 
 // ReportTaskProgress broadcasts a progress update.
@@ -1877,7 +1879,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	h.emitIssueExecutedOnFirstCompletion(r, task)
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
-	writeJSON(w, http.StatusOK, taskToResponse(*task))
+	writeJSON(w, http.StatusOK, h.taskToResponseWithBundle(r.Context(), *task))
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at
@@ -2012,7 +2014,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)
-	writeJSON(w, http.StatusOK, taskToResponse(*task))
+	writeJSON(w, http.StatusOK, h.taskToResponseWithBundle(r.Context(), *task))
 }
 
 // ---------------------------------------------------------------------------
@@ -2172,7 +2174,7 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t)
+		resp[i] = h.taskToResponseWithBundle(r.Context(), t)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"tasks": resp})
@@ -2204,7 +2206,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task cancelled by user", "task_id", taskID, "issue_id", uuidToString(task.IssueID))
-	writeJSON(w, http.StatusOK, taskToResponse(*task))
+	writeJSON(w, http.StatusOK, h.taskToResponseWithBundle(r.Context(), *task))
 }
 
 // ListTasksByIssue returns all tasks (any status) for an issue — used for execution history.
@@ -2223,7 +2225,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]AgentTaskResponse, len(tasks))
 	for i, t := range tasks {
-		resp[i] = taskToResponse(t)
+		resp[i] = h.taskToResponseWithBundle(r.Context(), t)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

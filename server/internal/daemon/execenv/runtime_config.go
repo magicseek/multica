@@ -333,6 +333,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica issue create --title \"...\" [--description \"...\"] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>] [--attachment <path>]` — Create a new issue. `--attachment` may be repeated to upload multiple files; labels and subscribers are not accepted here, attach them after create with the commands below.\n")
 	b.WriteString("- `multica issue update <id> [--title X] [--description X] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>]` — Update one or more issue fields in a single call. Use `--parent \"\"` to clear the parent.\n")
 	b.WriteString("- `multica issue status <id> <status>` — Shortcut for `issue update --status` when you only need to flip status (todo, in_progress, in_review, done, blocked, backlog, cancelled)\n")
+	b.WriteString("- `multica task-bundle checkpoint <item-id> --status completed|failed|blocked|input_needed|cancelled [--result-file <path>] [--error \"...\"]` — Record the current request-efficient bundle item outcome before moving to the next item\n")
 	b.WriteString("- `multica issue assign <id> --to <name>|--to-id <uuid>` — Assign an issue to a member, agent, or squad. `--to <name>` does fuzzy name matching; pass `--to-id <uuid>` (mutually exclusive with `--to`) to assign by canonical UUID, e.g. when names overlap. Use `--unassign` to clear the assignee.\n")
 	b.WriteString("- `multica issue label add <issue-id> <label-id>` — Attach a label to an issue (look up the label id via `multica label list`)\n")
 	b.WriteString("- `multica issue label remove <issue-id> <label-id>` — Detach a label from an issue\n")
@@ -533,6 +534,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			b.WriteString(BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID))
 			appendCommentTriggeredCompletionStatusStep(&b, ctx, 8)
 		}
+	} else if ctx.TaskBundleID != "" {
+		b.WriteString(renderTaskBundleRuntimeProtocol(ctx))
 	} else if shouldUseTaskExecutionProtocol(ctx) {
 		b.WriteString(renderTaskExecutionProtocol(ctx))
 	} else {
@@ -661,6 +664,27 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("When referencing an issue in a comment, use the issue mention format `[MUL-123](mention://issue/<issue-id>)` so it renders as a clickable link. (Issue mentions have no side effect; only member/agent mentions do — see the Mentions section above.)\n")
 	}
 
+	return b.String()
+}
+
+func renderTaskBundleRuntimeProtocol(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("## Request-Efficient Task Bundle Protocol\n\n")
+	fmt.Fprintf(&b, "You are executing task bundle `%s` in one provider run. Process items sequentially and checkpoint every item before starting the next.\n\n", ctx.TaskBundleID)
+	b.WriteString("Rules:\n")
+	b.WriteString("- Do not split the bundle into separate provider runs.\n")
+	b.WriteString("- Only the active item should be in progress. Later items stay queued until the checkpoint command starts them server-side.\n")
+	b.WriteString("- Store item-specific outputs under that item's output namespace.\n")
+	b.WriteString("- After each item, run `multica task-bundle checkpoint <item-id> --status completed|failed|blocked|input_needed|cancelled`.\n")
+	b.WriteString("- Use `blocked` or `input_needed` instead of waiting mid-run for human clarification.\n\n")
+	if ctx.IsSquadLeader {
+		b.WriteString("You are also acting as a squad lead. Because this agent has request-efficient mode enabled, execute directly unless the user explicitly requested delegation, another squad member has a unique required capability, or you checkpoint an item as blocked and need follow-up.\n\n")
+	}
+	b.WriteString("Items:\n")
+	for _, item := range ctx.TaskBundleItems {
+		fmt.Fprintf(&b, "- %d. item `%s`, issue `%s`, status `%s`, output namespace `%s`\n", item.Position, item.ID, item.IssueID, item.Status, item.OutputNamespace)
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 
