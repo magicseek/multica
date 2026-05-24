@@ -1,0 +1,4 @@
+{"file":".trellis/spec/views/frontend/index.md","reason":"Entry point for frontend UI conventions relevant to verification."}
+{"file":".trellis/spec/views/frontend/component-guidelines.md","reason":"Check sidebar layout, truncation, and visible labels against component guidelines."}
+{"file":".trellis/spec/views/frontend/quality-guidelines.md","reason":"Verify the regression is covered by the new user-facing runtime sidebar rules."}
+

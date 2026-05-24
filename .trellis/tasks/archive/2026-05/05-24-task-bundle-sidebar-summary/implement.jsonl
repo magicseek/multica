@@ -1,0 +1,4 @@
+{"file":".trellis/spec/views/frontend/index.md","reason":"Entry point for frontend UI conventions relevant to this sidebar fix."}
+{"file":".trellis/spec/views/frontend/component-guidelines.md","reason":"Component layout, long text containment, and dense sidebar presentation guidance."}
+{"file":".trellis/spec/views/frontend/quality-guidelines.md","reason":"Quality/spec updates for preventing internal IDs and implementation limits from leaking into user-facing UI."}
+

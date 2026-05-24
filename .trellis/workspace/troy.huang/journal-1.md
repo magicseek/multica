@@ -347,3 +347,36 @@ Implemented request-efficient agent task bundles with durable bundle/item record
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Fix task bundle sidebar summary
+
+**Date**: 2026-05-24
+**Task**: Fix task bundle sidebar summary
+**Branch**: `feat/chat-plan-runs`
+
+### Summary
+
+Separated completed task bundle history from new-bundle creation controls; removed internal UUID/max-item leakage from the issue sidebar.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8ae0341f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
