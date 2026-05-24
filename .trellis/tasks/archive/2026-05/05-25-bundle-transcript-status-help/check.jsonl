@@ -1,0 +1,4 @@
+{"file":".trellis/spec/views/frontend/index.md","reason":"Frontend spec entry point for verification."}
+{"file":".trellis/spec/views/frontend/component-guidelines.md","reason":"Verify transcript divider and inspector tooltip layout against component guidance."}
+{"file":".trellis/spec/views/frontend/quality-guidelines.md","reason":"Verify runtime labels communicate time semantics and avoid implementation leakage."}
+

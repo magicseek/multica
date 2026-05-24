@@ -1,0 +1,4 @@
+{"file":".trellis/spec/views/frontend/index.md","reason":"Frontend spec entry point for task transcript and agent inspector UI changes."}
+{"file":".trellis/spec/views/frontend/component-guidelines.md","reason":"Component guidance for runtime/transcript UI and compact inspector controls."}
+{"file":".trellis/spec/views/frontend/quality-guidelines.md","reason":"Quality guidance for not exposing implementation state as user-facing runtime labels."}
+
