@@ -317,7 +317,10 @@ export function AgentTranscriptDialog({
 
   const toolCount = items.filter((i) => i.type === "tool_use").length;
   const bundleItems = task.task_bundle?.items ?? EMPTY_BUNDLE_ITEMS;
-  const bundleSegments = useMemo(() => buildBundleSegments(bundleItems), [bundleItems]);
+  const bundleSegments = useMemo(
+    () => buildBundleSegments(bundleItems, items),
+    [bundleItems, items],
+  );
   const bundleSegmentForSeq = useCallback(
     (seq: number) => findBundleSegmentForSeq(bundleSegments, seq),
     [bundleSegments],
@@ -468,9 +471,8 @@ export function AgentTranscriptDialog({
             )}
             {bundleItems.length > 0 && (
               <MetadataChip>
-                {tIssues(($) => $.task_bundle.selected_count, {
+                {tIssues(($) => $.task_bundle.bundle_items_count, {
                   count: bundleItems.length,
-                  max: task.task_bundle?.max_items ?? bundleItems.length,
                 })}
               </MetadataChip>
             )}
@@ -559,12 +561,7 @@ export function AgentTranscriptDialog({
                         label={tIssues(($) => $.task_bundle.transcript_item, {
                           position: segment.item.position,
                         })}
-                        status={segment.item.status}
-                        detail={
-                          segment.item.checkpoint_seq
-                            ? tIssues(($) => $.task_bundle.transcript_item_done)
-                            : tIssues(($) => $.task_bundle.transcript_item_current)
-                        }
+                        detail={tIssues(($) => $.task_bundle.transcript_item_started)}
                       />
                     )}
                     <TranscriptEventRow
@@ -594,16 +591,45 @@ type BundleSegment = {
 
 function buildBundleSegments(
   items: NonNullable<AgentTask["task_bundle"]>["items"],
+  timelineItems: TimelineItem[],
 ): BundleSegment[] {
   let startSeq = 1;
   return [...items]
     .sort((a, b) => a.position - b.position)
     .map((item) => {
-      const endSeq = item.checkpoint_seq ?? null;
+      const checkpointEndSeq = findCheckpointCommandEndSeq(item.id, timelineItems);
+      let endSeq = item.checkpoint_seq ?? null;
+      if (checkpointEndSeq != null && (endSeq == null || checkpointEndSeq > endSeq)) {
+        endSeq = checkpointEndSeq;
+      }
       const segment = { item, startSeq, endSeq };
       if (endSeq != null) startSeq = endSeq + 1;
       return segment;
     });
+}
+
+function findCheckpointCommandEndSeq(
+  itemId: string,
+  timelineItems: TimelineItem[],
+): number | null {
+  const commandIndex = timelineItems.findIndex((timelineItem) => {
+    if (timelineItem.type !== "tool_use") return false;
+    const command = timelineItem.input?.command;
+    return (
+      typeof command === "string" &&
+      command.includes("multica task-bundle checkpoint") &&
+      command.includes(itemId)
+    );
+  });
+  if (commandIndex < 0) return null;
+
+  let endSeq = timelineItems[commandIndex]!.seq;
+  for (let i = commandIndex + 1; i < timelineItems.length; i++) {
+    const next = timelineItems[i]!;
+    if (next.type !== "tool_result") break;
+    endSeq = next.seq;
+  }
+  return endSeq;
 }
 
 function findBundleSegmentForSeq(segments: BundleSegment[], seq: number) {
@@ -616,17 +642,14 @@ function findBundleSegmentForSeq(segments: BundleSegment[], seq: number) {
 
 function BundleItemDivider({
   label,
-  status,
   detail,
 }: {
   label: string;
-  status: string;
   detail: string;
 }) {
   return (
     <div className="flex items-center gap-2 bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground">
       <span className="font-medium text-foreground">{label}</span>
-      <span className="capitalize">{status.replace("_", " ")}</span>
       <span className="ml-auto">{detail}</span>
     </div>
   );

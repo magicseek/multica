@@ -158,7 +158,21 @@ describe("AgentTranscriptDialog", () => {
           }}
           items={[
             { seq: 1, type: "text", content: "finished issue 1" },
-            { seq: 2, type: "text", content: "starting issue 2" },
+            {
+              seq: 2,
+              type: "tool_use",
+              tool: "exec_command",
+              input: {
+                command: "multica task-bundle checkpoint item-1 --status completed",
+              },
+            },
+            {
+              seq: 3,
+              type: "tool_result",
+              tool: "exec_command",
+              output: "checkpoint ok",
+            },
+            { seq: 4, type: "text", content: "starting issue 2" },
           ]}
           agentName="Builder"
         />
@@ -167,7 +181,17 @@ describe("AgentTranscriptDialog", () => {
 
     expect(screen.getByText("Bundle item 1")).toBeInTheDocument();
     expect(screen.getByText("Bundle item 2")).toBeInTheDocument();
-    expect(screen.getByText("Done")).toBeInTheDocument();
-    expect(screen.getByText("Current item")).toBeInTheDocument();
+    expect(screen.getByText("2 bundle items")).toBeInTheDocument();
+    expect(screen.getAllByText("Started")).toHaveLength(2);
+    expect(screen.queryByText("Done")).not.toBeInTheDocument();
+    expect(screen.queryByText("Current item")).not.toBeInTheDocument();
+
+    const text = document.body.textContent ?? "";
+    expect(text.indexOf("Bundle item 2")).toBeGreaterThan(
+      text.indexOf("checkpoint ok"),
+    );
+    expect(text.indexOf("Bundle item 2")).toBeLessThan(
+      text.indexOf("starting issue 2"),
+    );
   });
 });

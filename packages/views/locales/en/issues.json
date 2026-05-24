@@ -288,6 +288,8 @@
     "agent_label": "Agent",
     "agent_placeholder": "Select agent",
     "selected_count": "{{count}} selected",
+    "bundle_items_count_one": "{{count}} bundle item",
+    "bundle_items_count_other": "{{count}} bundle items",
     "create_action": "Start bundle",
     "create_success": "Task bundle started",
     "create_failed": "Failed to start task bundle",
@@ -310,6 +312,7 @@
     "item_status_input_needed": "Needs input",
     "item_status_cancelled": "Cancelled",
     "transcript_item": "Bundle item {{position}}",
+    "transcript_item_started": "Started",
     "transcript_item_current": "Current item",
     "transcript_item_done": "Done"
   },

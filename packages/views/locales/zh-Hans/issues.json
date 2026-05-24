@@ -283,6 +283,8 @@
     "agent_label": "智能体",
     "agent_placeholder": "选择智能体",
     "selected_count": "已选 {{count}} 个",
+    "bundle_items_count_one": "{{count}} 个 bundle item",
+    "bundle_items_count_other": "{{count}} 个 bundle item",
     "create_action": "启动 bundle",
     "create_success": "Task bundle 已启动",
     "create_failed": "启动 task bundle 失败",
@@ -305,6 +307,7 @@
     "item_status_input_needed": "需要输入",
     "item_status_cancelled": "取消",
     "transcript_item": "Bundle item {{position}}",
+    "transcript_item_started": "开始",
     "transcript_item_current": "当前 item",
     "transcript_item_done": "已结束"
   },

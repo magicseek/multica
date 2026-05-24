@@ -50,6 +50,27 @@ When a completed or otherwise non-startable issue has historical runtime data,
 the section should remain read-only unless there is a concrete rerun affordance
 for a failed or blocked run.
 
+### Transcript Timeline Semantics
+
+Timeline and transcript dividers must describe the event boundary where they
+are rendered. If a divider is inserted before the first event for a task bundle
+item, it should say that the item started; it must not display the item's final
+checkpoint status (`completed`, `blocked`, `done`, etc.) at that start
+position. Final outcomes belong on checkpoint/result events, item summaries
+that render after the segment, or separate read-only status summaries.
+
+Do not reuse selection-copy such as `N selected` for historical transcript
+metadata. Bundle transcripts should say how many bundle items exist; creation
+forms should say how many items are selected.
+
+### Inspector Toggle Help
+
+Agent settings toggles that change execution behavior need an inline help
+affordance next to the control. The tooltip must explain the user-visible
+effect of the toggle, not just restate the label. This is required for
+request-efficient mode because it changes how issue tasks are grouped into
+provider runs and affects billing behavior for request-priced providers.
+
 ---
 
 ## Testing Requirements
@@ -60,6 +81,10 @@ for a failed or blocked run.
   path and the read-only history path. Tests should assert that raw internal
   identifiers are not visible and that completed/non-startable issues do not
   render stale creation controls.
+- Transcript regressions need component tests that prove time-positioned
+  dividers do not display future/final state at the start of a segment.
+- Inspector behavior toggles need component tests for their help affordance so
+  the explanatory copy is not accidentally removed during layout changes.
 
 ---
 

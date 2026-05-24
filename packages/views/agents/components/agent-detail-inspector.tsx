@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Camera, Loader2, Pencil } from "lucide-react";
+import { Camera, Info, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type {
   Agent,
@@ -25,6 +25,11 @@ import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@multica/ui/components/ui/tooltip";
 import {
   Select,
   SelectContent,
@@ -120,6 +125,11 @@ export function AgentDetailInspector({
   const { t } = useT("agents");
   const update = (data: Record<string, unknown>) => onUpdate(agent.id, data);
   const isOnline = runtime?.status === "online";
+  const requestEfficientHelpText = isRequestEfficientRecommendedProvider(
+    runtime?.provider,
+  )
+    ? t(($) => $.request_efficient.recommended_hint)
+    : t(($) => $.request_efficient.hint);
 
   return (
     <aside className="flex w-full flex-col rounded-lg border bg-background md:h-full md:min-h-0 md:overflow-y-auto">
@@ -218,6 +228,22 @@ export function AgentDetailInspector({
           interactive={false}
         >
           <div className="flex min-w-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={requestEfficientHelpText}
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+                }
+              />
+              <TooltipContent side="top" className="max-w-64">
+                {requestEfficientHelpText}
+              </TooltipContent>
+            </Tooltip>
             <Switch
               checked={agent.request_efficient_enabled === true}
               onCheckedChange={(checked) => update({ request_efficient_enabled: checked })}
