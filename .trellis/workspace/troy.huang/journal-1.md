@@ -402,7 +402,11 @@ Changed request-efficient bundle transcript dividers to describe start boundarie
 
 ### Main Changes
 
-(Add details)
+- Replaced bundle transcript header copy from selection state to historical bundle item count.
+- Changed bundle item dividers to show a start-boundary label instead of final checkpoint status.
+- Kept checkpoint command/result rows inside the preceding bundle item segment so the next item starts after checkpoint completion.
+- Added an inline Request efficient info icon and tooltip in the agent detail inspector.
+- Captured the regression class in `.trellis/spec/views/frontend/quality-guidelines.md`.
 
 ### Git Commits
 
@@ -412,7 +416,52 @@ Changed request-efficient bundle transcript dividers to describe start boundarie
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `pnpm --filter @multica/views exec vitest run common/task-transcript/agent-transcript-dialog.test.tsx agents/components/agent-detail-inspector.test.tsx locales/parity.test.ts --testTimeout=15000`
+- [OK] `pnpm --filter @multica/views typecheck`
+- [OK] `pnpm --filter @multica/views lint` (13 pre-existing warnings, 0 errors)
+- [OK] `git diff --check`
+- [OK] Manual desktop check of transcript modal and Request efficient help affordance.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: Fix bundle transcript boundaries and request efficient help
+
+**Date**: 2026-05-25
+**Task**: Fix bundle transcript boundaries and request efficient help
+**Branch**: `feat/chat-plan-runs`
+
+### Summary
+
+Added request-efficient transcript evidence for one provider request, rendered item completion markers after checkpoint output, and changed Request efficient help to a visible inline disclosure.
+
+### Main Changes
+
+- Added a `1 provider request` transcript header chip for task bundles so the shared provider execution is visible without raw IDs.
+- Rendered bundle item completion markers after checkpoint command/result rows, while keeping start markers at item boundaries.
+- Replaced the clipped Request efficient tooltip with an inline disclosure panel triggered by click, hover, or focus.
+- Added component regressions for provider-request evidence, item end markers, and visible help disclosure.
+- Updated frontend quality guidance to require start/end timeline semantics and tested disclosure paths.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf00ad74` | (see git log) |
+
+### Testing
+
+- [OK] `pnpm --filter @multica/views exec vitest run common/task-transcript/agent-transcript-dialog.test.tsx agents/components/agent-detail-inspector.test.tsx locales/parity.test.ts --testTimeout=15000`
+- [OK] `pnpm --filter @multica/views typecheck`
+- [OK] `pnpm --filter @multica/views lint` (13 pre-existing warnings, 0 errors)
+- [OK] `git diff --check`
+- [OK] Manual desktop check of transcript provider-request chip, item completion markers, and Request efficient help disclosure.
 
 ### Status
 

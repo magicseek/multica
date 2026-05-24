@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/views/frontend/quality-guidelines.md", "reason": "Regression expectations for transcript boundary labels and toggle help"}
+{"file": ".trellis/spec/views/frontend/component-guidelines.md", "reason": "Validate interaction affordance consistency"}
