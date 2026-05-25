@@ -121,6 +121,9 @@ describe("AgentDetailInspector", () => {
     expect(helpButton).toHaveAttribute("title", helpText);
     fireEvent.click(helpButton);
 
-    expect(screen.getByText(helpText)).toBeInTheDocument();
+    const helpPanel = screen.getByRole("tooltip");
+    expect(helpPanel).toHaveTextContent(helpText);
+    expect(helpPanel.parentElement).toBe(document.body);
+    expect(helpPanel.closest("aside")).toBeNull();
   });
 });

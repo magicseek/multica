@@ -1,0 +1,2 @@
+{"file": "packages/views/agents/components/agent-detail-inspector.test.tsx", "reason": "Verifies request-efficient help is portaled outside inspector layout"}
+{"file": "packages/views/locales/parity.test.ts", "reason": "Ensures agent locale additions remain complete"}

@@ -79,6 +79,11 @@ request-efficient mode because it changes how issue tasks are grouped into
 provider requests/runs and affects billing behavior for request-priced
 providers.
 
+The affordance belongs in the property row, but the explanatory panel must not
+participate in the inspector grid layout. Use a floating/portaled disclosure
+for icon-only inspector help so opening the copy does not resize, wrap, or
+misalign the surrounding property rows.
+
 ---
 
 ## Testing Requirements
@@ -98,7 +103,8 @@ providers.
 - Inspector behavior toggles need component tests for their help affordance so
   the explanatory copy is not accidentally removed during layout changes. For
   icon-only help, tests should exercise the disclosure path instead of only
-  asserting an accessible name.
+  asserting an accessible name, and should prove the help panel is outside the
+  inspector row/sidebar layout when it opens.
 
 ---
 

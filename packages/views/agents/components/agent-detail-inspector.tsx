@@ -1,12 +1,14 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Camera, Info, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type {
@@ -219,10 +221,10 @@ export function AgentDetailInspector({
             </SelectContent>
           </Select>
         </PropRow>
-        <div className="-mx-2 col-span-2 grid min-h-8 grid-cols-subgrid items-center rounded-md px-2">
-          <span className="text-xs text-muted-foreground">
-            {t(($) => $.inspector.prop_request_efficient)}
-          </span>
+        <PropRow
+          label={t(($) => $.inspector.prop_request_efficient)}
+          interactive={false}
+        >
           <RequestEfficientControl
             text={requestEfficientHelpText}
             checked={agent.request_efficient_enabled === true}
@@ -232,7 +234,7 @@ export function AgentDetailInspector({
             recommendedLabel={t(($) => $.request_efficient.recommended_badge)}
             onCheckedChange={(checked) => update({ request_efficient_enabled: checked })}
           />
-        </div>
+        </PropRow>
       </Section>
 
       {/* Details — read-only (no hover, no chip styling — these aren't clickable) */}
@@ -305,7 +307,13 @@ function RequestEfficientControl({
   onCheckedChange: (checked: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+    placement: "above" | "below";
+  } | null>(null);
   const helpId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearCloseTimer = () => {
@@ -315,8 +323,32 @@ function RequestEfficientControl({
     }
   };
 
+  const updatePosition = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) {
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const panelWidth = 256;
+    const viewportPadding = 12;
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - panelWidth - viewportPadding);
+    const left = Math.min(Math.max(rect.left, viewportPadding), maxLeft);
+    const hasRoomAbove = rect.top > 96;
+
+    setPosition({
+      left,
+      top: hasRoomAbove ? rect.top - 8 : rect.bottom + 8,
+      placement: hasRoomAbove ? "above" : "below",
+    });
+  }, []);
+
   const openHelp = () => {
     clearCloseTimer();
+    updatePosition();
     setOpen(true);
   };
 
@@ -333,51 +365,76 @@ function RequestEfficientControl({
     };
   }, []);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const reposition = () => updatePosition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, updatePosition]);
+
   return (
     <div
-      className="flex min-w-0 flex-col items-start gap-1.5 text-xs"
+      className="flex min-w-0 items-center gap-2 text-xs"
       onMouseEnter={openHelp}
       onMouseLeave={scheduleClose}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <button
-          type="button"
-          title={text}
-          aria-label={text}
-          aria-describedby={open ? helpId : undefined}
-          aria-expanded={open}
-          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={(event) => {
-            event.preventDefault();
-            clearCloseTimer();
-            setOpen(true);
-          }}
-          onFocus={openHelp}
-          onBlur={scheduleClose}
-        >
-          <Info className="h-3.5 w-3.5" />
-        </button>
-        <Switch
-          checked={checked}
-          onCheckedChange={onCheckedChange}
-          disabled={disabled}
-          aria-label={switchLabel}
-        />
-        {recommended && (
-          <span className="truncate text-[11px] text-muted-foreground">
-            {recommendedLabel}
-          </span>
-        )}
-      </div>
-      {open && (
-        <div
-          id={helpId}
-          role="tooltip"
-          className="max-w-64 rounded-lg border bg-popover p-2.5 text-left text-xs leading-relaxed text-popover-foreground shadow-sm"
-        >
-          {text}
-        </div>
+      <button
+        ref={triggerRef}
+        type="button"
+        title={text}
+        aria-label={text}
+        aria-describedby={open ? helpId : undefined}
+        aria-expanded={open}
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={(event) => {
+          event.preventDefault();
+          openHelp();
+        }}
+        onFocus={openHelp}
+        onBlur={scheduleClose}
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-label={switchLabel}
+      />
+      {recommended && (
+        <span className="truncate text-[11px] text-muted-foreground">
+          {recommendedLabel}
+        </span>
       )}
+      {open && position && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={helpId}
+              role="tooltip"
+              data-testid="request-efficient-help-panel"
+              className="z-50 w-64 rounded-lg border bg-popover p-2.5 text-left text-xs leading-relaxed text-popover-foreground shadow-lg"
+              style={{
+                position: "fixed",
+                left: position.left,
+                top: position.top,
+                transform:
+                  position.placement === "above" ? "translateY(-100%)" : undefined,
+              }}
+              onMouseEnter={openHelp}
+              onMouseLeave={scheduleClose}
+            >
+              {text}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
